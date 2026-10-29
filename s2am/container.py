@@ -39,8 +39,8 @@ def ensure_image() -> None:
                    stdout=subprocess.DEVNULL)
 
 
-def run(workdir: Path, *command: str, quiet: bool = False) -> None:
-    """Run ``command`` in the image with ``workdir`` mounted at /work, without network.
+def run(workdir: Path, *command: str, quiet: bool = False, image: str = IMAGE) -> None:
+    """Run ``command`` in ``image`` with ``workdir`` mounted at /work, without network.
 
     ``quiet`` keeps the tool's output unless it fails (crypto_pack prints debug noise).
     """
@@ -48,7 +48,7 @@ def run(workdir: Path, *command: str, quiet: bool = False) -> None:
     result = subprocess.run(docker() + ["run", "--rm", "--platform", "linux/amd64",
                                         "--network", "none", "-u", f"{os.getuid()}:{os.getgid()}",
                                         "-e", "HOME=/tmp", "-v", f"{workdir}:/work", "-w", "/work",
-                                        IMAGE, *command], env=docker_env(),
+                                        image, *command], env=docker_env(),
                             capture_output=quiet, text=quiet)
     if result.returncode:
         if quiet:

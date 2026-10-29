@@ -86,6 +86,13 @@ SyncExtPack's [installation guide](https://github.com/chr0m1ng/syncextpack/blob/
 **4. Use it.** Plug the Carlinkit adapter into the car's USB port and connect your iPhone to the
 adapter with its cable. Then press **i → Apps → AutoKit**.
 
+## How the Mac reaches SYNC 2
+
+Not with a cable to SYNC's USB port: SYNC 2's ports are host-only, and an A-to-A cable can damage
+hardware. Files and apps travel on a **USB stick**. Diagnostics and a remote SYNC restart go
+through the **OBD-II port** with [forscan-mac](https://github.com/Theralley/forscan-mac). See
+[docs/CONNECTING.md](docs/CONNECTING.md).
+
 ## See what is on your SYNC 2 from your Mac
 
 `s2am` puts a small "job" on a USB stick. The car runs it, writes a report back onto the
@@ -110,6 +117,9 @@ python3 -m s2am job autokit-config --serial YOURSERIAL --restore <id> # put the 
 python3 -m s2am job snapshot --serial YOURSERIAL                     # read-only: services, startup, USB devices
 python3 -m s2am job logger --serial YOURSERIAL                       # 3-minute log while you plug/unplug the phone
 python3 -m s2am report --serial YOURSERIAL                           # show the newest report (snapshot, log timeline)
+python3 -m s2am native build                                         # build the WinCE helpers (CeGCC in Docker)
+python3 -m s2am job native-hello --serial YOURSERIAL                 # prove compiled code runs on your SYNC 2
+python3 -m s2am job logger --native --serial YOURSERIAL              # also record AutoKit's window messages
 ```
 
 See [docs/P2-AA-AUTOSTART-PLAN.md](docs/P2-AA-AUTOSTART-PLAN.md). `autokit-config` also removes any
@@ -205,7 +215,7 @@ third-party tools never run directly on your Mac. Read
 <summary><b>For developers</b></summary>
 
 ```sh
-python3 -m unittest discover -s tests       # 143 tests; uses ../syncextpack (tested at 1a1eda0)
+python3 -m unittest discover -s tests       # 152 tests; uses ../syncextpack (tested at 1a1eda0)
 python3 tools/make_pack.py SERIAL --dry-run  # stage and patch only, no build
 python3 -m s2am window                       # is the current 30-day key window safe to build in?
 ```
@@ -215,6 +225,7 @@ python3 -m s2am window                       # is the current 30-day key window 
 | `tools/` | `patch_waveout.py` (the sound fix), `make_pack.py` (builds the install pack) |
 | `s2am/` | The Mac toolkit: jobs, USB stick, reports, status/diff, a fake SYNC 2 for tests |
 | `docker/` | The offline Linux container that runs SyncExtPack's build tools |
+| `s2am/native/` | C sources of the WinCE helpers (`hello.exe`, `notifylog.exe`), built with CeGCC |
 | `docs/` | [PLAN.md](docs/PLAN.md) (research and decisions), [TOOLKIT-PLAN.md](docs/TOOLKIT-PLAN.md) |
 
 The `../syncextpack` clone is never modified. State is kept in `~/.s2am/<serial>/`; set

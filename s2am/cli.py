@@ -13,6 +13,8 @@
     s2am job autokit-config --serial S           AutoKit video: 800,480,15, software decoding
     s2am job snapshot|logger --serial S          read-only registry snapshot / 3-minute logger
     s2am report --serial S [JOB_ID]              print a report (snapshot, logger timeline)
+    s2am native build                            build the WinCE helpers (CeGCC in Docker)
+    s2am job native-hello --serial S             prove compiled code runs on this SYNC 2
     s2am stick prepare /Volumes/STICK --job DIR  put that job on a stick
     s2am stick import /Volumes/STICK             read back what the car wrote
     s2am status --serial XXXXXXXX                apps, plugins and menu from the last report
@@ -28,7 +30,7 @@ import xml.etree.ElementTree as ElementTree
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import apps, autokit, bootstrap, diskcheck, pack, stick, window
+from . import apps, autokit, bootstrap, diskcheck, native, pack, stick, window
 from .container import REPO, ContainerError
 from .job import AUTOKIT_CE, AUTOKIT_MODULES, SERIAL, Job, stage
 from .state import Store, diff, parse_inventory
@@ -57,7 +59,7 @@ def cmd_window(args) -> int:
 
 JOB_KINDS = {"inventory": "inv", "autokit-stock": "akstock", "autokit-patched": "akpatch",
              "remove": "rm", "install": "inst", "undo": "undo", "autokit-config": "akcfg",
-             "snapshot": "snap", "logger": "log"}
+             "snapshot": "snap", "logger": "log", "native-hello": "hello"}
 MARK = {"ok": "✓", "warn": "!", "fail": "✗"}
 
 
@@ -229,9 +231,13 @@ def cmd_job(args) -> int:
         else:
             params = {"screen": args.screen, "decoder": args.decoder}
     elif args.kind == "logger":
-        params = {"seconds": args.seconds}
+        params = {"seconds": args.seconds, "native": args.native}
+        if args.native:
+            extra = {"notifylog.exe": native.binary("notifylog.exe")}
         print(f"logger: insert the stick, then plug and unplug the phone a few times; leave the "
               f"stick in for {args.seconds} s until the log ends, then import it")
+    elif args.kind == "native-hello":
+        extra = {"hello.exe": native.binary("hello.exe")}
     if getattr(args, "dry_run", False):
         return 0
     job = Job(serial=args.serial, kind=JOB_KINDS[args.kind], params=params)
@@ -392,6 +398,12 @@ def _log_changes(text: str) -> list[str]:
     return out
 
 
+def cmd_native(args) -> int:
+    for name, path in native.build().items():
+        print(f"{name}: {path.stat().st_size} B, sha256 {pack.sha256(path)[:16]}, WinCE ARM, COREDLL only")
+    return 0
+
+
 def cmd_report(args) -> int:
     store = Store()
     job_id = args.job_id or next((r["id"] for r in reversed(store.jobs(args.serial))
@@ -401,12 +413,16 @@ def cmd_report(args) -> int:
         print("no imported report", file=sys.stderr)
         return 1
     print(f"report {job_id}")
-    for name in ("info.txt", "busy.txt", "stale.txt", "firmware-image-removed.txt"):
+    for name in ("info.txt", "busy.txt", "stale.txt", "firmware-image-removed.txt",
+                 "native-hello.txt"):
         if (report / name).is_file():
             print(f"[{name}] " + (report / name).read_text(errors="replace").strip().replace("\r\n", "; "))
     if (report / "registry.txt").is_file():
         print("[registry]")
         print("\n".join(_registry_lines((report / "registry.txt").read_text(errors="replace"))))
+    if (report / "notify.txt").is_file():
+        print("[notify: ms since start|kind|...] AutoKit window messages and foreground changes")
+        print((report / "notify.txt").read_text(errors="replace").rstrip())
     if (report / "log.txt").is_file():
         print("[log: time|AutoKit running|foreground process|window|USB devices], changes only")
         print("\n".join(_log_changes((report / "log.txt").read_text(errors="replace"))))
@@ -510,7 +526,11 @@ def parser() -> argparse.ArgumentParser:
     logger = job_sub.add_parser("logger", parents=[common],
                                 help="log AutoKit, the foreground app and USB devices every second")
     logger.add_argument("--seconds", type=int, default=180)
+    logger.add_argument("--native", action="store_true",
+                        help="also run notifylog.exe, which records AutoKit's window messages")
     logger.set_defaults(func=cmd_job)
+    job_sub.add_parser("native-hello", parents=[common],
+                       help="prove compiled code runs on this SYNC 2").set_defaults(func=cmd_job)
     install = job_sub.add_parser("install", parents=[common],
                                  help="copy a SyncExtPack app to the car and add it to the menu")
     install.add_argument("app", help="the app name (see s2am apps)")
@@ -519,6 +539,9 @@ def parser() -> argparse.ArgumentParser:
                          help="the app is already in the menu: overwrite its files (update)")
     install.add_argument("--dry-run", action="store_true", help="show the plan, build nothing")
     install.set_defaults(func=cmd_job)
+    native_cmd = sub.add_parser("native", help="build the native WinCE helpers (CeGCC in Docker)")
+    native_cmd.add_argument("action", choices=["build"])
+    native_cmd.set_defaults(func=cmd_native)
     show = sub.add_parser("report", help="print a report: info, registry snapshot, logger timeline")
     show.add_argument("--serial", type=_serial, required=True)
     show.add_argument("job_id", nargs="?", help="default: the newest report")
@@ -564,6 +587,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.func(args)
     except (pack.PackError, stick.StickError, bootstrap.BootstrapError, apps.AppError, autokit.PatchFailed,
+            native.NativeError,
             ContainerError, ValueError, OSError, subprocess.CalledProcessError) as error:
         print(f"s2am: {error}", file=sys.stderr)
         return 1

@@ -29,6 +29,7 @@ class FakeCar:
         self.broken_copies: set[str] = set()  # lower-case CE paths whose Copy silently fails
         self.registry: dict[str, dict[str, str]] = {}  # "HKLM\\Services\\X" -> values
         self.log_lines: list[str] = ["start|2026-10-30 12:00:00", "end"]
+        self.notify_lines: list[str] = ["0|start|180", "5|REG|_UIGEAR_BOX_NOTIFY_|0x0000c0de", "9|end|"]
         self.power_cut_after_phase = False
         root.mkdir(parents=True, exist_ok=True)
 
@@ -104,6 +105,10 @@ class FakeCar:
         if job.kind == "log":
             (out / "logger-started.txt").write_text("started")
             (out / "log.txt").write_text("".join(f"{line}\r\n" for line in self.log_lines))
+            if job.params.get("native"):
+                (out / "notify.txt").write_text("".join(f"{line}\r\n" for line in self.notify_lines))
+        if job.kind == "hello":
+            (out / "native-hello.txt").write_text("s2am native hello ok|wince 7.0 build 3500|uptime_ms 1\r\n")
         lines = []
         apps = self._resolve(INVENTORY_ROOT)
 

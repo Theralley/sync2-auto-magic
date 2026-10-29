@@ -441,10 +441,25 @@ def snapshot_script(job: Job) -> str:
 
 
 def logger_script(job: Job) -> str:
-    """Start the logger in the background, then report as usual (UpdateService waits for this)."""
+    """Start the logger(s) in the background, then report as usual (UpdateService waits for this).
+
+    With ``native`` the compiled notifylog.exe runs too: it receives AutoKit's
+    registered _UIGEAR_* window messages, which MortScript cannot see.
+    """
+    seconds = job.params.get("seconds", 180)
     lines = _header(job) + [
         f'Run({_quote(ce_path(job.job_dir))} & "\\{LOGGER_NAME}.exe")',
-        'WriteFile(out & "\\logger-started.txt", "leave the stick in until log.txt says end")',
+    ]
+    if job.params.get("native"):
+        lines += [f'Run({_quote(ce_path(job.job_dir))} & "\\notifylog.exe", "{int(seconds)} " & out & "\\notify.txt")']
+    lines += ['WriteFile(out & "\\logger-started.txt", "leave the stick in until log.txt says end")']
+    return _script(lines + _inventory() + _footer(job))
+
+
+def hello_script(job: Job) -> str:
+    """Prove compiled code runs on this SYNC 2: hello.exe writes the CE version and exits."""
+    lines = _header(job) + [
+        f'RunWait({_quote(ce_path(job.job_dir))} & "\\hello.exe", out & "\\native-hello.txt")',
     ]
     return _script(lines + _inventory() + _footer(job))
 
@@ -492,6 +507,7 @@ SCRIPTS = {
     "akcfg": autokit_config_script,
     "snap": snapshot_script,
     "log": logger_script,
+    "hello": hello_script,
 }
 MENU_CHANGING = ("rm", "undo", "inst")  # SYNC reads SyncApps.xml at start, so these restart it
 
