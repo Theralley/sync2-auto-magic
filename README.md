@@ -1,73 +1,171 @@
 # sync2-auto-magic
 
-CarPlay (and later Android Auto) on a 2016 Ford Mondeo Mk5 with the SYNC 2 (MyFord Touch) screen.
-It uses one Carlinkit USB dongle (CPC200-CCPM wired or CPC200-CCPA wireless) and Carlinkit's AutoKit app, sideloaded through
-[SyncExtPack](https://github.com/chr0m1ng/syncextpack). This repo holds the software fixes that
-make it usable. The upstream clones next to it (`../syncextpack` and others) are never modified.
+**Apple CarPlay (and soon Android Auto) for Ford SYNC 2 / MyFord Touch, using one USB dongle
+and free software.** It also includes a Mac tool that shows what is installed on your SYNC 2.
 
-See [docs/PLAN.md](docs/PLAN.md) for the research, the decision and the roadmap.
+> **Status: experimental.** Everything here is built and tested on a computer, but has **not
+> yet been confirmed in a car**. The first in-car test (2016 Ford Mondeo Mk5) is coming. Try it
+> only if you are comfortable with the recovery steps below.
 
-## Status
+---
 
-| Piece | State |
+## Will this work in my car?
+
+<p align="center">
+  <img src="docs/images/sync2-compatibility.jpg" width="520"
+       alt="Works with SYNC 2 and its 8 inch touchscreen. Does not work with SYNC 3 or the small non-touch screen.">
+</p>
+
+| | |
 |---|---|
-| Sound: route AutoKit's audio through SYNC 2 (`tools/patch_waveout.py`) | Built, 28 tests pass, checked with `pefile` and `llvm-objdump`, reviewed by Codex. **Not yet tried in the car.** |
-| Pack builder (`tools/make_pack.py`): patched AutoKit, fails if any step fails, runs in a container | Built; needs the car's APIM serial |
-| `s2am` toolkit P0: inventory job sticks, import, `status`, `diff` ([plan](docs/TOOLKIT-PLAN.md)) | Built, tested against a fake SYNC 2; **first car run is P1** |
-| Auto-launch on plug-in and clean exit back to SYNC 2 | Planned (needs a WinCE toolchain) |
-| Android Auto with the same dongle | After CarPlay works |
+| ✅ **SYNC 2 / MyFord Touch with the 8" touchscreen** | This is what it is made for |
+| ❌ SYNC 3 | Already has CarPlay built in |
+| ❌ Small screen with buttons around it (SYNC 1) | Different system |
+| ✅ SYNC software **3.08 or 3.10** | Check under *Settings → General → About SYNC* |
 
-## Why AutoKit is silent on SYNC 2, and the fix
+Typical cars include the Focus, Mondeo, Kuga, C-Max and S-Max/Galaxy (2013–2016), plus North American
+models with MyFord Touch. The developer's car is a **2016 Ford Mondeo Mk5**. Other SYNC 2 cars
+run the same system, but nothing is guaranteed.
 
-SYNC 2 plays an app's sound only after the app asks Ford's audio router (`RAC.dll`) for a route.
-The community's VideoPlayer and Navitel do that through `WaveOutHooks.dll`. Their modules were
-patched (with IIDKing) to import it, and the ARM import thunk for `waveOutOpen`/`waveOutClose`
-was pointed at `waveOutOpenCustom`/`waveOutCloseCustom`. AutoKit calls COREDLL's `waveOutOpen`
-directly, so it gets no route and no sound. `patch_waveout.py` applies the same patch to
-`AutoKit.exe`, `libgstwaveoutsink.dll` and `libgstwaveform.dll`.
+## What you get
 
-## Usage
+| Feature | Status |
+|---|---|
+| 🍎 Apple CarPlay over a cable | Ready to test |
+| 🔊 Sound through the car's speakers | Fix built, **not yet confirmed in a car** |
+| 🤖 Android Auto with the same dongle | Next |
+| 💻 See what is installed on SYNC 2 from your Mac | Ready to test |
+| 📦 Install and remove apps from your Mac | Planned |
+| ⚡ CarPlay starts by itself when you plug in the phone | Planned |
 
-The tools read SyncExtPack's files from a clone next to this repo. Clone it first, then run
-the commands below:
+## What you need
+
+- [ ] **A Carlinkit wired adapter** (the "AutoKit" type for Android head units), for example
+      [this one on Amazon.se](https://www.amazon.se/dp/B0919JS1K3) (about 410 kr).
+      ⚠️ Do **not** buy "wired-to-wireless" adapters (2Air, U2W, Mini Ultra, 3.0/4.0/5.0). They
+      only work in cars that already have CarPlay.
+- [ ] **A USB stick**, 32 GB or smaller, formatted **FAT32**
+- [ ] **A Mac** with [Docker Desktop](https://www.docker.com/products/docker-desktop/) and Python 3
+      (Windows and Linux are untested)
+- [ ] **Your APIM serial**: 8 characters, under *Settings → General → About SYNC*
+
+## Quick start
+
+**1. Get the code.** Both folders must sit next to each other.
 
 ```sh
-git clone https://github.com/chr0m1ng/syncextpack ../syncextpack   # tested at 1a1eda0
+git clone https://github.com/Theralley/sync2-auto-magic
+git clone https://github.com/chr0m1ng/syncextpack
+cd sync2-auto-magic
 ```
+
+**2. Build your install pack.** Start Docker Desktop first.
 
 ```sh
-python3 -m unittest discover -s tests              # 67 tests (use the ../syncextpack binaries)
-python3 tools/make_pack.py <APIM_SERIAL> --dry-run # stage and patch only
-python3 tools/make_pack.py <APIM_SERIAL>           # full build (Docker Desktop must be running)
+python3 tools/make_pack.py YOURSERIAL
 ```
 
-The build writes `build/out/SyncExtPack_<serial>_AutoKit_Explorer_Reboot_audiofix.zip` plus a
-manifest with SHA-256 of every USB file and the "install before" date. **The pack key changes
-every 30 days, so install it within that window.** Install it following SyncExtPack's
+You get a zip in `build/out/` and an **"install before"** date. Packs only work inside a 30-day
+window, so build it shortly before you go to the car.
+
+**3. Install it in the car.** Keep the engine running.
+
+1. Unzip the pack onto the USB stick, so the stick has a `SyncExtPack` folder at its top.
+2. Insert the stick and go to *Settings → Display → Wallpaper → Add*. Pick the USB stick and
+   select **`Installer.jpg`**. SYNC restarts.
+3. Take the stick out, and on your computer rename `SyncExtPack/pack_install.bin` to
+   **`install.bin`**.
+4. Put the stick back in. The installation starts by itself, so wait until it finishes.
+
+The full guide with pictures is SyncExtPack's
 [installation guide](https://github.com/chr0m1ng/syncextpack/blob/main/SYNCEXTPACK_INSTALLATION.md).
 
-## s2am: check and change SYNC 2 from the Mac
+**4. Use it.** Plug the Carlinkit adapter into the car's USB port and connect your iPhone to the
+adapter with its cable. Then press **i → Apps → AutoKit**.
 
-Once SyncExtPack is installed, its `UpdateService` runs any `\SyncExtPack\install.bin` on a USB
-stick. `s2am` uses that as a job channel. Each job is a MortScript that does its work and
-writes a report back onto the stick, so the Mac can tell what is on the car.
+## See what is on your SYNC 2 from your Mac
+
+`s2am` puts a small "job" on a USB stick. The car runs it, writes a report back onto the
+stick, and your Mac shows the result.
 
 ```sh
-python3 -m s2am window                                   # is it safe to build a pack today?
-python3 -m s2am job inventory --serial <APIM_SERIAL>     # build an inventory job
-python3 -m s2am stick prepare /Volumes/<STICK> --job build/jobs/<id>
-#   car: insert the stick, wait for "Install successfully completed", pull it
-python3 -m s2am stick import /Volumes/<STICK>            # read the report back
-python3 -m s2am status --serial <APIM_SERIAL>            # apps, plugins, menu, free space
-python3 -m s2am diff --serial <APIM_SERIAL>              # what changed since the last report
+python3 -m s2am job inventory --serial YOURSERIAL           # 1. make the job
+python3 -m s2am stick prepare /Volumes/YOURSTICK --job build/jobs/<id>   # 2. put it on the stick
+#   3. in the car: insert the stick, wait for "Install successfully completed", pull it out
+python3 -m s2am stick import /Volumes/YOURSTICK             # 4. read the report
+python3 -m s2am status --serial YOURSERIAL                  # installed apps, menu, free space
+python3 -m s2am diff --serial YOURSERIAL                    # what changed since last time
 ```
 
-State lives in `~/.s2am/<serial>/` (override with `S2AM_HOME`). Preparing a stick moves earlier
-UpdateService files aside so a job cannot replay, and each job also leaves a done marker on the
-car. Jobs never touch firmware, boot files or UpdateService. Install, remove and menu jobs come
-in P2 and P3.
+A stick never runs the same job twice, even if you leave it in. Jobs never touch the firmware.
 
-**Rollback in the car** (Total Commander): the AutoKit folder keeps each original module as
-`*.orig`. Rename those back to restore stock AutoKit. If the screen stops reacting, hold
-Power + Seek-Up for about 10 s for a soft reset. The last resort is reflashing 3.10 or 3.08
-([firmware guide](https://github.com/chr0m1ng/syncextpack/blob/main/FIRMWARE_INSTALLATION.md)).
+## If something goes wrong
+
+| Problem | What to do |
+|---|---|
+| **Touchscreen frozen** after closing AutoKit | Hold **Power + Seek-Up (⏭)** for about 10 s. SYNC restarts. |
+| **CarPlay shows but there is no sound** | That is exactly what this project is testing. Please [open an issue](https://github.com/Theralley/sync2-auto-magic/issues) and include your SYNC version. |
+| **Undo the sound fix** | Open Total Commander (it is in *Apps*) and go to `\SyncExtendedPack\Apps\Media\AutoKit\`. Rename the `*.orig` files back to their original names. |
+| **Remove everything** | Reinstall SYNC software 3.10 or 3.08 with the [firmware guide](https://github.com/chr0m1ng/syncextpack/blob/main/FIRMWARE_INSTALLATION.md). |
+
+## How it works
+
+<details>
+<summary><b>Why AutoKit has no sound on SYNC 2, and how it is fixed</b></summary>
+
+SYNC 2 only plays an app's sound after the app asks Ford's audio system (`RAC.dll`) for a
+route. The community's VideoPlayer and Navitel apps do this through a small helper,
+`WaveOutHooks.dll`. Carlinkit's AutoKit doesn't, so you get a picture but no sound.
+
+`tools/patch_waveout.py` makes AutoKit use the same helper. It changes how
+`AutoKit.exe`, `libgstwaveoutsink.dll` and `libgstwaveform.dll` load their sound functions,
+copying the patch that already works in VideoPlayer. The originals are kept as `*.orig`.
+</details>
+
+<details>
+<summary><b>How the Mac talks to the car</b></summary>
+
+After the first install, SyncExtPack leaves a service on SYNC 2. It runs any
+`SyncExtPack\install.bin` it finds on a USB stick and then writes a log back to the stick.
+`s2am` uses that as a job channel:
+
+- each job runs a small MortScript;
+- the script writes its report to `\USB Disk\s2am\reports\<job>\`;
+- it leaves a "done" marker on the car, so a job can never run twice.
+
+Packs are built with SyncExtPack's own `crypto_pack` inside a Docker container, so its
+third-party tools never run directly on your Mac. Read
+[docs/TOOLKIT-PLAN.md](docs/TOOLKIT-PLAN.md) for the full design and roadmap.
+</details>
+
+<details>
+<summary><b>For developers</b></summary>
+
+```sh
+python3 -m unittest discover -s tests       # 67 tests; uses ../syncextpack (tested at 1a1eda0)
+python3 tools/make_pack.py SERIAL --dry-run  # stage and patch only, no build
+python3 -m s2am window                       # is the current 30-day key window safe to build in?
+```
+
+| Folder | What is inside |
+|---|---|
+| `tools/` | `patch_waveout.py` (the sound fix), `make_pack.py` (builds the install pack) |
+| `s2am/` | The Mac toolkit: jobs, USB stick, reports, status/diff, a fake SYNC 2 for tests |
+| `docker/` | The offline Linux container that runs SyncExtPack's build tools |
+| `docs/` | [PLAN.md](docs/PLAN.md) (research and decisions), [TOOLKIT-PLAN.md](docs/TOOLKIT-PLAN.md) |
+
+The `../syncextpack` clone is never modified. State is kept in `~/.s2am/<serial>/`; set
+`S2AM_HOME` to change it.
+</details>
+
+## Disclaimer
+
+Changing your SYNC 2 software is at your own risk and may affect your warranty. Do not set
+anything up while driving. This project is not affiliated with Ford, Apple, Google or Carlinkit.
+
+## Credits
+
+- [SyncExtPack](https://github.com/chr0m1ng/syncextpack) by chr0m1ng and the XDA MyFord Touch
+  community, which made sideloading on SYNC 2 possible
+- Carlinkit, for AutoKit; MortScript by Mirko Schenk
+- The compatibility picture comes from a SYNC 2 product listing on AliExpress
