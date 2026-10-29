@@ -47,6 +47,11 @@ On SYNC 2: *Settings → General → About SYNC*. **Photograph the screen.** It 
 **APIM serial** (8 characters) and the **software version**. SyncExtPack recommends 3.10; note
 exactly what it says.
 
+- The serial **never contains the letter O**: anything that looks like O is a zero (0).
+  `s2am` refuses an O.
+- Check that SYNC shows the **right date and time**. Packs are tied to a 30-day window, and a
+  SYNC clock that is far off makes an install fail silently.
+
 ### 3. Recovery stick (stick B)
 
 Get the **3.10 update package for your region** (see SyncExtPack's
@@ -64,6 +69,7 @@ python3 -m s2am bootstrap prepare --serial SERIAL --stick /Volumes/SYNC   # stic
 python3 -m s2am job inventory       --serial SERIAL   # session 3
 python3 -m s2am job autokit-stock   --serial SERIAL   # A/B test in session 2
 python3 -m s2am job autokit-patched --serial SERIAL   # A/B test in session 2
+python3 -m s2am job autokit-config  --serial SERIAL   # fallback if the CarPlay picture is wrong
 ```
 
 The current window closes **2026-11-17 09:35 UTC**. Builds are refused within 2 days of that
@@ -75,13 +81,16 @@ off, so do not build at the edges.
 - the Mac (the rename step, the job sticks, reading reports), stick A and stick B
 - the adapter and a cable from it to the iPhone (Lightning, or USB-C for iPhone 15 and later)
 - the phone, charged
+- **USB ports:** always put the stick in the **same** USB port and the adapter in the other.
+  UpdateService writes its own `install_log.txt` only to the stick it sees as `\USB Disk`, so a
+  missing log does not prove that nothing ran. `s2am` reports find the stick on any port.
 - **fuel and a healthy battery**; turn **Auto-Start-Stop off** so the engine keeps running
 
 ## Session 1: install (about 20 minutes)
 
 | Step | Do | Check | If not |
 |---|---|---|---|
-| 1.1 | Start the engine and turn off Start-Stop. Wait until SYNC 2 has fully loaded | Home screen | — |
+| 1.1 | Start the engine and turn off Start-Stop. Wait until SYNC 2 has fully loaded | Home screen; **date and time correct** | Wrong clock: fix it in SYNC settings first |
 | 1.2 | Insert stick A. *Settings → Display → Wallpaper → Add →* the USB stick → **Installer.jpg**. Tap once and wait. | SYNC shows the installer, then **restarts** | See *Install problems* below |
 | 1.3 | After SYNC has fully restarted, pull the stick. On the Mac: **`python3 -m s2am bootstrap finish /Volumes/SYNC`**. It checks the build, renames `pack_install.bin` to `install.bin`, and ejects. | Prints "ready" | Do not rename by hand; the command's checks stop a wrong or expired pack |
 | 1.4 | Put the stick back in | Installation window with progress, then **"Install successfully completed!"**; it may restart | See *Install problems* below |
@@ -125,15 +134,24 @@ allow CarPlay. Then *i → Apps → AutoKit*.
 ### A/B test: is the patch really the reason? (do it whatever T3 showed)
 
 The installed pack runs the **patched** modules. Swap all three modules with a job stick, so
-nobody has to rename files by hand:
+nobody has to rename files by hand. **Every swap needs a freshly built job:** a job runs only
+once, so inserting an old stock stick again changes nothing.
 
 1. Restart SYNC (do not open AutoKit). On the Mac:
-   `s2am stick prepare /Volumes/SYNC --job build/jobs/<akstock id>`. Insert the stick and wait
-   for "completed". Pull it. Then `s2am stick import` and `s2am status`, which must say
-   **"AutoKit audio modules: stock (all 3)"**.
+   ```sh
+   python3 -m s2am stick prepare /Volumes/SYNC --job build/jobs/<akstock id>   # also ejects
+   ```
+   Insert the stick, wait for "completed", and pull it. Then:
+   ```sh
+   python3 -m s2am stick import /Volumes/SYNC
+   python3 -m s2am status --serial SERIAL     # must say "AutoKit audio modules: stock (all 3)"
+   ```
 2. Restart SYNC and repeat T1–T3 → that is the **stock** result.
 3. Run the `autokit-patched` job the same way. `status` must say **"patched (all 3)"**. Restart
    SYNC and repeat T1–T3.
+4. To switch again, build a new job (`python3 -m s2am job autokit-stock --serial SERIAL`, about
+   5 seconds) instead of reusing an old stick. Keep the decoder setting the same for every A/B
+   run.
 
 | Patched | Stock | Meaning |
 |---|---|---|
@@ -142,8 +160,14 @@ nobody has to rename files by hand:
 | none | none | inconclusive; try Bluetooth (below) |
 | none | sound | the patch breaks it; stay on stock |
 
-If an import says **busy**, AutoKit was still running: restart SYNC and insert the same stick
-again. The job has not run yet.
+If an import says **busy**, AutoKit was still running and nothing changed. UpdateService has
+used up the stick anyway, so restart SYNC, run `python3 -m s2am stick prepare` with **the same
+job** again on the Mac, and insert the stick.
+
+**If the CarPlay picture is black, garbled or the wrong size:** the shipped AutoKit asks for
+hardware decoding through a path made for other chips. Run the prepared `autokit-config` job
+(800×480, software decoding), restart SYNC, and repeat T1. This is the fix SYNC 2 owners
+used on XDA. `autokit-config --restore <id>` puts the old settings back.
 
 **Bluetooth variant (after the A/B test):** pair the iPhone with SYNC and select the BT audio
 source, then repeat T3. A forum report says sound came "over BT" on 3.10.
@@ -160,6 +184,19 @@ python3 -m s2am status --serial SERIAL
 **G6 passes only** if `status` lists AutoKit's files **and** a menu (not "missing from the
 report"). `processed-no-report` means only that the installer ran: MortScript wrote nothing.
 Keep the stick; `install_log.txt` is saved in `~/.s2am`.
+
+## Then: native code, logger and Android Auto
+
+```sh
+python3 -m s2am job native-hello --serial SERIAL   # import must print "verified: native code runs"
+python3 -m s2am job logger --native --serial SERIAL
+python3 -m s2am job autokit-config --serial SERIAL # before plugging in the S24 (Android Auto)
+```
+
+**The logger needs the stick to stay in.** After "Install successfully completed", the logger
+runs for 180 s in the background. Plug and unplug the phone a few times, then wait until the
+time is up before pulling the stick. `python3 -m s2am report --serial SERIAL` shows the
+timeline. The native log ends with an `|end|` line when it finished.
 
 ## Recovery card
 

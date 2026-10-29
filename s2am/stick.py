@@ -113,8 +113,15 @@ def import_reports(stick: Path, store: Store, require_volume: bool = True) -> li
 
         report = stick / "s2am" / "reports" / job.id
         status, replayed = _status(report, updater)
+        now = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+        try:
+            earlier = store.job(job.serial, job.id).get("imported_utc") if replayed else None
+        except (OSError, ValueError):
+            earlier = None
+        # A replayed job ran nothing: its report is the first run's, so it keeps that run's
+        # place in time instead of looking like fresh evidence.
         record = {**json.loads(job.to_json()), "status": status, "replayed": replayed,
-                  "imported_utc": datetime.now(timezone.utc).isoformat(timespec="microseconds")}
+                  "imported_utc": earlier or now}
         if report.exists() and _has_symlink(report):
             record["status"] = "rejected"
             record["reason"] = "report contains a symlink"

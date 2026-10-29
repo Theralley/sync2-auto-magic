@@ -110,7 +110,18 @@ class Script(unittest.TestCase):
             if literal.startswith(("\\", "/")):
                 self.assertNotIn("/", literal, literal)
         self.assertIn(f"\\SyncExtendedPack\\_s2am\\done\\{self.job.id}.txt", self.script)
-        self.assertIn(f"\\USB Disk\\s2am\\reports\\{self.job.id}", self.script)
+        self.assertIn(f'out = stick & "\\s2am\\reports\\{self.job.id}"', self.script)
+
+    def test_more_or_fewer_than_one_matching_mount_is_flagged(self):
+        flag = self.script.index("If (found <> 1)")
+        self.assertLess(self.script.index("MkDir(out)"), flag)
+        self.assertIn("mount-check.txt", self.script)
+
+    def test_stick_is_found_by_its_pending_file_before_anything_is_written(self):
+        find = self.script.index(f'"\\s2am\\pending\\{self.job.id}.json"')
+        self.assertLess(find, self.script.index("MkDir("))
+        for mount in ("\\USB Disk", "\\USB Disk2", "\\USB Disk 2"):
+            self.assertIn(f'"{mount}"', self.script)
 
     def test_errors_never_open_dialogs(self):
         self.assertEqual(self.script.splitlines()[1], 'ErrorLevel("off")')
@@ -227,6 +238,20 @@ class Loop(Temp):
         results = stick.import_reports(self.stick, Store(), require_volume=False)
         self.assertEqual((results[0]["status"], results[0]["replayed"]), ("applied", True))
         self.assertEqual(Store().latest_inventory(SERIAL)[0], job.id)
+
+    def test_replayed_old_job_does_not_become_the_latest_evidence(self):
+        first, first_work = self.run_job()
+        self.car.insert(self.stick, first_work, first)
+        stick.import_reports(self.stick, Store(), require_volume=False)
+        second, second_work = self.run_job()
+        self.car.insert(self.stick, second_work, second)
+        stick.import_reports(self.stick, Store(), require_volume=False)
+        # The old stick goes in again: the job replays, ran nothing, and must not count as new.
+        stick.prepare(self.stick, first_work / "install.bin", first, require_volume=False)
+        self.car.insert(self.stick, first_work, first)
+        results = stick.import_reports(self.stick, Store(), require_volume=False)
+        self.assertTrue(results[0]["replayed"])
+        self.assertEqual(Store().latest_inventory(SERIAL)[0], second.id)
 
     def test_job_that_ran_without_report_keeps_its_log(self):
         job, work = self.run_job()

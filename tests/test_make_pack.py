@@ -5,6 +5,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -111,3 +112,54 @@ class ValidThru(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VerifyPacks(unittest.TestCase):
+    """make_pack unpacks both packs with crypto_pack (mocked here) and checks the contents."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.result = self.tmp / "SyncExtPack" / "XV31M13H" / "SyncExtPack"
+        self.result.mkdir(parents=True)
+        self.changes = [{"file": "AutoKit.exe", "original_sha256": "a" * 64, "patched_sha256": "b" * 64},
+                        {"file": "WaveOutHooks.dll", "sha256": "c" * 64}]
+
+    def fake_unpack(self, good):
+        def run(staging, *command, quiet=False):
+            target = staging / command[3]
+            if command[2].endswith("update.bin"):
+                (target / "windows").mkdir(parents=True)
+                (target / "windows" / "UpdateService.dll").write_bytes(b"u")
+                return
+            files = {"windows/AutoKitPlugin.dll": b"p", "windows/ExplorerPlugin.dll": b"p",
+                     "windows/RebootPlugin.dll": b"p", "SyncExtendedPack/Apps/Tools/explorer.exe": b"e",
+                     "SyncExtendedPack/Apps/Media/AutoKit/WaveOutHooks.dll": b"h"}
+            for path, data in files.items():
+                (target / path).parent.mkdir(parents=True, exist_ok=True)
+                (target / path).write_bytes(data)
+            autokit = target / "SyncExtendedPack/Apps/Media/AutoKit"
+            (autokit / "AutoKit.exe").write_bytes(b"patched")
+            (autokit / "AutoKit.exe.patched").write_bytes(b"patched")
+            (autokit / "AutoKit.exe.orig").write_bytes(b"orig" if good else b"wrong")
+            menu = target / mp.MENU_PATH
+            menu.parent.mkdir(parents=True)
+            menu.write_bytes(mp.apps_menu.render_menu([("AutoKit", "AutoKitPlugin", ""),
+                                                       ("Total Commander", "ExplorerPlugin", ""),
+                                                       ("Reboot", "RebootPlugin", "")]))
+        return run
+
+    def check(self, good):
+        import hashlib
+        self.changes[0]["original_sha256"] = hashlib.sha256(b"orig").hexdigest()
+        self.changes[0]["patched_sha256"] = hashlib.sha256(b"patched").hexdigest()
+        with mock.patch.object(mp.container, "run", side_effect=self.fake_unpack(good)):
+            mp.verify_packs(self.tmp, self.result, "XV31M13H", mp.DEFAULT_APPS, self.changes)
+
+    def test_expected_contents_pass_and_folders_are_cleaned(self):
+        self.check(good=True)
+        self.assertFalse((self.tmp / "verify_apps").exists())
+
+    def test_wrong_original_module_fails(self):
+        with self.assertRaisesRegex(mp.BuildError, "AutoKit.exe.orig"):
+            self.check(good=False)

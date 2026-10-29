@@ -22,7 +22,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-from s2am import autokit, container  # noqa: E402
+from s2am import apps as apps_menu, autokit, container  # noqa: E402
 from s2am.job import AUTOKIT_MODULES  # noqa: E402
 from s2am.window import valid_thru  # noqa: E402
 
@@ -90,6 +90,55 @@ def collect(staging: Path, serial: str) -> Path:
     return result
 
 
+# What a bootstrap pack must contain once unpacked, per default app (car paths).
+APP_FILES = {
+    "AutoKit": ("windows/AutoKitPlugin.dll", "SyncExtendedPack/Apps/Media/AutoKit/AutoKit.exe"),
+    "Explorer": ("windows/ExplorerPlugin.dll", "SyncExtendedPack/Apps/Tools/explorer.exe"),
+    "Reboot": ("windows/RebootPlugin.dll",),
+}
+MENU_NAMES = {"AutoKit": "AutoKit", "Explorer": "Total Commander", "Reboot": "Reboot"}
+MENU_PATH = "8inchSkins/Ford/Sync/Apps/Info/SyncApps/SyncApps.xml"
+
+
+def verify_packs(staging: Path, result: Path, serial: str, apps: tuple[str, ...],
+                 changes: list[dict]) -> None:
+    """Unpack both packs with crypto_pack itself and check what the car would receive."""
+    for pack_name, folder in (("pack_install.bin", "verify_apps"), ("update.bin", "verify_update")):
+        target = staging / folder
+        if target.exists():
+            shutil.rmtree(target)
+        container.run(staging, "./crypto_pack", "-u", str((result / pack_name).relative_to(staging)),
+                      folder, serial, "0", quiet=True)
+    unpacked, update = staging / "verify_apps", staging / "verify_update"
+    problems = []
+    if not (update / "windows" / "UpdateService.dll").is_file():
+        problems.append("update.bin has no windows/UpdateService.dll")
+    for app in apps:
+        for path in APP_FILES.get(app, ()):
+            if not (unpacked / path).is_file():
+                problems.append(f"pack_install.bin has no {path}")
+    autokit = unpacked / AUTOKIT_DIR.relative_to("FullPack")
+    for change in changes:
+        if "patched_sha256" in change:
+            for name, key in ((change["file"], "patched_sha256"),
+                              (change["file"] + ".patched", "patched_sha256"),
+                              (change["file"] + ".orig", "original_sha256")):
+                if not (autokit / name).is_file() or sha256(autokit / name) != change[key]:
+                    problems.append(f"AutoKit/{name} is missing or not the expected build")
+        elif not (autokit / change["file"]).is_file():
+            problems.append(f"AutoKit/{change['file']} is missing")
+    menu = unpacked / MENU_PATH
+    if menu.is_file():
+        names = {n for n, _, _ in apps_menu.menu_entries(menu.read_bytes()) if n}
+        problems += [f"menu lacks {MENU_NAMES[a]}" for a in apps if MENU_NAMES.get(a) not in names]
+    else:
+        problems.append("pack_install.bin has no SyncApps.xml")
+    for folder in (unpacked, update):
+        shutil.rmtree(folder, ignore_errors=True)
+    if problems:
+        raise BuildError("the built packs do not unpack as expected: " + "; ".join(problems[:6]))
+
+
 def write_package(result: Path, output: Path, serial: str, apps: tuple[str, ...],
                   changes: list[dict], expires: datetime) -> Path:
     output.mkdir(parents=True, exist_ok=True)
@@ -139,8 +188,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"staged at {args.staging}; dry run, nothing built")
             return 0
         run_upstream(args.staging.resolve(), serial, apps)
-        archive = write_package(collect(args.staging.resolve(), serial), args.output,
-                                serial, apps, changes, expires)
+        result = collect(args.staging.resolve(), serial)
+        if "AutoKit" in apps:
+            verify_packs(args.staging.resolve(), result, serial, apps, changes)
+        archive = write_package(result, args.output, serial, apps, changes, expires)
     except (BuildError, container.ContainerError, subprocess.CalledProcessError, OSError) as error:
         print(f"build failed: {error}", file=sys.stderr)
         return 1

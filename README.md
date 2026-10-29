@@ -215,7 +215,7 @@ third-party tools never run directly on your Mac. Read
 <summary><b>For developers</b></summary>
 
 ```sh
-python3 -m unittest discover -s tests       # 152 tests; uses ../syncextpack (tested at 1a1eda0)
+python3 -m unittest discover -s tests       # 157 tests; uses ../syncextpack (tested at 1a1eda0)
 python3 tools/make_pack.py SERIAL --dry-run  # stage and patch only, no build
 python3 -m s2am window                       # is the current 30-day key window safe to build in?
 ```

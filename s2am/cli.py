@@ -268,7 +268,16 @@ def cmd_stick_prepare(args) -> int:
     print(f"job {job.id} is on {args.stick}")
     if archive.exists():
         print(f"earlier UpdateService files moved to {archive}")
-    print("in the car: insert the stick, wait for 'Install successfully completed', pull it")
+    if job.kind == "log":
+        seconds = job.params.get("seconds", 180)
+        print(f"in the car: insert the stick and LEAVE IT IN. After 'Install successfully completed' "
+              f"the logger runs for {seconds} s: plug and unplug the phone meanwhile, then wait "
+              f"{seconds} s more before pulling the stick")
+    else:
+        print("in the car: insert the stick, wait for 'Install successfully completed', pull it")
+    if job.kind in apps.MENU_KINDS:
+        print("SYNC restarts after this job")
+    _eject(Path(args.stick), args)
     return 0
 
 
@@ -281,6 +290,16 @@ def cmd_stick_import(args) -> int:
         note = " (stick was inserted again; nothing ran twice)" if record.get("replayed") else ""
         reason = f" ({record['reason']})" if record.get("reason") else ""
         print(f"{record['id']}: {record['status']}{note}{reason}{STOP_HINTS.get(record['status'], '')}")
+        report = store.report(record.get("serial", ""), record["id"]) if record.get("serial") else None
+        if report and (report / "mount-check.txt").is_file():
+            print("  warning: " + (report / "mount-check.txt").read_text(errors="replace").strip()
+                  + " (use one stick, always in the same USB port)")
+        if record.get("kind") == "hello" and record["status"] == "applied":
+            hello = report / "native-hello.txt" if report else None
+            text = hello.read_text(errors="replace").strip() if hello and hello.is_file() else ""
+            print(f"  verified: native code runs on this SYNC 2 ({text.split('|')[1]})"
+                  if text.startswith("s2am native hello ok") and "|" in text else
+                  "  NOT verified: hello.exe wrote nothing; native code may not run here")
         if record.get("kind") in apps.MENU_KINDS and record["status"] == "applied":
             verdict = _verify_menu(store, record)
             print(f"  {verdict}")
@@ -293,7 +312,8 @@ def cmd_stick_import(args) -> int:
 STOP_HINTS = {
     "stale": ": the car's menu changed since the job was planned. Nothing changed; run an "
              "inventory, then plan again",
-    "busy": ": the app was running. Nothing changed; restart SYNC and insert the same stick again",
+    "busy": ": the app was running and nothing changed. UpdateService used up the stick anyway: "
+            "restart SYNC, run `s2am stick prepare` with the same job again, then insert it",
     "failed": ": the job stopped before deleting anything; its report says why "
               "(copy-failed means the old menu was put back)",
 }
@@ -564,6 +584,7 @@ def parser() -> argparse.ArgumentParser:
     prepare.add_argument("stick")
     prepare.add_argument("--job", required=True, help="the job's staging folder")
     prepare.add_argument("--any-path", action="store_true", help="allow a folder outside /Volumes")
+    prepare.add_argument("--no-eject", action="store_true")
     prepare.set_defaults(func=cmd_stick_prepare)
     imp = stick_sub.add_parser("import")
     imp.add_argument("stick")

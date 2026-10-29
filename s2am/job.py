@@ -117,6 +117,26 @@ def _quote(text: str) -> str:
     return f'"{text}"'
 
 
+# Mount names a USB stick may get on SYNC 2. UpdateService itself finds install.bin on any
+# of them ("%s\\SyncExtPack\\install.bin") but logs to a fixed "\\USB Disk", so the job
+# looks for its own pending file to know which one is the stick.
+STICK_MOUNTS = ("\\USB Disk", "\\USB Disk2", "\\USB Disk 2", "\\USB Disk1", "\\USB Disk3")
+
+
+def _find_stick(job: Job) -> list[str]:
+    candidates = ", ".join(_quote(m) for m in STICK_MOUNTS)
+    return [
+        f"stick = {_quote(STICK_MOUNTS[0])}",
+        "found = 0",
+        f"ForEach d in values({candidates})",
+        f'  If (FileExists(d & "\\s2am\\pending\\{job.id}.json"))',
+        "    stick = d",
+        "    found = found + 1",
+        "  EndIf",
+        "EndForEach",
+    ]
+
+
 def _header(job: Job) -> list[str]:
     """Silence error dialogs, create the report folder, and stop if this job already ran.
 
@@ -128,10 +148,14 @@ def _header(job: Job) -> list[str]:
     return [
         f"# s2am {job.kind} job {job.id}",
         'ErrorLevel("off")',
-        f"out = {_quote(ce_path(job.report_dir))}",
-        'MkDir("\\USB Disk\\s2am")',
-        'MkDir("\\USB Disk\\s2am\\reports")',
+        *_find_stick(job),
+        f'out = stick & "\\s2am\\reports\\{job.id}"',
+        'MkDir(stick & "\\s2am")',
+        'MkDir(stick & "\\s2am\\reports")',
         "MkDir(out)",
+        "If (found <> 1)",
+        '  WriteFile(out & "\\mount-check.txt", "pending file found on " & found & " USB mounts")',
+        "EndIf",
         f"If (FileExists({_quote(ce_path(job.done_marker))}))",
         f'  WriteFile(out & "\\replayed.txt", {_quote(job.id)})',
         "  Exit",
@@ -212,7 +236,7 @@ def autokit_script(job: Job, variant: str) -> str:
         raise ValueError(f"unknown AutoKit variant {variant!r}")
     swap = [
         'If (ProcExists("AutoKit.exe"))',
-        '  WriteFile(out & "\\busy.txt", "AutoKit is running: restart SYNC, insert the stick again")',
+        '  WriteFile(out & "\\busy.txt", "AutoKit is running: restart SYNC and re-prepare the stick on the Mac")',
         "  Exit",
         "EndIf",
         f"ak = {_quote(AUTOKIT_CE)}",
@@ -274,7 +298,7 @@ def menu_change_script(job: Job) -> str:
     lines = _header(job) + _menu_files(job, p["expected_len"], p["new_len"])
     for exe in p.get("executables", []):
         lines += [f"If (ProcExists({_quote(exe)}))",
-                  *_stop("busy.txt", exe + " is running: restart SYNC, insert the stick again", "  "),
+                  *_stop("busy.txt", exe + " is running: restart SYNC and re-prepare the stick on the Mac", "  "),
                   "EndIf"]
     lines += [
         f"If (FileExists({_quote(phase)}))",
@@ -358,7 +382,7 @@ def autokit_config_script(job: Job) -> str:
         *_stop("missing.txt", "AutoKit is not installed; nothing changed", "  "),
         "EndIf",
         'If (ProcExists("AutoKit.exe"))',
-        *_stop("busy.txt", "AutoKit is running: restart SYNC, insert the stick again", "  "),
+        *_stop("busy.txt", "AutoKit is running: restart SYNC and re-prepare the stick on the Mac", "  "),
         "EndIf",
     ]
     if p.get("restore"):
@@ -476,7 +500,8 @@ def logger_loop(job: Job) -> str:
     return _script([
         f"# s2am logger for job {job.id}",
         'ErrorLevel("off")',
-        f'log = {_quote(ce_path(job.report_dir) + chr(92) + "log.txt")}',
+        *_find_stick(job),
+        f'log = stick & "\\s2am\\reports\\{job.id}\\log.txt"',
         'WriteFile(log, "start|" & FormatTime("Y-m-d H:i:s") & "^NL^", TRUE)',
         "i = 0",
         f"While (i < {seconds})",

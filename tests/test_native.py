@@ -103,11 +103,12 @@ class Loop(unittest.TestCase):
         (work / "install.bin").write_bytes(b"pack")
         stick.prepare(self.stick, work / "install.bin", job, require_volume=False)
         self.car.insert(self.stick, work, job)
-        self.cli("stick", "import", str(self.stick), "--any-path")
+        self.imported = self.cli("stick", "import", str(self.stick), "--any-path")[1]
         return job, work
 
     def test_native_hello_ships_the_program_and_reports(self):
         job, work = self.run_job("native-hello")
+        self.assertIn("verified: native code runs on this SYNC 2 (wince 7.0 build 3500)", self.imported)
         self.assertEqual((work / "payload" / job.job_dir.lstrip("/") / "hello.exe").read_bytes(),
                          b"MZ stand-in")
         self.assertIn("s2am native hello ok", self.cli("report", "--serial", SERIAL, job.id)[1])
