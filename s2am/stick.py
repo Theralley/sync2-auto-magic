@@ -19,7 +19,10 @@ from .job import Job
 from .state import Store
 
 UPDATER_DIR = "SyncExtPack"
-UPDATER_FILES = ("install.bin", "installed.bin", "install_log.txt", "pack_install.bin")
+# Earlier runs' files, plus the bootstrap's stage-one files: leaving Installer.jpg
+# on a job stick would let the wallpaper picker reinstall the base pack by accident.
+UPDATER_FILES = ("install.bin", "installed.bin", "install_log.txt", "pack_install.bin",
+                 "Installer.jpg", "UpdateInstaller.dll", "update.bin")
 
 
 class StickError(Exception):

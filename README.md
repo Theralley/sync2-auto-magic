@@ -59,26 +59,28 @@ git clone https://github.com/chr0m1ng/syncextpack
 cd sync2-auto-magic
 ```
 
-**2. Build your install pack.** Start Docker Desktop first.
+**2. Check the stick and put the install pack on it.** Start Docker Desktop first.
 
 ```sh
-python3 tools/make_pack.py YOURSERIAL
+python3 -m s2am stick check /Volumes/SYNC                                  # must show no ✗
+python3 -m s2am bootstrap prepare --serial YOURSERIAL --stick /Volumes/SYNC
 ```
 
-You get a zip in `build/out/` and an **"install before"** date. Packs only work inside a 30-day
-window, so build it shortly before you go to the car.
+This builds the pack, writes it to the stick, verifies every file and ejects the stick. It
+prints an **"install before"** date: packs only work inside a 30-day window.
 
-**3. Install it in the car.** Keep the engine running.
+**3. Install it in the car.** Keep the engine running, with Start-Stop off.
 
-1. Unzip the pack onto the USB stick, so the stick has a `SyncExtPack` folder at its top.
-2. Insert the stick and go to *Settings → Display → Wallpaper → Add*. Pick the USB stick and
+1. Insert the stick and go to *Settings → Display → Wallpaper → Add*. Pick the USB stick and
    select **`Installer.jpg`**. SYNC restarts.
-3. Take the stick out, and on your computer rename `SyncExtPack/pack_install.bin` to
-   **`install.bin`**.
-4. Put the stick back in. The installation starts by itself, so wait until it finishes.
+2. Take the stick out. On your Mac run
+   `python3 -m s2am bootstrap finish /Volumes/SYNC` (this is the "rename" step, done safely).
+3. Put the stick back in. The installation starts by itself, so wait for
+   **"Install successfully completed!"**.
 
-The full guide with pictures is SyncExtPack's
-[installation guide](https://github.com/chr0m1ng/syncextpack/blob/main/SYNCEXTPACK_INSTALLATION.md).
+First time? Follow the step-by-step **[Phase 1 runbook](docs/P1-RUNBOOK.md)**. It covers the
+recovery stick, what to check at every step, and the CarPlay sound test. The upstream guide is
+SyncExtPack's [installation guide](https://github.com/chr0m1ng/syncextpack/blob/main/SYNCEXTPACK_INSTALLATION.md).
 
 **4. Use it.** Plug the Carlinkit adapter into the car's USB port and connect your iPhone to the
 adapter with its cable. Then press **i → Apps → AutoKit**.
@@ -142,7 +144,7 @@ third-party tools never run directly on your Mac. Read
 <summary><b>For developers</b></summary>
 
 ```sh
-python3 -m unittest discover -s tests       # 67 tests; uses ../syncextpack (tested at 1a1eda0)
+python3 -m unittest discover -s tests       # 88 tests; uses ../syncextpack (tested at 1a1eda0)
 python3 tools/make_pack.py SERIAL --dry-run  # stage and patch only, no build
 python3 -m s2am window                       # is the current 30-day key window safe to build in?
 ```

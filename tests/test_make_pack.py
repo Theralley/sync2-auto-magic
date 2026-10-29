@@ -50,6 +50,8 @@ class Stage(unittest.TestCase):
         for name in mp.PATCH_TARGETS:
             original = (self.upstream / mp.AUTOKIT_DIR / name).read_bytes()
             self.assertEqual((autokit / (name + ".orig")).read_bytes(), original)
+            self.assertEqual((autokit / (name + ".patched")).read_bytes(),
+                             (autokit / name).read_bytes())
             imports = [d[1] for d in pw.PEImage((autokit / name).read_bytes()).import_descriptors()]
             self.assertEqual(imports[-1], pw.HOOK_DLL_NAME)
         self.assertTrue((autokit / pw.HOOK_DLL_NAME).is_file())

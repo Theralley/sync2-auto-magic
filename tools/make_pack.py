@@ -65,7 +65,9 @@ def stage(upstream: Path, staging: Path) -> list[dict]:
             patched = patch_waveout.patch(original, hook.read_bytes())
         except patch_waveout.PatchError as error:
             raise BuildError(f"{name}: {error}") from error
+        # Both variants stay on the car so an s2am job can swap them for A/B tests.
         module.with_name(name + ".orig").write_bytes(original)
+        module.with_name(name + ".patched").write_bytes(patched)
         module.write_bytes(patched)
         changes.append({"file": name, "original_sha256": hashlib.sha256(original).hexdigest(),
                         "patched_sha256": hashlib.sha256(patched).hexdigest()})

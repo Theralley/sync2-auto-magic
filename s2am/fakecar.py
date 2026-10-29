@@ -11,7 +11,8 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from .job import INVENTORY_ROOT, MENU_XML, PLUGINS_MASK, REPORTS_DIR, Job, ce_path
+from .job import (AUTOKIT_CE, AUTOKIT_MODULES, INVENTORY_ROOT, MENU_XML, PLUGINS_MASK,
+                  REPORTS_DIR, Job, ce_path)
 
 
 class FakeCar:
@@ -19,6 +20,7 @@ class FakeCar:
         self.root = root
         self.serial = serial
         self.runs = 0
+        self.autokit_running = False
         root.mkdir(parents=True, exist_ok=True)
 
     # Paths -----------------------------------------------------------------
@@ -65,13 +67,22 @@ class FakeCar:
         if not (updater / "installed.bin").exists():  # otherwise the rename fails silently
             install.rename(updater / "installed.bin")
 
-    # The inventory script's effect -------------------------------------------
+    # The job scripts' effect --------------------------------------------------
     def _run_inventory(self, stick: Path, job: Job) -> None:
         out = stick / job.report_dir.replace(REPORTS_DIR.split("/s2am")[0] + "/", "")
         out.mkdir(parents=True, exist_ok=True)
         if self.exists(job.done_marker):
             (out / "replayed.txt").write_text(job.id)
             return
+        variant = {"akstock": "orig", "akpatch": "patched"}.get(job.kind)
+        if variant:
+            if self.autokit_running:
+                (out / "busy.txt").write_text("AutoKit is running")
+                return
+            for module in AUTOKIT_MODULES:
+                source = self._resolve(f"{AUTOKIT_CE}\\{module}.{variant}")
+                if source.exists():
+                    shutil.copyfile(source, self._resolve(f"{AUTOKIT_CE}\\{module}"))
         lines = []
         apps = self._resolve(INVENTORY_ROOT)
 

@@ -1,7 +1,11 @@
 """s2am command line.
 
     s2am window                                  key window and whether it is safe to build
+    s2am stick check /Volumes/STICK              FAT32, MBR, size, nothing left to run
+    s2am bootstrap prepare --serial S --stick /Volumes/STICK   first install, stage one
+    s2am bootstrap finish /Volumes/STICK         first install, the rename step
     s2am job inventory --serial XXXXXXXX         build an inventory job (install.bin)
+    s2am job autokit-stock|autokit-patched ...   swap AutoKit's audio modules, then inventory
     s2am stick prepare /Volumes/STICK --job DIR  put that job on a stick
     s2am stick import /Volumes/STICK             read back what the car wrote
     s2am status --serial XXXXXXXX                apps, plugins and menu from the last report
@@ -17,9 +21,9 @@ import xml.etree.ElementTree as ElementTree
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import pack, stick, window
+from . import bootstrap, diskcheck, pack, stick, window
 from .container import REPO, ContainerError
-from .job import SERIAL, Job, stage
+from .job import AUTOKIT_CE, AUTOKIT_MODULES, SERIAL, Job, stage
 from .state import Store, diff, parse_inventory
 
 UPSTREAM = REPO.parent / "syncextpack"
@@ -41,11 +45,63 @@ def cmd_window(args) -> int:
     print(f"current key window ends {end:%Y-%m-%d %H:%M} UTC")
     print("safe to build and install" if safe else
           "too close to a window boundary: wait, or use --force")
+    return 0 if safe else 1
+
+
+JOB_KINDS = {"inventory": "inv", "autokit-stock": "akstock", "autokit-patched": "akpatch"}
+MARK = {"ok": "✓", "warn": "!", "fail": "✗"}
+
+
+def _eject(stick_path: Path, args) -> None:
+    if args.no_eject or args.any_path:
+        return
+    result = subprocess.run(["diskutil", "eject", str(stick_path)], capture_output=True, text=True)
+    print("stick ejected" if result.returncode == 0 else
+          f"eject failed, eject it in Finder before pulling it: {result.stderr.strip()}")
+
+
+def _stick_findings(stick_path: Path, args) -> bool:
+    """Print the stick check; True when the stick passes."""
+    findings = diskcheck.check(stick_path, info=None if args.any_path else diskcheck.diskutil_info)
+    for finding in findings:
+        print(f"  {MARK[finding.level]} {finding.message}")
+    return not diskcheck.failed(findings)
+
+
+def cmd_stick_check(args) -> int:
+    print(f"checking {args.stick}")
+    return 0 if _stick_findings(Path(args.stick), args) else 1
+
+
+def cmd_bootstrap_prepare(args) -> int:
+    stick_path = Path(args.stick)
+    if not _stick_findings(stick_path, args) and not args.force:
+        raise bootstrap.BootstrapError("stick check failed; fix the stick or use --force")
+    safe, end = window.check(datetime.now(timezone.utc))
+    if not safe and not args.force:
+        raise bootstrap.BootstrapError(f"too close to a key window boundary (ends {end:%Y-%m-%d %H:%M} "
+                                       "UTC); wait, or use --force")
+    manifest = Path(args.manifest) if args.manifest else bootstrap.build(
+        args.serial, REPO / "build" / "out")
+    record = bootstrap.prepare(stick_path, args.serial, manifest, force=args.force)
+    print(f"stage one is on {stick_path}; install before {record['install_before_utc']} UTC")
+    print("in the car: Settings > Display > Wallpaper > Add > USB > Installer.jpg, wait for "
+          "the restart, then pull the stick and run: s2am bootstrap finish " + str(stick_path))
+    _eject(stick_path, args)
+    return 0
+
+
+def cmd_bootstrap_finish(args) -> int:
+    stick_path = Path(args.stick)
+    bootstrap.finish(stick_path)
+    print("ready: SyncExtPack/install.bin is in place. Insert the stick and wait for "
+          "'Install successfully completed!'")
+    _eject(stick_path, args)
     return 0
 
 
 def cmd_job(args) -> int:
-    job = Job(serial=args.serial, kind="inv")
+    job = Job(serial=args.serial, kind=JOB_KINDS[args.kind])
     workdir = Path(args.work or REPO / "build" / "jobs" / job.id).resolve()
     stage(job, args.upstream, workdir)
     if args.no_pack:
@@ -116,8 +172,32 @@ def cmd_status(args) -> int:
         files = [e for e in entries if e.kind == "F" and e.path.lower().startswith(app.lower() + "\\")]
         print(f"    {app}  {len(files)} files, {sum(e.size or 0 for e in files)} B")
     print(f"  plugins: {', '.join(plugins) or '-'}")
-    print(f"  menu: {', '.join(_menu(store.report(args.serial, job_id))) or '-'}")
+    menu = _menu(store.report(args.serial, job_id))
+    print(f"  menu: {', '.join(menu) or 'missing from the report (SyncApps.xml not copied)'}")
+    print(f"  AutoKit audio modules: {autokit_variant(entries)}")
     return 0
+
+
+def autokit_variant(entries) -> str:
+    """Which copy each patched module matches, judged by file size from the inventory."""
+    sizes = {e.path.lower(): e.size for e in entries if e.kind == "F"}
+    base = AUTOKIT_CE.lower()
+    states = []
+    for module in AUTOKIT_MODULES:
+        live = sizes.get(f"{base}\\{module}".lower())
+        stock = sizes.get(f"{base}\\{module}.orig".lower())
+        patched = sizes.get(f"{base}\\{module}.patched".lower())
+        if live is None:
+            states.append("missing")
+        elif patched is not None and live == patched and live != stock:
+            states.append("patched")
+        elif stock is not None and live == stock and live != patched:
+            states.append("stock")
+        else:
+            states.append("unknown")
+    if len(set(states)) == 1:
+        return f"{states[0]} (all {len(states)})"
+    return "mixed: " + ", ".join(f"{m}={s}" for m, s in zip(AUTOKIT_MODULES, states))
 
 
 def cmd_diff(args) -> int:
@@ -150,8 +230,24 @@ def parser() -> argparse.ArgumentParser:
 
     sub.add_parser("window", help="key window status").set_defaults(func=cmd_window)
 
+    boot = sub.add_parser("bootstrap", help="first SyncExtPack install")
+    boot_sub = boot.add_subparsers(dest="action", required=True)
+    boot_prepare = boot_sub.add_parser("prepare")
+    boot_prepare.add_argument("--serial", type=_serial, required=True)
+    boot_prepare.add_argument("--stick", required=True)
+    boot_prepare.add_argument("--manifest", help="use an existing make_pack manifest instead of building")
+    boot_finish = boot_sub.add_parser("finish")
+    boot_finish.add_argument("stick")
+    for command, func in ((boot_prepare, cmd_bootstrap_prepare), (boot_finish, cmd_bootstrap_finish)):
+        command.add_argument("--any-path", action="store_true",
+                             help="allow a folder outside /Volumes; skips disk checks and eject")
+        command.add_argument("--no-eject", action="store_true")
+        command.set_defaults(func=func, force=False)
+    boot_prepare.add_argument("--force", action="store_true",
+                              help="accept a failed stick check, a near window boundary, or old files")
+
     job = sub.add_parser("job", help="build a job")
-    job.add_argument("kind", choices=["inventory"])
+    job.add_argument("kind", choices=list(JOB_KINDS))
     job.add_argument("--serial", type=_serial, required=True)
     job.add_argument("--upstream", type=Path, default=UPSTREAM)
     job.add_argument("--work", help="staging folder (default build/jobs/<id>)")
@@ -161,6 +257,10 @@ def parser() -> argparse.ArgumentParser:
 
     stick_cmd = sub.add_parser("stick", help="prepare or import a USB stick")
     stick_sub = stick_cmd.add_subparsers(dest="action", required=True)
+    check = stick_sub.add_parser("check")
+    check.add_argument("stick")
+    check.add_argument("--any-path", action="store_true", help="skip the disk-level checks")
+    check.set_defaults(func=cmd_stick_check)
     prepare = stick_sub.add_parser("prepare")
     prepare.add_argument("stick")
     prepare.add_argument("--job", required=True, help="the job's staging folder")
@@ -187,7 +287,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         return args.func(args)
-    except (pack.PackError, stick.StickError, ContainerError, ValueError, OSError,
-            subprocess.CalledProcessError) as error:
+    except (pack.PackError, stick.StickError, bootstrap.BootstrapError, ContainerError,
+            ValueError, OSError, subprocess.CalledProcessError) as error:
         print(f"s2am: {error}", file=sys.stderr)
         return 1

@@ -31,6 +31,9 @@ MORTRUNNER_SOURCE = Path("FullPack/RemoveExtPack/RemoveExtPack.exe")
 INVENTORY_ROOT = "\\SyncExtendedPack\\Apps"
 PLUGINS_MASK = "\\windows\\*Plugin.dll"
 MENU_XML = "\\8inchSkins\\Ford\\Sync\\Apps\\Info\\SyncApps\\SyncApps.xml"
+AUTOKIT_CE = "\\SyncExtendedPack\\Apps\\Media\\AutoKit"
+# The modules tools/patch_waveout.py patches (tools/make_pack.py PATCH_TARGETS).
+AUTOKIT_MODULES = ("AutoKit.exe", "libgstwaveoutsink.dll", "libgstwaveform.dll")
 
 
 JOB_ID = re.compile(r"\d{8}-\d{6}-[a-z]{2,8}-[0-9a-f]{4}")
@@ -110,28 +113,34 @@ def _quote(text: str) -> str:
     return f'"{text}"'
 
 
-def inventory_script(job: Job) -> str:
-    """MortScript that lists sideloaded files and copies the menu to the stick.
+def _header(job: Job) -> list[str]:
+    """Silence error dialogs, create the report folder, and stop if this job already ran.
 
-    UpdateService waits for this script without a timeout, so an error dialog
+    UpdateService waits for the script without a timeout, so an error dialog
     would stall the car until someone taps OK. ErrorLevel("off") makes runtime
     errors silent (MortScript manual 9.1); completion is proven instead by
-    done.txt, which is written only once the inventory exists. ForEach over
-    files()/directories() yields full paths (MortScript Interpreter.cpp).
+    done.txt, which is written only once the inventory exists.
     """
-    out = ce_path(job.report_dir)
-    done = ce_path(job.done_marker)
-    lines = [
+    return [
         f"# s2am {job.kind} job {job.id}",
         'ErrorLevel("off")',
-        f"out = {_quote(out)}",
+        f"out = {_quote(ce_path(job.report_dir))}",
         'MkDir("\\USB Disk\\s2am")',
         'MkDir("\\USB Disk\\s2am\\reports")',
         "MkDir(out)",
-        f"If (FileExists({_quote(done)}))",
+        f"If (FileExists({_quote(ce_path(job.done_marker))}))",
         f'  WriteFile(out & "\\replayed.txt", {_quote(job.id)})',
         "  Exit",
         "EndIf",
+    ]
+
+
+def _inventory() -> list[str]:
+    """List sideloaded files with sizes and copy the Apps menu.
+
+    ForEach over files()/directories() yields full paths (MortScript Interpreter.cpp).
+    """
+    return [
         'inv = out & "\\inventory.txt"',
         'WriteFile(inv, "")',
         f"ForEach a in directories({_quote(INVENTORY_ROOT + chr(92) + '*')})",
@@ -156,10 +165,16 @@ def inventory_script(job: Job) -> str:
         '  WriteFile(inv, "F|" & f & "|" & FileSize(f) & "^NL^", TRUE)',
         "EndForEach",
         f'Copy({_quote(MENU_XML)}, out & "\\SyncApps.xml", TRUE)',
+    ]
+
+
+def _footer(job: Job) -> list[str]:
+    """Mark the job done only if the inventory exists; the riskiest calls come last."""
+    return [
         "If (FileExists(inv))",
         '  MkDir("\\SyncExtendedPack\\_s2am")',
         f"  MkDir({_quote(ce_path(DONE_DIR))})",
-        f"  WriteFile({_quote(done)}, {_quote(job.id)})",
+        f"  WriteFile({_quote(ce_path(job.done_marker))}, {_quote(job.id)})",
         f'  WriteFile(out & "\\done.txt", {_quote(job.id + " applied")})',
         "EndIf",
         'info = "job=" & ' + _quote(job.id) + ' & "^NL^"',
@@ -168,10 +183,46 @@ def inventory_script(job: Job) -> str:
         'info = info & "free=" & FreeDiskSpace("\\") & "^NL^"',
         'WriteFile(out & "\\info.txt", info)',
     ]
+
+
+def _script(lines: list[str]) -> str:
     return "\r\n".join(lines) + "\r\n"
 
 
-SCRIPTS = {"inv": inventory_script}
+def inventory_script(job: Job) -> str:
+    """MortScript that lists sideloaded files and copies the menu to the stick."""
+    return _script(_header(job) + _inventory() + _footer(job))
+
+
+def autokit_script(job: Job, variant: str) -> str:
+    """Swap AutoKit's three audio modules to their *.orig or *.patched copies, then inventory.
+
+    make_pack ships both copies beside each module. AutoKit must not be running
+    while its files are replaced; if it is, the job reports busy.txt, leaves no
+    done marker, and runs again on the next insertion after a restart.
+    """
+    if variant not in ("orig", "patched"):
+        raise ValueError(f"unknown AutoKit variant {variant!r}")
+    swap = [
+        'If (ProcExists("AutoKit.exe"))',
+        '  WriteFile(out & "\\busy.txt", "AutoKit is running: restart SYNC, insert the stick again")',
+        "  Exit",
+        "EndIf",
+        f"ak = {_quote(AUTOKIT_CE)}",
+    ]
+    for module in AUTOKIT_MODULES:
+        source = f'ak & "\\{module}.{variant}"'
+        swap += [f"If (FileExists({source}))",
+                 f'  Copy({source}, ak & "\\{module}", TRUE)',
+                 "EndIf"]
+    return _script(_header(job) + swap + _inventory() + _footer(job))
+
+
+SCRIPTS = {
+    "inv": inventory_script,
+    "akstock": lambda job: autokit_script(job, "orig"),
+    "akpatch": lambda job: autokit_script(job, "patched"),
+}
 
 
 def meta(job: Job) -> bytes:
