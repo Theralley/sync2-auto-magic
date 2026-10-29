@@ -49,8 +49,8 @@ step is one `s2am` job stick with a check in the car.
 
 | Step | Job / action | Check in the car |
 |---|---|---|
-| AA-0 | Phone: **Samsung S24, Android 16** ✅ (needs a USB-A→USB-C cable from the adapter) | — |
-| AA-1 ✅ built | Job `autokit-config`. It backs up AutoKit's flag files, writes `screenconfig = 800,480,15`, removes `usehwdec` (software decoding) and refuses to leave any `Auto_Box_Update.img`. A matching undo job restores them | `s2am status` shows the new settings |
+| AA-0 | Phone: **Samsung S24, Android 16** (OK) (needs a USB-A→USB-C cable from the adapter) | — |
+| AA-1 (built) | Job `autokit-config`. It backs up AutoKit's flag files, writes `screenconfig = 800,480,15`, removes `usehwdec` (software decoding) and refuses to leave any `Auto_Box_Update.img`. A matching undo job restores them | `s2am status` shows the new settings |
 | AA-2 | Plug in the Android phone and open AutoKit | Picture fills 800×480? All four corners tappable? Photograph it |
 | AA-3 | Music, navigation, a call, Google Assistant | Sound through the speakers (patch)? Microphone? |
 | AA-4 | A/B with job sticks: 15 vs 30 fps, software vs hardware decoding | Smoothness and flicker |
@@ -62,9 +62,9 @@ Step AS-5 is the only risky one. Everything before it disappears at the next res
 
 | Step | Job / action | Check in the car |
 |---|---|---|
-| AS-0 ✅ built | Read-only **snapshot** job (`s2am job snapshot`): `HKLM\Services`, `HKLM\Init`, `HKLM\Drivers\Active`, versions | Report imported; recovery card checked |
-| AS-1 ✅ built | **Logger** (`s2am job logger`), MortScript, started by a job and gone after a restart. Every second for 3 minutes, it writes `Drivers\Active`, AutoKit's window state and its process to the stick while you plug and unplug the phone | Does anything visible change when the phone, not the dongle, connects? |
-| AS-1b ✅ built | `s2am job logger --native` (also runs on its own if MortScript sees nothing): a small native logger (CeGCC in Docker) that records AutoKit's `_UIGEAR_BOX_NOTIFY_` messages | A map of state number to meaning |
+| AS-0 (built) | Read-only **snapshot** job (`s2am job snapshot`): `HKLM\Services`, `HKLM\Init`, `HKLM\Drivers\Active`, versions | Report imported; recovery card checked |
+| AS-1 (built) | **Logger** (`s2am job logger`), MortScript, started by a job and gone after a restart. Every second for 3 minutes, it writes `Drivers\Active`, AutoKit's window state and its process to the stick while you plug and unplug the phone | Does anything visible change when the phone, not the dongle, connects? |
+| AS-1b (built) | `s2am job logger --native` (also runs on its own if MortScript sees nothing): a small native logger (CeGCC in Docker) that records AutoKit's `_UIGEAR_BOX_NOTIFY_` messages | A map of state number to meaning |
 | AS-2 | **JasonACT's runner** as a swap job, with the original kept for undo | Leaving AutoKit no longer freezes touch (P1 tests T8/T9) |
 | AS-3 | **Trial watcher** (gone after a restart): keeps AutoKit loaded but hidden, brings it forward on phone connect, gives SYNC back on unplug. It handles fast replugging and refuses double launches | Plug in = CarPlay; unplug = SYNC, ten times in a row |
 | AS-4 | Rollback rehearsal: undo AS-2 and AS-3 and confirm the Phase 1 state | `s2am diff` shows the baseline |
@@ -75,7 +75,7 @@ then no job stick can repair it. The recovery is the NOAUTOSTART stick and, fail
 3.10 recovery stick from the P1 runbook. AS-5 needs its own Codex review and an explicit
 go-ahead from you.
 
-**Native code ✅ set up:** ENLYZE's CeGCC 9.3.0 image (`ghcr.io/enlyze/windows-ce-build-environment-arm`,
+**Native code (set up):** ENLYZE's CeGCC 9.3.0 image (`ghcr.io/enlyze/windows-ce-build-environment-arm`,
 MIT), pinned by digest. `s2am native build` compiles `s2am/native/*.c` and checks each binary:
 ARM machine type, Windows CE GUI subsystem, and COREDLL.dll as the only import. The first
 car proof is `s2am job native-hello`.

@@ -6,10 +6,10 @@ diagnostics.
 
 | Link | Carries | Use it for | Status |
 |---|---|---|---|
-| **USB stick** (FAT32, MBR, 32 GB or less) | files, `s2am` jobs, reports | install, remove, configure, inventory, logs | ✅ the main path |
+| **USB stick** (FAT32, MBR, 32 GB or less) | files, `s2am` jobs, reports | install, remove, configure, inventory, logs | the main path |
 | **OBD-II port** + USB OBD adapter + [forscan-mac](https://github.com/Theralley/forscan-mac) | CAN diagnostics with the SYNC module (APIM) | software and part numbers, error codes, As-Built backup, **restarting SYNC** | optional, read-only |
 | Wi-Fi (SYNC's own hotspot) | nothing: SYNC 2 has no service listening | a future Wi-Fi agent (TOOLKIT-PLAN P5) | not available |
-| USB cable from the Mac to SYNC's USB port | — | — | ❌ **never** |
+| USB cable from the Mac to SYNC's USB port | — | — | **never** |
 
 ## Why not a USB cable to SYNC's USB port
 

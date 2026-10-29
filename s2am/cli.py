@@ -60,7 +60,7 @@ def cmd_window(args) -> int:
 JOB_KINDS = {"inventory": "inv", "autokit-stock": "akstock", "autokit-patched": "akpatch",
              "remove": "rm", "install": "inst", "undo": "undo", "autokit-config": "akcfg",
              "snapshot": "snap", "logger": "log", "native-hello": "hello"}
-MARK = {"ok": "✓", "warn": "!", "fail": "✗"}
+MARK = {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
 
 
 def _eject(stick_path: Path, args) -> None:

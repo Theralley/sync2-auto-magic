@@ -16,12 +16,12 @@ and free software.** It also includes a Mac tool that shows what is installed on
        alt="Works with SYNC 2 and its 8 inch touchscreen. Does not work with SYNC 3 or the small non-touch screen.">
 </p>
 
-| | |
+| System | Works? |
 |---|---|
-| ✅ **SYNC 2 / MyFord Touch with the 8" touchscreen** | This is what it is made for |
-| ❌ SYNC 3 | Already has CarPlay built in |
-| ❌ Small screen with buttons around it (SYNC 1) | Different system |
-| ✅ SYNC software **3.08 or 3.10** | Check under *Settings → General → About SYNC* |
+| **SYNC 2 / MyFord Touch with the 8" touchscreen** | Yes, this is what it is made for |
+| SYNC 3 | No, it already has CarPlay built in |
+| Small screen with buttons around it (SYNC 1) | No, a different system |
+| SYNC software **3.08 or 3.10** | Needed; check under *Settings → General → About SYNC* |
 
 Typical cars include the Focus, Mondeo, Kuga, C-Max and S-Max/Galaxy (2013–2016), plus North American
 models with MyFord Touch. The developer's car is a **2016 Ford Mondeo Mk5**. Other SYNC 2 cars
@@ -31,19 +31,19 @@ run the same system, but nothing is guaranteed.
 
 | Feature | Status |
 |---|---|
-| 🍎 Apple CarPlay over a cable | Ready to test |
-| 🔊 Sound through the car's speakers | Fix built, **not yet confirmed in a car** |
-| 🤖 Android Auto with the same dongle | Ready to test after the first install (`autokit-config` sets the picture; [plan](docs/P2-AA-AUTOSTART-PLAN.md)) |
-| 💻 See what is installed on SYNC 2 from your Mac | Ready to test |
-| 🗑️ Remove apps from your Mac (menu only, or with all their files) | Ready to test |
-| 📦 Install apps from your Mac (SyncExtPack apps, AutoKit with the sound fix) | Ready to test |
-| ⚡ CarPlay starts by itself when you plug in the phone | Being investigated: diagnostic jobs ready (`snapshot`, `logger`), the auto-start itself not built yet ([plan](docs/P2-AA-AUTOSTART-PLAN.md)) |
+| Apple CarPlay over a cable | Ready to test |
+| Sound through the car's speakers | Fix built, **not yet confirmed in a car** |
+| Android Auto with the same dongle | Ready to test after the first install (`autokit-config` sets the picture; [plan](docs/P2-AA-AUTOSTART-PLAN.md)) |
+| See what is installed on SYNC 2 from your Mac | Ready to test |
+| Remove apps from your Mac (menu only, or with all their files) | Ready to test |
+| Install apps from your Mac (SyncExtPack apps, AutoKit with the sound fix) | Ready to test |
+| CarPlay starts by itself when you plug in the phone | Being investigated: diagnostic jobs ready (`snapshot`, `logger`), the auto-start itself not built yet ([plan](docs/P2-AA-AUTOSTART-PLAN.md)) |
 
 ## What you need
 
 - [ ] **A Carlinkit wired adapter** (the "AutoKit" type for Android head units), for example
       [this one on Amazon.se](https://www.amazon.se/dp/B0919JS1K3) (about 410 kr).
-      ⚠️ Do **not** buy "wired-to-wireless" adapters (2Air, U2W, Mini Ultra, 3.0/4.0/5.0). They
+      Do **not** buy "wired-to-wireless" adapters (2Air, U2W, Mini Ultra, 3.0/4.0/5.0). They
       only work in cars that already have CarPlay.
 - [ ] **A USB stick**, 32 GB or smaller, formatted **FAT32**
 - [ ] **A Mac** with [Docker Desktop](https://www.docker.com/products/docker-desktop/) and Python 3
@@ -63,7 +63,7 @@ cd sync2-auto-magic
 **2. Check the stick and put the install pack on it.** Start Docker Desktop first.
 
 ```sh
-python3 -m s2am stick check /Volumes/SYNC                                  # must show no ✗
+python3 -m s2am stick check /Volumes/SYNC                                  # must show no FAIL
 python3 -m s2am bootstrap prepare --serial YOURSERIAL --stick /Volumes/SYNC
 ```
 
@@ -176,7 +176,7 @@ Then take the job stick to the car, as above. SYNC restarts after the job.
 
 | Problem | What to do |
 |---|---|
-| **Touchscreen frozen** after closing AutoKit | Hold **Power + Seek-Up (⏭)** for about 10 s. SYNC restarts. |
+| **Touchscreen frozen** after closing AutoKit | Hold **Power + Seek-Up** (the next-track button) for about 10 s. SYNC restarts. |
 | **CarPlay shows but there is no sound** | That is exactly what this project is testing. Please [open an issue](https://github.com/Theralley/sync2-auto-magic/issues) and include your SYNC version. |
 | **Undo the sound fix** | Open Total Commander (it is in *Apps*) and go to `\SyncExtendedPack\Apps\Media\AutoKit\`. Rename the `*.orig` files back to their original names. |
 | **Remove everything** | Reinstall SYNC software 3.10 or 3.08 with the [firmware guide](https://github.com/chr0m1ng/syncextpack/blob/main/FIRMWARE_INSTALLATION.md). |

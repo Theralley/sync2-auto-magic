@@ -37,7 +37,7 @@ disk number against the stick's size**: `list disk` → `select disk N` → `cle
 → `create partition primary` → `format fs=fat32 quick label=SYNC` → `assign`. Selecting the wrong
 disk erases it.
 
-Then on the Mac run **`python3 -m s2am stick check /Volumes/SYNC`**. It must show no ✗. It checks:
+Then on the Mac run **`python3 -m s2am stick check /Volumes/SYNC`**. It must show no FAIL. It checks:
 - FAT32, MBR, 32 GB or less, external, writable;
 - that no firmware-update files or waiting `install.bin` are on the stick.
 
@@ -119,7 +119,7 @@ allow CarPlay. Then *i → Apps → AutoKit*.
 | T5 | Siri: CarPlay's Siri button, then the steering-wheel voice button | Does Siri hear you? (**G4**) |
 | T6 | Call voicemail | Audio in both directions? |
 | T7 | Scroll the map | Smooth, choppy, or slideshow? |
-| T8 | Leave AutoKit (its home/exit button) | Does SYNC respond to touch? (**G5**) If not: **Power + Seek-Up (⏭) for 10 s** |
+| T8 | Leave AutoKit (its home/exit button) | Does SYNC respond to touch? (**G5**) If not: **Power + Seek-Up (next track) for 10 s** |
 | T9 | Engine off, open the door, wait 2 minutes, start again | Does touch still work everywhere? |
 
 ### A/B test: is the patch really the reason? (do it whatever T3 showed)
@@ -165,7 +165,7 @@ Keep the stick; `install_log.txt` is saved in `~/.s2am`.
 
 | Situation | Action |
 |---|---|
-| Touchscreen does not respond | **Power + Seek-Up (⏭) for 10 s**, car in Park (some cars ignore this) |
+| Touchscreen does not respond | **Power + Seek-Up (next track) for 10 s**, car in Park (some cars ignore this) |
 | That does not help | Engine off, lock the car for 10 minutes, start again |
 | AutoKit misbehaves | Run the `autokit-stock` job stick, or in Total Commander copy the `*.orig` files over the live ones |
 | SYNC unusable | **Recovery stick B** (3.10): insert it, the update starts by itself; follow Ford's instructions. This restores Ford's software, but may **not** remove every SyncExtPack file. |

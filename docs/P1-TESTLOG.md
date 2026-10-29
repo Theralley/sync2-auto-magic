@@ -15,7 +15,7 @@ Fill one copy per car session. Test IDs match [P1-RUNBOOK.md](P1-RUNBOOK.md).
 
 ## Session 1: install
 
-| Step | Result (✅ / ❌ / note) |
+| Step | Result (yes / no / note) |
 |---|---|
 | 1.2 Installer.jpg → restart | |
 | 1.4 "Install successfully completed!" | |
