@@ -42,7 +42,7 @@ run the same system, but nothing is guaranteed.
 ## What you need
 
 - [ ] **A Carlinkit wired adapter** (the "AutoKit" type for Android head units), for example
-      [this one on Amazon.se](https://www.amazon.se/dp/B0919JS1K3) (about 410 kr).
+      [this one on Amazon.se](https://www.amazon.se/dp/B0919JS1K3) (about 410 SEK).
       Do **not** buy "wired-to-wireless" adapters (2Air, U2W, Mini Ultra, 3.0/4.0/5.0). They
       only work in cars that already have CarPlay.
 - [ ] **A USB stick**, 32 GB or smaller, formatted **FAT32**

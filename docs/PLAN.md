@@ -17,7 +17,7 @@ Progress: the sound patch (`tools/patch_waveout.py`) and the fail-closed pack bu
 | **Wired:** a USB port that can switch roles, so the iPhone becomes the USB host | The USB ports sit behind an ordinary hub, and an ordinary hub cannot reverse roles. This is why SYNC 3 retrofits need a "CarPlay-compliant" hub. | Apple developer forums, Acroname, CyanLabs |
 | **Wireless:** 5 GHz Wi-Fi advertising Apple's CarPlay beacon | A 2011-era Wi-Fi module, client or gateway mode (whether it can do 5 GHz is unverified) | Apple wireless CarPlay test guide, Ford support |
 
-**The smallest piece of hardware that removes all three blockers** is a Carlinkit USB dongle (CPC200-CCPA, wired and wireless, about 400 kr; or CPC200-CCPM, wired only). It is the size of a USB stick, plugs into the existing armrest USB port and needs no installation. It carries the Apple chip and the Wi-Fi, and everything after it is software: the AutoKit host app on SYNC 2, plus the fixes below.
+**The smallest piece of hardware that removes all three blockers** is a Carlinkit USB dongle (CPC200-CCPA, wired and wireless, about 400 SEK; or CPC200-CCPM, wired only). It is the size of a USB stick, plugs into the existing armrest USB port and needs no installation. It carries the Apple chip and the Wi-Fi, and everything after it is software: the AutoKit host app on SYNC 2, plus the fixes below.
 
 **The easiest route that needs nothing new is an old Android phone on a cable** (owner's suggestion, section 4A). Android screen mirroring needs no Apple chip. The pack already ships the app for it (EasyConnection), and the community has it working on SYNC 2.
 
