@@ -23,6 +23,8 @@ UPDATER_DIR = "SyncExtPack"
 # on a job stick would let the wallpaper picker reinstall the base pack by accident.
 UPDATER_FILES = ("install.bin", "installed.bin", "install_log.txt", "pack_install.bin",
                  "Installer.jpg", "UpdateInstaller.dll", "update.bin")
+STOPPED = {"stale.txt": "stale", "busy.txt": "busy", "backup-failed.txt": "failed",
+           "backup-missing.txt": "failed", "copy-failed.txt": "failed", "payload-bad.txt": "failed"}
 
 
 class StickError(Exception):
@@ -76,6 +78,10 @@ def _status(report: Path, updater: Path) -> tuple[str, bool]:
         return "applied", replayed
     if replayed:
         return "already-applied", True  # its first run reported somewhere else
+    # The script stopped on purpose before changing anything.
+    for marker, status in STOPPED.items():
+        if (report / marker).is_file():
+            return status, False
     if (updater / "installed.bin").exists():
         return "processed-no-report", False
     if (updater / "install.bin").exists():

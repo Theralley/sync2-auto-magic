@@ -35,7 +35,8 @@ run the same system, but nothing is guaranteed.
 | 🔊 Sound through the car's speakers | Fix built, **not yet confirmed in a car** |
 | 🤖 Android Auto with the same dongle | Next |
 | 💻 See what is installed on SYNC 2 from your Mac | Ready to test |
-| 📦 Install and remove apps from your Mac | Planned |
+| 🗑️ Remove apps from your Mac (menu only, or with all their files) | Ready to test |
+| 📦 Install apps from your Mac | Planned |
 | ⚡ CarPlay starts by itself when you plug in the phone | Planned |
 
 ## What you need
@@ -101,6 +102,36 @@ python3 -m s2am diff --serial YOURSERIAL                    # what changed since
 
 A stick never runs the same job twice, even if you leave it in. Jobs never touch the firmware.
 
+## Remove an app from your Mac
+
+Use the name exactly as `s2am status` shows it in the menu (for example `"Video Player"`).
+You need a recent inventory report first, because the removal is planned from it.
+
+```sh
+python3 -m s2am job remove "Video Player" --serial YOURSERIAL --dry-run   # show what would change
+python3 -m s2am job remove "Video Player" --serial YOURSERIAL             # hide it from the Apps menu
+python3 -m s2am job remove "Video Player" --serial YOURSERIAL --purge     # ...and delete its files
+python3 -m s2am job undo <remove-job-id> --serial YOURSERIAL              # put it back in the menu
+```
+
+Then take the job stick to the car, as above. SYNC restarts after the job.
+
+- **Without `--purge`** the app only disappears from the menu. Its files stay, so `undo` brings
+  it back completely.
+- **With `--purge`** the app's own folder, plugin and icon are deleted. `undo` restores only the
+  menu entry; to get the app back, install it again.
+- **Before changing anything**, the car backs up the menu and checks that the menu is exactly
+  as your report showed it (content, not just size) and that the app isn't running. If either
+  check fails, nothing changes and `stick import` tells you why.
+- **Nothing is deleted until the new menu is confirmed on the car.** If writing it fails, the
+  old menu is put back. If the power goes in the middle of a purge, the same stick finishes
+  the job next time.
+- **Undo** runs only if the menu is still exactly what that removal left behind, so it can't
+  bring back an entry whose files were deleted later.
+- **Never deleted:** shared things (the Tools folder and the app launcher), icons or plugins that
+  another menu entry still uses, and anything outside the app's own SyncExtPack folders. Registry
+  entries the app added (AutoKit's `box.reg`) are left as they are.
+
 ## If something goes wrong
 
 | Problem | What to do |
@@ -144,7 +175,7 @@ third-party tools never run directly on your Mac. Read
 <summary><b>For developers</b></summary>
 
 ```sh
-python3 -m unittest discover -s tests       # 88 tests; uses ../syncextpack (tested at 1a1eda0)
+python3 -m unittest discover -s tests       # 119 tests; uses ../syncextpack (tested at 1a1eda0)
 python3 tools/make_pack.py SERIAL --dry-run  # stage and patch only, no build
 python3 -m s2am window                       # is the current 30-day key window safe to build in?
 ```

@@ -6,6 +6,8 @@
     s2am bootstrap finish /Volumes/STICK         first install, the rename step
     s2am job inventory --serial XXXXXXXX         build an inventory job (install.bin)
     s2am job autokit-stock|autokit-patched ...   swap AutoKit's audio modules, then inventory
+    s2am job remove "APP" --serial S [--purge]   take an app out of the menu (--purge: delete it)
+    s2am job undo JOB_ID --serial S              put a removed app back in the menu
     s2am stick prepare /Volumes/STICK --job DIR  put that job on a stick
     s2am stick import /Volumes/STICK             read back what the car wrote
     s2am status --serial XXXXXXXX                apps, plugins and menu from the last report
@@ -21,7 +23,7 @@ import xml.etree.ElementTree as ElementTree
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import bootstrap, diskcheck, pack, stick, window
+from . import apps, bootstrap, diskcheck, pack, stick, window
 from .container import REPO, ContainerError
 from .job import AUTOKIT_CE, AUTOKIT_MODULES, SERIAL, Job, stage
 from .state import Store, diff, parse_inventory
@@ -48,7 +50,8 @@ def cmd_window(args) -> int:
     return 0 if safe else 1
 
 
-JOB_KINDS = {"inventory": "inv", "autokit-stock": "akstock", "autokit-patched": "akpatch"}
+JOB_KINDS = {"inventory": "inv", "autokit-stock": "akstock", "autokit-patched": "akpatch",
+             "remove": "rm", "undo": "undo"}
 MARK = {"ok": "✓", "warn": "!", "fail": "✗"}
 
 
@@ -100,10 +103,74 @@ def cmd_bootstrap_finish(args) -> int:
     return 0
 
 
+def _plan_remove(args) -> tuple[dict, dict]:
+    """Plan a removal from the last report; prints exactly what will change."""
+    store = Store()
+    latest = store.latest_inventory(args.serial)
+    if latest is None:
+        raise apps.AppError("no report for this car yet: run an inventory job first")
+    report_id, entries, _ = latest
+    menu_file = store.report(args.serial, report_id) / "SyncApps.xml"
+    if not menu_file.is_file():
+        raise apps.AppError(f"report {report_id} has no SyncApps.xml: run a new inventory job")
+    menu = menu_file.read_bytes()
+    plan = apps.plan_removal(args.app, menu, entries, apps.catalog(args.upstream), args.purge)
+    print(f"remove {plan.app!r} (planned from report {report_id}):")
+    print(f"  menu: {plan.app} is taken out of the Apps menu (old menu backed up on the car)")
+    for path in plan.delete_dirs:
+        print(f"  delete folder {path}")
+    for path in plan.delete_files:
+        print(f"  delete file   {path}")
+    for line in plan.kept:
+        print(f"  keep          {line}")
+    if not args.purge:
+        print("  files stay on the car (add --purge to delete them); undo restores the menu")
+    else:
+        print("  undo restores the menu only; deleted files come back by reinstalling the app")
+    print("  SYNC restarts after the job")
+    params = {"app": plan.app, "purge": args.purge, "based_on": report_id,
+              "expected_len": len(menu), "new_len": len(plan.menu_after),
+              "delete_dirs": plan.delete_dirs, "delete_files": plan.delete_files,
+              "executables": plan.executables}
+    return params, {"SyncApps.xml.expected": menu, "SyncApps.xml.new": plan.menu_after}
+
+
+def _plan_undo(args) -> tuple[dict, dict]:
+    """Undo a removal, expecting the menu exactly as that removal's own report showed it."""
+    store = Store()
+    target = store.job(args.serial, args.job_id)
+    if target.get("kind") != "rm" or target.get("status") not in ("applied", "already-applied"):
+        raise apps.AppError(f"{args.job_id} is not an applied remove job")
+    if target.get("undone_by"):
+        raise apps.AppError(f"{args.job_id} was already undone by {target['undone_by']}")
+    later = [r["id"] for r in store.successful(args.serial)
+             if r.get("kind") in apps.MENU_KINDS and r["id"] != args.job_id
+             and r.get("imported_utc", "") > target.get("imported_utc", "")]
+    if later:
+        raise apps.AppError(f"the menu was changed again later by {later}; undo those first")
+    report = store.report(args.serial, args.job_id)
+    menu = report / "SyncApps.xml" if report else None
+    if not menu or not menu.is_file():
+        raise apps.AppError(f"the report of {args.job_id} has no SyncApps.xml to check against")
+    params = target.get("params", {})
+    print(f"undo {args.job_id}: put {params.get('app')!r} back in the Apps menu"
+          + (" (its deleted files are not restored)" if params.get("purge") else ""))
+    expected = menu.read_bytes()
+    return ({"target": args.job_id, "app": params.get("app"), "expected_len": len(expected)},
+            {"SyncApps.xml.expected": expected})
+
+
 def cmd_job(args) -> int:
-    job = Job(serial=args.serial, kind=JOB_KINDS[args.kind])
+    params, extra = {}, None
+    if args.kind == "remove":
+        params, extra = _plan_remove(args)
+        if args.dry_run:
+            return 0
+    elif args.kind == "undo":
+        params, extra = _plan_undo(args)
+    job = Job(serial=args.serial, kind=JOB_KINDS[args.kind], params=params)
     workdir = Path(args.work or REPO / "build" / "jobs" / job.id).resolve()
-    stage(job, args.upstream, workdir)
+    stage(job, args.upstream, workdir, extra)
     if args.no_pack:
         print(f"staged {job.id} at {workdir} (not packed)")
         return 0
@@ -134,11 +201,43 @@ def cmd_stick_import(args) -> int:
     results = stick.import_reports(Path(args.stick), Store(), require_volume=not args.any_path)
     if not results:
         print("no s2am jobs on this stick")
+    store = Store()
     for record in results:
         note = " (stick was inserted again; nothing ran twice)" if record.get("replayed") else ""
         reason = f" ({record['reason']})" if record.get("reason") else ""
-        print(f"{record['id']}: {record['status']}{note}{reason}")
+        print(f"{record['id']}: {record['status']}{note}{reason}{STOP_HINTS.get(record['status'], '')}")
+        if record.get("kind") in apps.MENU_KINDS and record["status"] == "applied":
+            verdict = _verify_menu(store, record)
+            print(f"  {verdict}")
+            if record["kind"] == "undo" and verdict.startswith("verified"):
+                target = store.job(record["serial"], record["params"]["target"])
+                store.save_job(record["serial"], target["id"], {**target, "undone_by": record["id"]})
     return 0 if all(r["status"] in ("applied", "already-applied", "pending") for r in results) else 1
+
+
+STOP_HINTS = {
+    "stale": ": the car's menu changed since the job was planned. Nothing changed; run an "
+             "inventory, then plan again",
+    "busy": ": the app was running. Nothing changed; restart SYNC and insert the same stick again",
+    "failed": ": the job stopped before deleting anything; its report says why "
+              "(copy-failed means the old menu was put back)",
+}
+
+
+def _verify_menu(store: Store, record: dict) -> str:
+    """Check the car's menu after a remove/undo job against what the job set out to do."""
+    report = store.report(record["serial"], record["id"])
+    xml = report / "SyncApps.xml" if report else None
+    if not xml or not xml.is_file():
+        return "not verified: the report has no SyncApps.xml"
+    names = [name.lower() for name, _, _ in apps.menu_entries(xml.read_bytes()) if name]
+    app = record.get("params", {}).get("app", "")
+    present = app.lower() in names
+    if record["kind"] == "rm":
+        return f"verified: {app!r} is no longer in the menu" if not present else \
+            f"NOT verified: {app!r} is still in the menu"
+    return f"verified: {app!r} is back in the menu" if present else \
+        f"NOT verified: {app!r} is not in the menu"
 
 
 def _menu(report: Path) -> list[str]:
@@ -246,14 +345,27 @@ def parser() -> argparse.ArgumentParser:
     boot_prepare.add_argument("--force", action="store_true",
                               help="accept a failed stick check, a near window boundary, or old files")
 
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--serial", type=_serial, required=True)
+    common.add_argument("--upstream", type=Path, default=UPSTREAM)
+    common.add_argument("--work", help="staging folder (default build/jobs/<id>)")
+    common.add_argument("--no-pack", action="store_true", help="stage only, skip crypto_pack")
+    common.add_argument("--force", action="store_true", help="build even near a window boundary")
     job = sub.add_parser("job", help="build a job")
-    job.add_argument("kind", choices=list(JOB_KINDS))
-    job.add_argument("--serial", type=_serial, required=True)
-    job.add_argument("--upstream", type=Path, default=UPSTREAM)
-    job.add_argument("--work", help="staging folder (default build/jobs/<id>)")
-    job.add_argument("--no-pack", action="store_true", help="stage only, skip crypto_pack")
-    job.add_argument("--force", action="store_true", help="build even near a window boundary")
-    job.set_defaults(func=cmd_job)
+    job_sub = job.add_subparsers(dest="kind", required=True)
+    for name, help_text in (("inventory", "list installed apps and the menu"),
+                            ("autokit-stock", "swap AutoKit to its stock audio modules"),
+                            ("autokit-patched", "swap AutoKit to the patched audio modules")):
+        job_sub.add_parser(name, parents=[common], help=help_text).set_defaults(func=cmd_job)
+    remove = job_sub.add_parser("remove", parents=[common],
+                                help="take an app out of the Apps menu (--purge deletes its files)")
+    remove.add_argument("app", help="the name shown in the Apps menu (see s2am status)")
+    remove.add_argument("--purge", action="store_true", help="also delete the app's files")
+    remove.add_argument("--dry-run", action="store_true", help="show the plan, build nothing")
+    remove.set_defaults(func=cmd_job)
+    undo = job_sub.add_parser("undo", parents=[common], help="put a removed app back in the menu")
+    undo.add_argument("job_id", help="the remove job to undo")
+    undo.set_defaults(func=cmd_job)
 
     stick_cmd = sub.add_parser("stick", help="prepare or import a USB stick")
     stick_sub = stick_cmd.add_subparsers(dest="action", required=True)
@@ -287,7 +399,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         return args.func(args)
-    except (pack.PackError, stick.StickError, bootstrap.BootstrapError, ContainerError,
-            ValueError, OSError, subprocess.CalledProcessError) as error:
+    except (pack.PackError, stick.StickError, bootstrap.BootstrapError, apps.AppError,
+            ContainerError, ValueError, OSError, subprocess.CalledProcessError) as error:
         print(f"s2am: {error}", file=sys.stderr)
         return 1

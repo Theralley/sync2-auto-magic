@@ -21,6 +21,8 @@ from pathlib import Path
 
 JOBS_DIR = "/SyncExtendedPack/_s2am/jobs"
 DONE_DIR = "/SyncExtendedPack/_s2am/done"
+BACKUP_DIR = "\\SyncExtendedPack\\_s2am\\backup"
+PHASE_DIR = "\\SyncExtendedPack\\_s2am\\phase"
 REPORTS_DIR = "/USB Disk/s2am/reports"
 RUNNER_NAME = "s2amjob"
 MORTSCRIPT_SOURCE = Path("FullPack/RemoveExtPack/MortScript.exe")
@@ -64,6 +66,7 @@ class Job:
     id: str = ""
     created_utc: str = ""
     files: dict[str, str] = field(default_factory=dict)  # staged path -> sha256
+    params: dict = field(default_factory=dict)           # what remove/undo jobs act on
 
     def __post_init__(self):
         if not self.created_utc:
@@ -95,11 +98,12 @@ class Job:
             data = json.loads(text)
             if not isinstance(data, dict):
                 raise TypeError("not an object")
-            fields = {k: data[k] for k in ("serial", "kind", "id", "created_utc", "files")
+            fields = {k: data[k] for k in ("serial", "kind", "id", "created_utc", "files", "params")
                       if k in data}
             if any(not isinstance(fields.get(k, ""), str)
                    for k in ("serial", "kind", "id", "created_utc")) \
-                    or not isinstance(fields.get("files", {}), dict):
+                    or not isinstance(fields.get("files", {}), dict) \
+                    or not isinstance(fields.get("params", {}), dict):
                 raise TypeError("wrong field types")
             job = cls(**fields)
         except (TypeError, KeyError, ValueError) as error:  # JSONDecodeError is a ValueError
@@ -218,11 +222,123 @@ def autokit_script(job: Job, variant: str) -> str:
     return _script(_header(job) + swap + _inventory() + _footer(job))
 
 
+def _length(value) -> int:
+    if not isinstance(value, int) or value <= 0:
+        raise ValueError(f"invalid menu length {value!r}")
+    return value
+
+
+def _stop(marker: str, message: str, indent: str = "") -> list[str]:
+    return [f'{indent}WriteFile(out & "\\{marker}", {_quote(message)})', f"{indent}Exit"]
+
+
+def _menu_files(job: Job, expected_len: int, new_len: int | None = None) -> list[str]:
+    """Name the live menu and the menus shipped in the job folder; stop if a shipped one is incomplete.
+
+    The menus are compared by content with ReadFile and string ``ne``
+    (MortScript manual 7.7 and 9.12): a file size alone cannot tell two menus apart.
+    """
+    lines = [
+        f"xml = {_quote(MENU_XML)}",
+        f"jd = {_quote(ce_path(job.job_dir))}",
+        'exp = jd & "\\SyncApps.xml.expected"',
+        f"If (FileSize(exp) <> {_length(expected_len)})",
+        *_stop("payload-bad.txt", "the job's menu files are incomplete; nothing changed", "  "),
+        "EndIf",
+    ]
+    if new_len is not None:
+        lines += [
+            'new = jd & "\\SyncApps.xml.new"',
+            f"If (FileSize(new) <> {_length(new_len)})",
+            *_stop("payload-bad.txt", "the job's menu files are incomplete; nothing changed", "  "),
+            "EndIf",
+        ]
+    return lines
+
+
+def removal_script(job: Job) -> str:
+    """Take an app out of the Apps menu; with purge, also delete the files it owns.
+
+    Nothing is deleted until the live menu provably equals the new one, so the
+    menu can never point at a deleted plugin. Phase one (back up, replace, verify,
+    or restore on failure) leaves a phase marker; a run interrupted after that
+    point resumes with the deletes instead of reporting a stale menu.
+    """
+    p = job.params
+    phase = f"{PHASE_DIR}\\{job.id}.txt"
+    lines = _header(job) + _menu_files(job, p["expected_len"], p["new_len"])
+    for exe in p.get("executables", []):
+        lines += [f"If (ProcExists({_quote(exe)}))",
+                  *_stop("busy.txt", exe + " is running: restart SYNC, insert the stick again", "  "),
+                  "EndIf"]
+    lines += [
+        f"If (FileExists({_quote(phase)}))",
+        "  If (ReadFile(xml) ne ReadFile(new))",
+        *_stop("stale.txt", "SyncApps.xml changed after this job replaced it; nothing deleted", "    "),
+        "  EndIf",
+        "Else",
+        "  If (ReadFile(xml) ne ReadFile(exp))",
+        *_stop("stale.txt", "SyncApps.xml changed since the last report: run an inventory first", "    "),
+        "  EndIf",
+        '  MkDir("\\SyncExtendedPack\\_s2am")',
+        f"  MkDir({_quote(BACKUP_DIR)})",
+        f"  bk = {_quote(BACKUP_DIR + chr(92) + job.id)}",
+        "  MkDir(bk)",
+        '  Copy(xml, bk & "\\SyncApps.xml", TRUE)',
+        '  If (ReadFile(bk & "\\SyncApps.xml") ne ReadFile(exp))',
+        *_stop("backup-failed.txt", "could not back up SyncApps.xml; nothing changed", "    "),
+        "  EndIf",
+        "  Copy(new, xml, TRUE)",
+        "  If (ReadFile(xml) ne ReadFile(new))",
+        "    Copy(exp, xml, TRUE)",
+        *_stop("copy-failed.txt", "could not write the new menu; old menu put back, nothing deleted", "    "),
+        "  EndIf",
+        f"  MkDir({_quote(PHASE_DIR)})",
+        f"  WriteFile({_quote(phase)}, {_quote(job.id)})",
+        "EndIf",
+    ]
+    for folder in p.get("delete_dirs", []):
+        lines += [f"DelTree({_quote(ce_path(folder.rstrip('/')))})",
+                  f"RmDir({_quote(ce_path(folder.rstrip('/')))})"]
+    for path in p.get("delete_files", []):
+        lines += [f"Delete({_quote(ce_path(path))})"]
+    return _script(lines + _inventory() + _footer(job))
+
+
+def undo_script(job: Job) -> str:
+    """Put back the menu a remove job backed up (deleted files are not restored).
+
+    Runs only if the live menu is exactly the one that remove job left behind.
+    """
+    p = job.params
+    if not JOB_ID.fullmatch(p.get("target", "")):
+        raise ValueError(f"invalid undo target {p.get('target')!r}")
+    backup = f"{BACKUP_DIR}\\{p['target']}\\SyncApps.xml"
+    lines = _header(job) + _menu_files(job, p["expected_len"]) + [
+        f"bk = {_quote(backup)}",
+        "If (ReadFile(xml) ne ReadFile(exp))",
+        *_stop("stale.txt", "SyncApps.xml changed after that removal: undo the later change first", "  "),
+        "EndIf",
+        "If (NOT FileExists(bk))",
+        *_stop("backup-missing.txt", "no backup for that job on the car; nothing changed", "  "),
+        "EndIf",
+        "Copy(bk, xml, TRUE)",
+        "If (ReadFile(xml) ne ReadFile(bk))",
+        "  Copy(exp, xml, TRUE)",
+        *_stop("copy-failed.txt", "could not write the old menu; current menu put back", "  "),
+        "EndIf",
+    ]
+    return _script(lines + _inventory() + _footer(job))
+
+
 SCRIPTS = {
     "inv": inventory_script,
     "akstock": lambda job: autokit_script(job, "orig"),
     "akpatch": lambda job: autokit_script(job, "patched"),
+    "rm": removal_script,
+    "undo": undo_script,
 }
+MENU_CHANGING = ("rm", "undo")  # SYNC reads SyncApps.xml at start, so these restart it
 
 
 def meta(job: Job) -> bytes:
@@ -232,20 +348,30 @@ def meta(job: Job) -> bytes:
         "VERSION": f"s2am {job.id} for: {job.serial}",
         "POST_APP": f"{job.job_dir}/{RUNNER_NAME}.exe",
     }
+    if job.kind in MENU_CHANGING:
+        entries["NEED_REBOOT"] = "True"
     return "".join(f"{k}={v}\n" for k, v in entries.items()).encode("utf-16-le")
 
 
-def stage(job: Job, upstream: Path, workdir: Path) -> Path:
-    """Write payload/ and meta.txt for crypto_pack into a fresh ``workdir``."""
+def stage(job: Job, upstream: Path, workdir: Path, extra: dict[str, bytes] | None = None) -> Path:
+    """Write payload/ and meta.txt for crypto_pack into a fresh ``workdir``.
+
+    ``extra`` files go into the job folder on the car (e.g. a new SyncApps.xml).
+    """
     if job.kind not in SCRIPTS:
         raise ValueError(f"unknown job kind {job.kind!r}")
+    script = SCRIPTS[job.kind](job).encode("ascii")  # fails before anything is written
     if workdir.exists():
         shutil.rmtree(workdir)
     target = workdir / "payload" / job.job_dir.lstrip("/")
     target.mkdir(parents=True)
     shutil.copy2(upstream / MORTSCRIPT_SOURCE, target / "MortScript.exe")
     shutil.copy2(upstream / MORTRUNNER_SOURCE, target / f"{RUNNER_NAME}.exe")
-    (target / f"{RUNNER_NAME}.mscr").write_bytes(SCRIPTS[job.kind](job).encode("ascii"))
+    (target / f"{RUNNER_NAME}.mscr").write_bytes(script)
+    for name, data in (extra or {}).items():
+        if "/" in name or "\\" in name or name.startswith("."):
+            raise ValueError(f"invalid extra file name {name!r}")
+        (target / name).write_bytes(data)
 
     job.files = {
         "/" + str(path.relative_to(workdir / "payload")): hashlib.sha256(path.read_bytes()).hexdigest()
