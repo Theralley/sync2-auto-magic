@@ -12,20 +12,22 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import re
 import shutil
 import subprocess
 import sys
 import zipfile
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import patch_waveout
 
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO))
+from s2am import container  # noqa: E402
+from s2am.window import valid_thru  # noqa: E402
+
 UPSTREAM = REPO.parent / "syncextpack"
-IMAGE = "sync2-auto-magic-builder"
 DEFAULT_APPS = ("AutoKit", "Explorer", "Reboot")
 
 AUTOKIT_DIR = Path("FullPack/SyncExtendedPack/Apps/Media/AutoKit")
@@ -45,19 +47,6 @@ class BuildError(Exception):
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def valid_thru(now: datetime) -> datetime:
-    """Last moment the current crypto_pack key bucket (magic 0) is valid."""
-    def bucket(moment: datetime) -> int:
-        return int(moment.timestamp() / (60 * 60 * 24 * 30) - 0.48)
-
-    current, step, moment = bucket(now), timedelta(hours=1), now
-    while bucket(moment + step) == current:
-        moment += step
-    while bucket(moment + timedelta(seconds=1)) == current:
-        moment += timedelta(seconds=1)
-    return moment
 
 
 def stage(upstream: Path, staging: Path) -> list[dict]:
@@ -94,43 +83,13 @@ def stage(upstream: Path, staging: Path) -> list[dict]:
     return changes
 
 
-DOCKER_DESKTOP_BIN = Path("/Applications/Docker.app/Contents/Resources/bin")
-
-
-def docker() -> list[str]:
-    binary = shutil.which("docker") or str(DOCKER_DESKTOP_BIN / "docker")
-    if not Path(binary).exists():
-        raise BuildError("Docker CLI not found; start Docker Desktop")
-    return [binary]
-
-
-def docker_env() -> dict[str, str]:
-    env = dict(os.environ)
-    # The CLI's credential helper (docker-credential-desktop) lives here.
-    if DOCKER_DESKTOP_BIN.is_dir():
-        env["PATH"] = f"{DOCKER_DESKTOP_BIN}{os.pathsep}{env.get('PATH', '')}"
-    socket = Path.home() / ".docker" / "run" / "docker.sock"
-    if "DOCKER_HOST" not in env and socket.exists():
-        env["DOCKER_HOST"] = f"unix://{socket}"
-    return env
-
-
 def run_upstream(staging: Path, serial: str, apps: tuple[str, ...]) -> None:
-    env = docker_env()
-    subprocess.run(docker() + ["build", "--platform", "linux/amd64", "-q", "-t", IMAGE,
-                               str(REPO / "docker")], check=True, env=env,
-                   stdout=subprocess.DEVNULL)
-    steps = [
-        ["python3", "build_pack.py", serial, "SyncExtPack/pack_install.bin", "0", *apps],
-        ["python3", "build_pack.py", serial, "SyncExtPack/update.bin", "0", "UpdateService"],
-        ["python3", "build_installer.py", serial],
-    ]
-    for step in steps:
-        subprocess.run(docker() + ["run", "--rm", "--platform", "linux/amd64",
-                                   "--network", "none", "-u", f"{os.getuid()}:{os.getgid()}",
-                                   "-e", "HOME=/tmp", "-v", f"{staging}:/work", "-w", "/work",
-                                   IMAGE, *step],
-                       check=True, env=env)
+    container.ensure_image()
+    container.run(staging, "python3", "build_pack.py", serial,
+                  "SyncExtPack/pack_install.bin", "0", *apps)
+    container.run(staging, "python3", "build_pack.py", serial,
+                  "SyncExtPack/update.bin", "0", "UpdateService")
+    container.run(staging, "python3", "build_installer.py", serial)
 
 
 def collect(staging: Path, serial: str) -> Path:
@@ -196,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
         run_upstream(args.staging.resolve(), serial, apps)
         archive = write_package(collect(args.staging.resolve(), serial), args.output,
                                 serial, apps, changes, expires)
-    except (BuildError, subprocess.CalledProcessError, OSError) as error:
+    except (BuildError, container.ContainerError, subprocess.CalledProcessError, OSError) as error:
         print(f"build failed: {error}", file=sys.stderr)
         return 1
     print(f"package: {archive}")

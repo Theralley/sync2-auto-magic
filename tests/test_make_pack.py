@@ -1,4 +1,6 @@
 """Tests for tools/make_pack.py staging; the container build is exercised by hand."""
+import contextlib
+import io
 import shutil
 import sys
 import tempfile
@@ -74,9 +76,10 @@ class Stage(unittest.TestCase):
         self.assertFalse((self.staging / "leftover").exists())
 
     def test_dry_run_builds_nothing(self):
-        code = mp.main(["XV31M13H", "--upstream", str(self.upstream),
-                        "--staging", str(self.staging), "--output", str(self.tmp / "out"),
-                        "--dry-run"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = mp.main(["XV31M13H", "--upstream", str(self.upstream),
+                            "--staging", str(self.staging), "--output", str(self.tmp / "out"),
+                            "--dry-run"])
         self.assertEqual(code, 0)
         self.assertFalse((self.tmp / "out").exists())
 
@@ -84,12 +87,14 @@ class Stage(unittest.TestCase):
 class Arguments(unittest.TestCase):
     def test_rejects_bad_serials(self):
         for serial in ("XV31M13", "XV31M13HH", "XVO1M13H", "XV31M1;H"):
-            with self.subTest(serial), self.assertRaises(SystemExit):
+            with self.subTest(serial), self.assertRaises(SystemExit), \
+                    contextlib.redirect_stderr(io.StringIO()):
                 mp.main([serial, "--dry-run"])
 
     def test_requires_autokit_and_plain_unit_names(self):
         for apps in (["Explorer"], ["AutoKit", "Reboot;rm"]):
-            with self.subTest(apps), self.assertRaises(SystemExit):
+            with self.subTest(apps), self.assertRaises(SystemExit), \
+                    contextlib.redirect_stderr(io.StringIO()):
                 mp.main(["XV31M13H", *apps, "--dry-run"])
 
 
