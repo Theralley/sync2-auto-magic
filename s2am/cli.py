@@ -8,6 +8,8 @@
     s2am job autokit-stock|autokit-patched ...   swap AutoKit's audio modules, then inventory
     s2am job remove "APP" --serial S [--purge]   take an app out of the menu (--purge: delete it)
     s2am job undo JOB_ID --serial S              put a removed app back in the menu
+    s2am job install "APP" --serial S            copy an app to the car and add it to the menu
+    s2am apps --serial S                         installable apps and what is on the car
     s2am stick prepare /Volumes/STICK --job DIR  put that job on a stick
     s2am stick import /Volumes/STICK             read back what the car wrote
     s2am status --serial XXXXXXXX                apps, plugins and menu from the last report
@@ -23,7 +25,7 @@ import xml.etree.ElementTree as ElementTree
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import apps, bootstrap, diskcheck, pack, stick, window
+from . import apps, autokit, bootstrap, diskcheck, pack, stick, window
 from .container import REPO, ContainerError
 from .job import AUTOKIT_CE, AUTOKIT_MODULES, SERIAL, Job, stage
 from .state import Store, diff, parse_inventory
@@ -51,7 +53,7 @@ def cmd_window(args) -> int:
 
 
 JOB_KINDS = {"inventory": "inv", "autokit-stock": "akstock", "autokit-patched": "akpatch",
-             "remove": "rm", "undo": "undo"}
+             "remove": "rm", "install": "inst", "undo": "undo"}
 MARK = {"ok": "✓", "warn": "!", "fail": "✗"}
 
 
@@ -105,15 +107,7 @@ def cmd_bootstrap_finish(args) -> int:
 
 def _plan_remove(args) -> tuple[dict, dict]:
     """Plan a removal from the last report; prints exactly what will change."""
-    store = Store()
-    latest = store.latest_inventory(args.serial)
-    if latest is None:
-        raise apps.AppError("no report for this car yet: run an inventory job first")
-    report_id, entries, _ = latest
-    menu_file = store.report(args.serial, report_id) / "SyncApps.xml"
-    if not menu_file.is_file():
-        raise apps.AppError(f"report {report_id} has no SyncApps.xml: run a new inventory job")
-    menu = menu_file.read_bytes()
+    report_id, entries, _, menu = _latest_menu(Store(), args.serial)
     plan = apps.plan_removal(args.app, menu, entries, apps.catalog(args.upstream), args.purge)
     print(f"remove {plan.app!r} (planned from report {report_id}):")
     print(f"  menu: {plan.app} is taken out of the Apps menu (old menu backed up on the car)")
@@ -133,6 +127,62 @@ def _plan_remove(args) -> tuple[dict, dict]:
               "delete_dirs": plan.delete_dirs, "delete_files": plan.delete_files,
               "executables": plan.executables}
     return params, {"SyncApps.xml.expected": menu, "SyncApps.xml.new": plan.menu_after}
+
+
+def _latest_menu(store: Store, serial: str) -> tuple[str, list, dict, bytes]:
+    latest = store.latest_inventory(serial)
+    if latest is None:
+        raise apps.AppError("no report for this car yet: run an inventory job first")
+    report_id, entries, info = latest
+    menu_file = store.report(serial, report_id) / "SyncApps.xml"
+    if not menu_file.is_file():
+        raise apps.AppError(f"report {report_id} has no SyncApps.xml: run a new inventory job")
+    return report_id, entries, info, menu_file.read_bytes()
+
+
+def _plan_install(args) -> tuple[dict, dict, list]:
+    """Plan an install from the last report; prints exactly what will be copied."""
+    report_id, _, info, menu = _latest_menu(Store(), args.serial)
+    plan = apps.plan_install(args.app, menu, apps.catalog(args.upstream), args.upstream,
+                             args.variant, args.reinstall)
+    print(f"install {plan.app!r} ({plan.variant}, planned from report {report_id}):")
+    for source, car_path in plan.sources:
+        print(f"  copy {car_path}" + ("  (whole folder)" if source.is_dir() else ""))
+    if plan.app.lower() == "autokit":
+        print("  AutoKit gets the SYNC 2 sound patch (stock copies kept as *.orig)")
+    print(f"  menu: {'add ' + plan.app + ' to the first free slot' if plan.adds_to_menu else 'unchanged (reinstall)'}")
+    print(f"  size: {plan.size / 1e6:.1f} MB; close the app first (restart SYNC) if it is running")
+    free = info.get("free", "")
+    if free.isdigit() and plan.size > int(free) * 0.9:
+        print(f"  warning: the last report showed only {int(free) / 1e6:.1f} MB free")
+    print("  SYNC restarts after the job")
+    params = {"app": plan.app, "variant": plan.variant, "reinstall": args.reinstall,
+              "based_on": report_id, "expected_len": len(menu), "new_len": len(plan.menu_after),
+              "files": [car_path for _, car_path in plan.sources],
+              "delete_dirs": [], "delete_files": [], "executables": []}
+    return params, {"SyncApps.xml.expected": menu, "SyncApps.xml.new": plan.menu_after}, plan.sources
+
+
+def cmd_apps(args) -> int:
+    """SyncExtPack apps that s2am can install, and what the last report shows on the car."""
+    catalog = apps.catalog(args.upstream)
+    latest = Store().latest_inventory(args.serial)
+    menu, folders = set(), set()
+    if latest:
+        report = Store().report(args.serial, latest[0])
+        xml = report / "SyncApps.xml"
+        if xml.is_file():
+            menu = {name.lower() for name, _, _ in apps.menu_entries(xml.read_bytes()) if name}
+        folders = {e.path.replace("\\", "/").lower() + "/" for e in latest[1] if e.kind == "D"}
+    print(f"apps for {args.serial}" + (f" (report {latest[0]})" if latest else " (no report yet)"))
+    for app in sorted(catalog.values(), key=lambda a: a.name.lower()):
+        if not app.variants:
+            continue
+        on_car = any(d.lower() in folders for d in app.files if d.endswith("/"))
+        state = "in menu" if app.name.lower() in menu else ("files on car" if on_car else "-")
+        print(f"  {app.name:18} {state:14} variants: {', '.join(sorted(app.variants))}"
+              f" (default {apps.default_variant(app)})")
+    return 0
 
 
 def _plan_undo(args) -> tuple[dict, dict]:
@@ -161,16 +211,21 @@ def _plan_undo(args) -> tuple[dict, dict]:
 
 
 def cmd_job(args) -> int:
-    params, extra = {}, None
+    params, extra, payload = {}, None, None
     if args.kind == "remove":
         params, extra = _plan_remove(args)
-        if args.dry_run:
-            return 0
+    elif args.kind == "install":
+        params, extra, payload = _plan_install(args)
     elif args.kind == "undo":
         params, extra = _plan_undo(args)
+    if getattr(args, "dry_run", False):
+        return 0
     job = Job(serial=args.serial, kind=JOB_KINDS[args.kind], params=params)
     workdir = Path(args.work or REPO / "build" / "jobs" / job.id).resolve()
-    stage(job, args.upstream, workdir, extra)
+    stage(job, args.upstream, workdir, extra, payload)
+    if job.kind == "inst" and params["app"].lower() == "autokit":
+        autokit.patch_folder(workdir / "payload" / "SyncExtendedPack/Apps/Media/AutoKit",
+                             args.upstream / autokit.HOOK_SOURCE)
     if args.no_pack:
         print(f"staged {job.id} at {workdir} (not packed)")
         return 0
@@ -236,6 +291,15 @@ def _verify_menu(store: Store, record: dict) -> str:
     if record["kind"] == "rm":
         return f"verified: {app!r} is no longer in the menu" if not present else \
             f"NOT verified: {app!r} is still in the menu"
+    if record["kind"] == "inst":
+        inventory = report / "inventory.txt"
+        listed = {e.path.replace("\\", "/").lower() for e in parse_inventory(
+            inventory.read_text(errors="replace"))} if inventory.is_file() else set()
+        folders = [f for f in record["params"].get("files", []) if f.endswith("/")]
+        missing = [f for f in folders if f.rstrip("/").lower() not in listed]
+        if not present or missing:
+            return f"NOT verified: in menu={present}, folders missing from the report: {missing}"
+        return f"verified: {app!r} is in the menu and its files are on the car"
     return f"verified: {app!r} is back in the menu" if present else \
         f"NOT verified: {app!r} is not in the menu"
 
@@ -363,6 +427,18 @@ def parser() -> argparse.ArgumentParser:
     remove.add_argument("--purge", action="store_true", help="also delete the app's files")
     remove.add_argument("--dry-run", action="store_true", help="show the plan, build nothing")
     remove.set_defaults(func=cmd_job)
+    install = job_sub.add_parser("install", parents=[common],
+                                 help="copy a SyncExtPack app to the car and add it to the menu")
+    install.add_argument("app", help="the app name (see s2am apps)")
+    install.add_argument("--variant", help="SyncExtPack unit to install (see s2am apps)")
+    install.add_argument("--reinstall", action="store_true",
+                         help="the app is already in the menu: overwrite its files (update)")
+    install.add_argument("--dry-run", action="store_true", help="show the plan, build nothing")
+    install.set_defaults(func=cmd_job)
+    listing = sub.add_parser("apps", help="installable apps and what the last report shows")
+    listing.add_argument("--serial", type=_serial, required=True)
+    listing.add_argument("--upstream", type=Path, default=UPSTREAM)
+    listing.set_defaults(func=cmd_apps)
     undo = job_sub.add_parser("undo", parents=[common], help="put a removed app back in the menu")
     undo.add_argument("job_id", help="the remove job to undo")
     undo.set_defaults(func=cmd_job)
@@ -399,7 +475,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         return args.func(args)
-    except (pack.PackError, stick.StickError, bootstrap.BootstrapError, apps.AppError,
+    except (pack.PackError, stick.StickError, bootstrap.BootstrapError, apps.AppError, autokit.PatchFailed,
             ContainerError, ValueError, OSError, subprocess.CalledProcessError) as error:
         print(f"s2am: {error}", file=sys.stderr)
         return 1

@@ -24,7 +24,7 @@ APPS_DIR = "/SyncExtendedPack/Apps/"
 PROTECTED = ("/windows/updateservice.dll", "/syncextendedpack/apps/tools/syncappsrunner")
 
 
-MENU_KINDS = ("rm", "undo")  # job kinds that change SyncApps.xml
+MENU_KINDS = ("rm", "undo", "inst")  # job kinds that change SyncApps.xml
 
 
 class AppError(Exception):
@@ -37,6 +37,8 @@ class CatalogApp:
     plugin: str
     icon: str
     files: set[str] = field(default_factory=set)  # car paths, folders end with "/"
+    # SyncExtPack unit -> (source under FullPack, car path), e.g. VideoPlayerENUnit
+    variants: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
 
 
 def catalog(upstream: Path) -> dict[str, CatalogApp]:
@@ -73,8 +75,11 @@ def catalog(upstream: Path) -> dict[str, CatalogApp]:
         if not config:
             continue
         app = apps.setdefault(config[0].lower(), CatalogApp(config[0], config[1], config[2]))
-        for item in inherited(name, "files") or []:
-            app.files.add(item[1] if isinstance(item, tuple) else item)
+        pairs = [item if isinstance(item, tuple) else (item, item)
+                 for item in inherited(name, "files") or []]
+        if pairs:
+            app.variants[name] = pairs
+        app.files.update(dst for _, dst in pairs)
     return apps
 
 
@@ -129,6 +134,66 @@ def _allowed(path: str, plugin: str) -> bool:
     if lower.startswith(ICONS_DIR.lower()):
         return len(parts) == len(ICONS_DIR.strip("/").split("/")) + 1
     return under_apps and len(parts) >= 4  # a single file, e.g. Tools/explorer.exe
+
+
+@dataclass
+class Install:
+    app: str
+    variant: str
+    sources: list[tuple[Path, str]]  # (file or folder on the Mac, car path)
+    menu_before: bytes
+    menu_after: bytes
+    size: int
+    adds_to_menu: bool
+
+
+def default_variant(app: CatalogApp) -> str:
+    """The English variant if SyncExtPack has one (VideoPlayerEN, MirrorLinkENNew), else the first."""
+    names = sorted(app.variants)
+    english = [n for n in names if "EN" in n.replace("Unit", "")]
+    return (english or names)[0]
+
+
+def plan_install(app_name: str, menu: bytes, apps: dict[str, CatalogApp], upstream: Path,
+                 variant: str | None = None, reinstall: bool = False) -> Install:
+    """What installing ``app_name`` copies and how the menu changes, judged against the last report."""
+    known = apps.get(app_name.lower())
+    if known is None or not known.variants:
+        installable = sorted(a.name for a in apps.values() if a.variants)
+        raise AppError(f"{app_name!r} is not a SyncExtPack app; installable: {installable}")
+    unit = variant or default_variant(known)
+    if unit not in known.variants:
+        raise AppError(f"{known.name} has the variants {sorted(known.variants)}, not {unit!r}")
+
+    sources, size = [], 0
+    for src, dst in known.variants[unit]:
+        if not _allowed(dst, known.plugin):
+            raise AppError(f"{dst} is outside what s2am may write")
+        path = upstream / "FullPack" / src.strip("/")
+        if not path.exists():
+            raise AppError(f"{path} is missing from the SyncExtPack clone")
+        if path.is_symlink() or (path.is_dir() and any(p.is_symlink() for p in path.rglob("*"))):
+            raise AppError(f"{path} contains a symlink")
+        size += sum(p.stat().st_size for p in path.rglob("*") if p.is_file()) if path.is_dir() \
+            else path.stat().st_size
+        sources.append((path, dst))
+
+    entries = menu_entries(menu)
+    present = [i for i, e in enumerate(entries) if e[0].lower() == known.name.lower()]
+    if present and not reinstall:
+        raise AppError(f"{known.name} is already in the Apps menu; use --reinstall to update its files")
+    clash = [e[0] for e in entries if e[1].lower() == known.plugin.lower()
+             and e[0].lower() != known.name.lower()]
+    if clash:
+        raise AppError(f"{clash} already use the plugin {known.plugin!r}")
+    after = list(entries)
+    if not present:
+        empty = [i for i, e in enumerate(entries) if e == ("", "", "")]
+        if not empty:
+            raise AppError("the Apps menu has no free slot; remove an app first")
+        after[empty[0]] = (known.name, known.plugin, ICON_PREFIX + known.icon)
+    return Install(known.name, unit, sources, menu, render_menu(after) if not present else menu,
+                   size, not present)
 
 
 def plan_removal(app_name: str, menu: bytes, inventory: list[Entry],

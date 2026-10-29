@@ -93,7 +93,7 @@ class FakeCar:
                 source = self._resolve(f"{AUTOKIT_CE}\\{module}.{variant}")
                 if source.exists():
                     shutil.copyfile(source, self._resolve(f"{AUTOKIT_CE}\\{module}"))
-        if job.kind in ("rm", "undo") and not self._change_menu(out, job):
+        if job.kind in ("rm", "undo", "inst") and not self._change_menu(out, job):
             return
         lines = []
         apps = self._resolve(INVENTORY_ROOT)

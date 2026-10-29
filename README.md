@@ -36,7 +36,7 @@ run the same system, but nothing is guaranteed.
 | 🤖 Android Auto with the same dongle | Next |
 | 💻 See what is installed on SYNC 2 from your Mac | Ready to test |
 | 🗑️ Remove apps from your Mac (menu only, or with all their files) | Ready to test |
-| 📦 Install apps from your Mac | Planned |
+| 📦 Install apps from your Mac (SyncExtPack apps, AutoKit with the sound fix) | Ready to test |
 | ⚡ CarPlay starts by itself when you plug in the phone | Planned |
 
 ## What you need
@@ -101,6 +101,23 @@ python3 -m s2am diff --serial YOURSERIAL                    # what changed since
 ```
 
 A stick never runs the same job twice, even if you leave it in. Jobs never touch the firmware.
+
+## Install an app from your Mac
+
+`s2am` installs SyncExtPack's own apps: AutoKit, Video Player, MirrorLink, Total Commander,
+Navitel and others. Run `s2am apps` to see the list. You need a recent inventory report first.
+
+```sh
+python3 -m s2am apps --serial YOURSERIAL                                  # what can be installed, what is on the car
+python3 -m s2am job install "Video Player" --serial YOURSERIAL --dry-run  # show what would be copied
+python3 -m s2am job install "Video Player" --serial YOURSERIAL            # copy it and add it to the menu
+python3 -m s2am job install "AutoKit" --serial YOURSERIAL --reinstall     # update an app that is already there
+```
+
+The app goes into the first free slot of the Apps menu, using the same safe menu change as
+removal: backup, content check, verified copy. AutoKit always gets the sound patch. Restart
+SYNC before inserting the stick if the app is running. Every job pack is unpacked again on the
+Mac and checked file by file before you get it.
 
 ## Remove an app from your Mac
 
@@ -175,7 +192,7 @@ third-party tools never run directly on your Mac. Read
 <summary><b>For developers</b></summary>
 
 ```sh
-python3 -m unittest discover -s tests       # 119 tests; uses ../syncextpack (tested at 1a1eda0)
+python3 -m unittest discover -s tests       # 133 tests; uses ../syncextpack (tested at 1a1eda0)
 python3 tools/make_pack.py SERIAL --dry-run  # stage and patch only, no build
 python3 -m s2am window                       # is the current 30-day key window safe to build in?
 ```

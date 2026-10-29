@@ -256,13 +256,15 @@ def _menu_files(job: Job, expected_len: int, new_len: int | None = None) -> list
     return lines
 
 
-def removal_script(job: Job) -> str:
-    """Take an app out of the Apps menu; with purge, also delete the files it owns.
+def menu_change_script(job: Job) -> str:
+    """Swap the Apps menu for the one the Mac planned; a removal then deletes what it owns.
 
-    Nothing is deleted until the live menu provably equals the new one, so the
-    menu can never point at a deleted plugin. Phase one (back up, replace, verify,
-    or restore on failure) leaves a phase marker; a run interrupted after that
-    point resumes with the deletes instead of reporting a stale menu.
+    Used by remove (optional deletes) and install (UpdateService has already
+    copied the app's files before this POST script runs). Nothing is deleted
+    until the live menu provably equals the new one, so the menu can never point
+    at a deleted plugin. Phase one (back up, replace, verify, or restore on
+    failure) leaves a phase marker; a run interrupted after that point resumes
+    instead of reporting a stale menu.
     """
     p = job.params
     phase = f"{PHASE_DIR}\\{job.id}.txt"
@@ -331,14 +333,17 @@ def undo_script(job: Job) -> str:
     return _script(lines + _inventory() + _footer(job))
 
 
+removal_script = menu_change_script
+
 SCRIPTS = {
     "inv": inventory_script,
     "akstock": lambda job: autokit_script(job, "orig"),
     "akpatch": lambda job: autokit_script(job, "patched"),
-    "rm": removal_script,
+    "rm": menu_change_script,
+    "inst": menu_change_script,
     "undo": undo_script,
 }
-MENU_CHANGING = ("rm", "undo")  # SYNC reads SyncApps.xml at start, so these restart it
+MENU_CHANGING = ("rm", "undo", "inst")  # SYNC reads SyncApps.xml at start, so these restart it
 
 
 def meta(job: Job) -> bytes:
@@ -353,10 +358,13 @@ def meta(job: Job) -> bytes:
     return "".join(f"{k}={v}\n" for k, v in entries.items()).encode("utf-16-le")
 
 
-def stage(job: Job, upstream: Path, workdir: Path, extra: dict[str, bytes] | None = None) -> Path:
+def stage(job: Job, upstream: Path, workdir: Path, extra: dict[str, bytes] | None = None,
+          payload: list[tuple[Path, str]] | None = None) -> Path:
     """Write payload/ and meta.txt for crypto_pack into a fresh ``workdir``.
 
     ``extra`` files go into the job folder on the car (e.g. a new SyncApps.xml).
+    ``payload`` copies files or folders to car paths (an install's app files);
+    UpdateService writes them before the job's script runs.
     """
     if job.kind not in SCRIPTS:
         raise ValueError(f"unknown job kind {job.kind!r}")
@@ -372,6 +380,15 @@ def stage(job: Job, upstream: Path, workdir: Path, extra: dict[str, bytes] | Non
         if "/" in name or "\\" in name or name.startswith("."):
             raise ValueError(f"invalid extra file name {name!r}")
         (target / name).write_bytes(data)
+    for source, car_path in payload or []:
+        if not car_path.startswith("/") or ".." in car_path.split("/"):
+            raise ValueError(f"invalid car path {car_path!r}")
+        destination = workdir / "payload" / car_path.strip("/")
+        if source.is_dir():
+            shutil.copytree(source, destination, dirs_exist_ok=True)
+        else:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
 
     job.files = {
         "/" + str(path.relative_to(workdir / "payload")): hashlib.sha256(path.read_bytes()).hexdigest()

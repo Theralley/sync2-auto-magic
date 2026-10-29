@@ -20,19 +20,18 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-import patch_waveout
-
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-from s2am import container  # noqa: E402
+from s2am import autokit, container  # noqa: E402
+from s2am.job import AUTOKIT_MODULES  # noqa: E402
 from s2am.window import valid_thru  # noqa: E402
 
 UPSTREAM = REPO.parent / "syncextpack"
 DEFAULT_APPS = ("AutoKit", "Explorer", "Reboot")
 
 AUTOKIT_DIR = Path("FullPack/SyncExtendedPack/Apps/Media/AutoKit")
-HOOK_SOURCE = Path("FullPack/SyncExtendedPack/Apps/Media/VideoPlayer_EN/WaveOutHooks.dll")
-PATCH_TARGETS = ("AutoKit.exe", "libgstwaveoutsink.dll", "libgstwaveform.dll")
+HOOK_SOURCE = autokit.HOOK_SOURCE
+PATCH_TARGETS = AUTOKIT_MODULES
 STAGE_IGNORE = shutil.ignore_patterns(".git", "*.rar", "SyncExtPack_*.zip", "builder.log")
 
 # Upstream validateSerial: 8 characters, no letter O. The serial also lands in
@@ -55,25 +54,10 @@ def stage(upstream: Path, staging: Path) -> list[dict]:
         shutil.rmtree(staging)
     shutil.copytree(upstream, staging, symlinks=True, ignore=STAGE_IGNORE)
 
-    autokit = staging / AUTOKIT_DIR
-    hook = staging / HOOK_SOURCE
-    changes = []
-    for name in PATCH_TARGETS:
-        module = autokit / name
-        original = module.read_bytes()
-        try:
-            patched = patch_waveout.patch(original, hook.read_bytes())
-        except patch_waveout.PatchError as error:
-            raise BuildError(f"{name}: {error}") from error
-        # Both variants stay on the car so an s2am job can swap them for A/B tests.
-        module.with_name(name + ".orig").write_bytes(original)
-        module.with_name(name + ".patched").write_bytes(patched)
-        module.write_bytes(patched)
-        changes.append({"file": name, "original_sha256": hashlib.sha256(original).hexdigest(),
-                        "patched_sha256": hashlib.sha256(patched).hexdigest()})
-    shutil.copy2(hook, autokit / patch_waveout.HOOK_DLL_NAME)
-    changes.append({"file": patch_waveout.HOOK_DLL_NAME, "added_from": str(HOOK_SOURCE),
-                    "sha256": sha256(hook)})
+    try:
+        changes = autokit.patch_folder(staging / AUTOKIT_DIR, staging / HOOK_SOURCE)
+    except autokit.PatchFailed as error:
+        raise BuildError(str(error)) from error
 
     # Inside the container crypto_pack runs directly and swfmill comes from apt.
     (staging / "crypto_pack_docker.sh").unlink(missing_ok=True)

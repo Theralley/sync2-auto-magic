@@ -1,4 +1,10 @@
-"""Turn a staged job into install.bin with SyncExtPack's own crypto_pack (in the container)."""
+"""Turn a staged job into install.bin with SyncExtPack's own crypto_pack (in the container).
+
+The source folder is passed with a trailing slash, exactly as upstream's packer
+does ("TempPack/"). Without it crypto_pack stores the paths differently and its
+own unpacker extracts nothing. Every pack is therefore unpacked again with the
+official tool and compared file by file with what was staged before it is used.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -9,9 +15,17 @@ from pathlib import Path
 from . import container, window
 from .job import Job
 
+SOURCE = "payload/"  # the trailing slash matters (see above)
+CHECK_DIR = "roundtrip"
+
 
 class PackError(Exception):
     pass
+
+
+def _tree(root: Path) -> dict[str, str]:
+    """Relative path -> sha256 for every file under ``root``."""
+    return {str(p.relative_to(root)): sha256(p) for p in sorted(root.rglob("*")) if p.is_file()}
 
 
 def build(job: Job, workdir: Path, upstream: Path, now: datetime | None = None,
@@ -26,15 +40,30 @@ def build(job: Job, workdir: Path, upstream: Path, now: datetime | None = None,
     tool.chmod(0o755)
     output = workdir / "install.bin"
     output.unlink(missing_ok=True)
+    check = workdir / CHECK_DIR
+    if check.exists():
+        shutil.rmtree(check)
     try:
         container.ensure_image()
-        container.run(workdir, "./crypto_pack", "-p", "payload", "install.bin",
+        container.run(workdir, "./crypto_pack", "-p", SOURCE, "install.bin",
                       job.serial, "0", "meta.txt", quiet=True)
+        # crypto_pack's exit status is not trustworthy, so judge it by its output.
+        if not output.is_file() or output.stat().st_size == 0:
+            raise PackError("crypto_pack produced no install.bin")
+        container.run(workdir, "./crypto_pack", "-u", "install.bin", CHECK_DIR,
+                      job.serial, "0", quiet=True)
+        expected, unpacked = _tree(workdir / "payload"), _tree(check) if check.is_dir() else {}
+        if unpacked != expected:
+            missing = sorted(expected.keys() - unpacked.keys())[:5]
+            different = sorted(k for k in expected.keys() & unpacked.keys()
+                               if expected[k] != unpacked[k])[:5]
+            raise PackError(f"install.bin does not unpack to the staged files "
+                            f"(missing {missing}, different {different}, "
+                            f"unexpected {sorted(unpacked.keys() - expected.keys())[:5]})")
     finally:
         tool.unlink(missing_ok=True)
-    # crypto_pack's exit status is not trustworthy, so judge it by its output.
-    if not output.is_file() or output.stat().st_size == 0:
-        raise PackError("crypto_pack produced no install.bin")
+        if check.exists():
+            shutil.rmtree(check)
     return output
 
 
