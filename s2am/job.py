@@ -169,6 +169,9 @@ def _inventory() -> list[str]:
         '  WriteFile(inv, "F|" & f & "|" & FileSize(f) & "^NL^", TRUE)',
         "EndForEach",
         f'Copy({_quote(MENU_XML)}, out & "\\SyncApps.xml", TRUE)',
+        f'If (FileExists({_quote(AUTOKIT_CE + chr(92) + "screenconfig")}))',
+        f'  Copy({_quote(AUTOKIT_CE + chr(92) + "screenconfig")}, out & "\\autokit-screenconfig.txt", TRUE)',
+        "EndIf",
     ]
 
 
@@ -335,6 +338,150 @@ def undo_script(job: Job) -> str:
 
 removal_script = menu_change_script
 
+SCREEN = re.compile(r"\d{3,4},\d{3,4},\d{1,2}")
+LOGGER_NAME = "s2amlog"
+
+
+def autokit_config_script(job: Job) -> str:
+    """Set AutoKit's video size and decoder (or restore them), backing up what was there.
+
+    AutoKit reads ``screenconfig`` ("width,height,fps") and the empty flag file
+    ``usehwdec`` (present = hardware decoding) from its folder at start (Codex,
+    AutoKit.exe+0x47a48). Any Auto_Box_Update.img is removed: AutoKit would flash it
+    to the dongle, and a wrong image kills the dongle.
+    """
+    p = job.params
+    ak = AUTOKIT_CE
+    lines = _header(job) + [
+        f"ak = {_quote(ak)}",
+        "If (NOT DirExists(ak))",
+        *_stop("missing.txt", "AutoKit is not installed; nothing changed", "  "),
+        "EndIf",
+        'If (ProcExists("AutoKit.exe"))',
+        *_stop("busy.txt", "AutoKit is running: restart SYNC, insert the stick again", "  "),
+        "EndIf",
+    ]
+    if p.get("restore"):
+        if not JOB_ID.fullmatch(p["restore"]):
+            raise ValueError(f"invalid restore target {p['restore']!r}")
+        lines += [
+            f"src = {_quote(BACKUP_DIR + chr(92) + p['restore'])}",
+            "If (NOT DirExists(src))",
+            *_stop("backup-missing.txt", "no backup for that job on the car; nothing changed", "  "),
+            "EndIf",
+            'If (FileExists(src & "\\screenconfig"))',
+            '  Copy(src & "\\screenconfig", ak & "\\screenconfig", TRUE)',
+            "EndIf",
+            'If (FileExists(src & "\\screenconfig.absent"))',
+            '  Delete(ak & "\\screenconfig")',
+            "EndIf",
+            'If (FileExists(src & "\\usehwdec.present"))',
+            '  WriteFile(ak & "\\usehwdec", "")',
+            "EndIf",
+            'If (FileExists(src & "\\usehwdec.absent"))',
+            '  Delete(ak & "\\usehwdec")',
+            "EndIf",
+        ]
+    else:
+        screen, decoder = p.get("screen", ""), p.get("decoder", "")
+        if not SCREEN.fullmatch(screen) or decoder not in ("software", "hardware"):
+            raise ValueError(f"invalid AutoKit settings {screen!r}/{decoder!r}")
+        lines += [
+            'MkDir("\\SyncExtendedPack\\_s2am")',
+            f"MkDir({_quote(BACKUP_DIR)})",
+            f"bk = {_quote(BACKUP_DIR + chr(92) + job.id)}",
+            "MkDir(bk)",
+            'If (FileExists(ak & "\\screenconfig"))',
+            '  Copy(ak & "\\screenconfig", bk & "\\screenconfig", TRUE)',
+            "Else",
+            '  WriteFile(bk & "\\screenconfig.absent", "")',
+            "EndIf",
+            'If (FileExists(ak & "\\usehwdec"))',
+            '  WriteFile(bk & "\\usehwdec.present", "")',
+            "Else",
+            '  WriteFile(bk & "\\usehwdec.absent", "")',
+            "EndIf",
+            f'WriteFile(ak & "\\screenconfig", {_quote(screen)})',
+            'Delete(ak & "\\usehwdec")' if decoder == "software" else 'WriteFile(ak & "\\usehwdec", "")',
+        ]
+    lines += [
+        'If (FileExists(ak & "\\Auto_Box_Update.img"))',
+        '  Delete(ak & "\\Auto_Box_Update.img")',
+        '  WriteFile(out & "\\firmware-image-removed.txt", "a dongle firmware image was removed")',
+        "EndIf",
+    ]
+    return _script(lines + _inventory() + _footer(job))
+
+
+def snapshot_script(job: Job) -> str:
+    """Read-only: write HKLM\\Services, HKLM\\Init and HKLM\\Drivers\\Active to registry.txt.
+
+    ``ForEach k in regSubKeys(root, path)`` gives subkey names and
+    ``ForEach n, v in regValues(root, path)`` value names and values
+    (MortScript Interpreter.cpp); lines are K|key and V|key|name|value.
+    """
+    lines = _header(job) + ['reg = out & "\\registry.txt"', 'WriteFile(reg, "")']
+    for path in ("Services", "Drivers\\Active"):
+        lines += [
+            f'ForEach k in regSubKeys("HKLM", {_quote(path)})',
+            f'  WriteFile(reg, "K|HKLM\\{path}\\" & k & "^NL^", TRUE)',
+            f'  ForEach n, v in regValues("HKLM", {_quote(path + chr(92))} & k)',
+            f'    WriteFile(reg, "V|HKLM\\{path}\\" & k & "|" & n & "|" & v & "^NL^", TRUE)',
+            "  EndForEach",
+            "EndForEach",
+        ]
+    lines += [
+        'WriteFile(reg, "K|HKLM\\Init^NL^", TRUE)',
+        'ForEach n, v in regValues("HKLM", "Init")',
+        '  WriteFile(reg, "V|HKLM\\Init|" & n & "|" & v & "^NL^", TRUE)',
+        "EndForEach",
+        'WriteFile(reg, "S|system|" & SystemVersion() & "^NL^", TRUE)',
+    ]
+    return _script(lines + _inventory() + _footer(job))
+
+
+def logger_script(job: Job) -> str:
+    """Start the logger in the background, then report as usual (UpdateService waits for this)."""
+    lines = _header(job) + [
+        f'Run({_quote(ce_path(job.job_dir))} & "\\{LOGGER_NAME}.exe")',
+        'WriteFile(out & "\\logger-started.txt", "leave the stick in until log.txt says end")',
+    ]
+    return _script(lines + _inventory() + _footer(job))
+
+
+def logger_loop(job: Job) -> str:
+    """The background loop: every second, AutoKit's process, the foreground app and USB devices.
+
+    It writes into the job's report folder on the stick, so ``stick import`` picks
+    the log up; it ends by itself after ``seconds`` and nothing survives a restart.
+    """
+    seconds = job.params.get("seconds", 180)
+    if not isinstance(seconds, int) or not 10 <= seconds <= 900:
+        raise ValueError(f"invalid logger duration {seconds!r}")
+    return _script([
+        f"# s2am logger for job {job.id}",
+        'ErrorLevel("off")',
+        f'log = {_quote(ce_path(job.report_dir) + chr(92) + "log.txt")}',
+        'WriteFile(log, "start|" & FormatTime("Y-m-d H:i:s") & "^NL^", TRUE)',
+        "i = 0",
+        f"While (i < {seconds})",
+        '  devs = ""',
+        '  ForEach k in regSubKeys("HKLM", "Drivers\\Active")',
+        '    ForEach n, v in regValues("HKLM", "Drivers\\Active\\" & k)',
+        '      If (n eq "Name")',
+        '        devs = devs & v & " "',
+        "      EndIf",
+        "    EndForEach",
+        "  EndForEach",
+        '  line = FormatTime("H:i:s") & "|" & ProcExists("AutoKit.exe") & "|" & ActiveProcess()',
+        '  WriteFile(log, line & "|" & ActiveWindow() & "|" & devs & "^NL^", TRUE)',
+        "  Sleep(1000)",
+        "  i = i + 1",
+        "EndWhile",
+        'WriteFile(log, "end^NL^", TRUE)',
+    ])
+
+
 SCRIPTS = {
     "inv": inventory_script,
     "akstock": lambda job: autokit_script(job, "orig"),
@@ -342,6 +489,9 @@ SCRIPTS = {
     "rm": menu_change_script,
     "inst": menu_change_script,
     "undo": undo_script,
+    "akcfg": autokit_config_script,
+    "snap": snapshot_script,
+    "log": logger_script,
 }
 MENU_CHANGING = ("rm", "undo", "inst")  # SYNC reads SyncApps.xml at start, so these restart it
 
@@ -376,6 +526,9 @@ def stage(job: Job, upstream: Path, workdir: Path, extra: dict[str, bytes] | Non
     shutil.copy2(upstream / MORTSCRIPT_SOURCE, target / "MortScript.exe")
     shutil.copy2(upstream / MORTRUNNER_SOURCE, target / f"{RUNNER_NAME}.exe")
     (target / f"{RUNNER_NAME}.mscr").write_bytes(script)
+    if job.kind == "log":  # MortRunner renamed again runs the loop beside it
+        shutil.copy2(upstream / MORTRUNNER_SOURCE, target / f"{LOGGER_NAME}.exe")
+        (target / f"{LOGGER_NAME}.mscr").write_bytes(logger_loop(job).encode("ascii"))
     for name, data in (extra or {}).items():
         if "/" in name or "\\" in name or name.startswith("."):
             raise ValueError(f"invalid extra file name {name!r}")

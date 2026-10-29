@@ -102,6 +102,19 @@ python3 -m s2am diff --serial YOURSERIAL                    # what changed since
 
 A stick never runs the same job twice, even if you leave it in. Jobs never touch the firmware.
 
+## Android Auto and diagnostics (Phase 2)
+
+```sh
+python3 -m s2am job autokit-config --serial YOURSERIAL               # AutoKit video 800x480, software decoding
+python3 -m s2am job autokit-config --serial YOURSERIAL --restore <id> # put the old settings back
+python3 -m s2am job snapshot --serial YOURSERIAL                     # read-only: services, startup, USB devices
+python3 -m s2am job logger --serial YOURSERIAL                       # 3-minute log while you plug/unplug the phone
+python3 -m s2am report --serial YOURSERIAL                           # show the newest report (snapshot, log timeline)
+```
+
+See [docs/P2-AA-AUTOSTART-PLAN.md](docs/P2-AA-AUTOSTART-PLAN.md). `autokit-config` also removes any
+dongle firmware image from AutoKit's folder, because AutoKit would flash it.
+
 ## Install an app from your Mac
 
 `s2am` installs SyncExtPack's own apps: AutoKit, Video Player, MirrorLink, Total Commander,
@@ -192,7 +205,7 @@ third-party tools never run directly on your Mac. Read
 <summary><b>For developers</b></summary>
 
 ```sh
-python3 -m unittest discover -s tests       # 133 tests; uses ../syncextpack (tested at 1a1eda0)
+python3 -m unittest discover -s tests       # 143 tests; uses ../syncextpack (tested at 1a1eda0)
 python3 tools/make_pack.py SERIAL --dry-run  # stage and patch only, no build
 python3 -m s2am window                       # is the current 30-day key window safe to build in?
 ```

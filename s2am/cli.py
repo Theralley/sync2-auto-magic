@@ -10,6 +10,9 @@
     s2am job undo JOB_ID --serial S              put a removed app back in the menu
     s2am job install "APP" --serial S            copy an app to the car and add it to the menu
     s2am apps --serial S                         installable apps and what is on the car
+    s2am job autokit-config --serial S           AutoKit video: 800,480,15, software decoding
+    s2am job snapshot|logger --serial S          read-only registry snapshot / 3-minute logger
+    s2am report --serial S [JOB_ID]              print a report (snapshot, logger timeline)
     s2am stick prepare /Volumes/STICK --job DIR  put that job on a stick
     s2am stick import /Volumes/STICK             read back what the car wrote
     s2am status --serial XXXXXXXX                apps, plugins and menu from the last report
@@ -53,7 +56,8 @@ def cmd_window(args) -> int:
 
 
 JOB_KINDS = {"inventory": "inv", "autokit-stock": "akstock", "autokit-patched": "akpatch",
-             "remove": "rm", "install": "inst", "undo": "undo"}
+             "remove": "rm", "install": "inst", "undo": "undo", "autokit-config": "akcfg",
+             "snapshot": "snap", "logger": "log"}
 MARK = {"ok": "✓", "warn": "!", "fail": "✗"}
 
 
@@ -218,6 +222,16 @@ def cmd_job(args) -> int:
         params, extra, payload = _plan_install(args)
     elif args.kind == "undo":
         params, extra = _plan_undo(args)
+    elif args.kind == "autokit-config":
+        if args.restore:
+            Store().job(args.serial, args.restore)  # must be a known job
+            params = {"restore": args.restore}
+        else:
+            params = {"screen": args.screen, "decoder": args.decoder}
+    elif args.kind == "logger":
+        params = {"seconds": args.seconds}
+        print(f"logger: insert the stick, then plug and unplug the phone a few times; leave the "
+              f"stick in for {args.seconds} s until the log ends, then import it")
     if getattr(args, "dry_run", False):
         return 0
     job = Job(serial=args.serial, kind=JOB_KINDS[args.kind], params=params)
@@ -338,6 +352,64 @@ def cmd_status(args) -> int:
     menu = _menu(store.report(args.serial, job_id))
     print(f"  menu: {', '.join(menu) or 'missing from the report (SyncApps.xml not copied)'}")
     print(f"  AutoKit audio modules: {autokit_variant(entries)}")
+    print(f"  AutoKit video: {autokit_settings(store.report(args.serial, job_id), entries)}")
+    return 0
+
+
+def autokit_settings(report: Path, entries) -> str:
+    """screenconfig and decoder from the last report (the decoder is the usehwdec flag file)."""
+    names = {e.path.lower() for e in entries if e.kind == "F"}
+    if f"{AUTOKIT_CE}\\autokit.exe".lower() not in names:
+        return "AutoKit not installed"
+    config = report / "autokit-screenconfig.txt"
+    screen = config.read_text(errors="replace").strip() if config.is_file() else "default (800,480,15)"
+    hardware = f"{AUTOKIT_CE}\\usehwdec".lower() in names
+    return f"screen {screen}, decoder {'hardware' if hardware else 'software'}"
+
+
+def _registry_lines(text: str) -> list[str]:
+    out = []
+    for line in text.splitlines():
+        kind, _, rest = line.partition("|")
+        if kind == "K":
+            out.append(rest)
+        elif kind == "V":
+            key, _, value = rest.partition("|")
+            out.append(f"    {value}")
+        elif kind == "S":
+            out.append(f"system: {rest.partition('|')[2]}")
+    return out
+
+
+def _log_changes(text: str) -> list[str]:
+    """The logger's lines, keeping only those where something changed."""
+    out, previous = [], None
+    for line in text.splitlines():
+        stamp, _, state = line.partition("|")
+        if line.startswith(("start", "end")) or state != previous:
+            out.append(line)
+            previous = state
+    return out
+
+
+def cmd_report(args) -> int:
+    store = Store()
+    job_id = args.job_id or next((r["id"] for r in reversed(store.jobs(args.serial))
+                                  if store.report(args.serial, r["id"])), None)
+    report = store.report(args.serial, job_id) if job_id else None
+    if report is None:
+        print("no imported report", file=sys.stderr)
+        return 1
+    print(f"report {job_id}")
+    for name in ("info.txt", "busy.txt", "stale.txt", "firmware-image-removed.txt"):
+        if (report / name).is_file():
+            print(f"[{name}] " + (report / name).read_text(errors="replace").strip().replace("\r\n", "; "))
+    if (report / "registry.txt").is_file():
+        print("[registry]")
+        print("\n".join(_registry_lines((report / "registry.txt").read_text(errors="replace"))))
+    if (report / "log.txt").is_file():
+        print("[log: time|AutoKit running|foreground process|window|USB devices], changes only")
+        print("\n".join(_log_changes((report / "log.txt").read_text(errors="replace"))))
     return 0
 
 
@@ -427,6 +499,18 @@ def parser() -> argparse.ArgumentParser:
     remove.add_argument("--purge", action="store_true", help="also delete the app's files")
     remove.add_argument("--dry-run", action="store_true", help="show the plan, build nothing")
     remove.set_defaults(func=cmd_job)
+    config = job_sub.add_parser("autokit-config", parents=[common],
+                                help="set AutoKit's video size and decoder (Android Auto picture)")
+    config.add_argument("--screen", default="800,480,15", help="width,height,fps (default 800,480,15)")
+    config.add_argument("--decoder", choices=["software", "hardware"], default="software")
+    config.add_argument("--restore", metavar="JOB_ID", help="put back what that config job replaced")
+    config.set_defaults(func=cmd_job)
+    job_sub.add_parser("snapshot", parents=[common],
+                       help="read-only: services, startup entries and USB devices").set_defaults(func=cmd_job)
+    logger = job_sub.add_parser("logger", parents=[common],
+                                help="log AutoKit, the foreground app and USB devices every second")
+    logger.add_argument("--seconds", type=int, default=180)
+    logger.set_defaults(func=cmd_job)
     install = job_sub.add_parser("install", parents=[common],
                                  help="copy a SyncExtPack app to the car and add it to the menu")
     install.add_argument("app", help="the app name (see s2am apps)")
@@ -435,6 +519,10 @@ def parser() -> argparse.ArgumentParser:
                          help="the app is already in the menu: overwrite its files (update)")
     install.add_argument("--dry-run", action="store_true", help="show the plan, build nothing")
     install.set_defaults(func=cmd_job)
+    show = sub.add_parser("report", help="print a report: info, registry snapshot, logger timeline")
+    show.add_argument("--serial", type=_serial, required=True)
+    show.add_argument("job_id", nargs="?", help="default: the newest report")
+    show.set_defaults(func=cmd_report)
     listing = sub.add_parser("apps", help="installable apps and what the last report shows")
     listing.add_argument("--serial", type=_serial, required=True)
     listing.add_argument("--upstream", type=Path, default=UPSTREAM)

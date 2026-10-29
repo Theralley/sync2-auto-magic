@@ -27,6 +27,8 @@ class FakeCar:
         self.autokit_running = False
         self.running: set[str] = set()  # lower-case process names
         self.broken_copies: set[str] = set()  # lower-case CE paths whose Copy silently fails
+        self.registry: dict[str, dict[str, str]] = {}  # "HKLM\\Services\\X" -> values
+        self.log_lines: list[str] = ["start|2026-10-30 12:00:00", "end"]
         self.power_cut_after_phase = False
         root.mkdir(parents=True, exist_ok=True)
 
@@ -95,6 +97,13 @@ class FakeCar:
                     shutil.copyfile(source, self._resolve(f"{AUTOKIT_CE}\\{module}"))
         if job.kind in ("rm", "undo", "inst") and not self._change_menu(out, job):
             return
+        if job.kind == "akcfg" and not self._autokit_config(out, job):
+            return
+        if job.kind == "snap":
+            self._snapshot(out)
+        if job.kind == "log":
+            (out / "logger-started.txt").write_text("started")
+            (out / "log.txt").write_text("".join(f"{line}\r\n" for line in self.log_lines))
         lines = []
         apps = self._resolve(INVENTORY_ROOT)
 
@@ -122,6 +131,9 @@ class FakeCar:
         menu = self._resolve(MENU_XML)
         if menu.exists():
             shutil.copyfile(menu, out / "SyncApps.xml")
+        screen = self._resolve(f"{AUTOKIT_CE}\\screenconfig")
+        if screen.exists():
+            shutil.copyfile(screen, out / "autokit-screenconfig.txt")
         self.put(job.done_marker, job.id.encode())
         (out / "done.txt").write_text(f"{job.id} applied")
         (out / "info.txt").write_text(f"job={job.id}\r\ntime=2026-10-30 12:00:00\r\n"
@@ -192,3 +204,55 @@ class FakeCar:
         for path in p.get("delete_files", []):
             self._resolve(ce_path(path)).unlink(missing_ok=True)
         return True
+
+    def _autokit_config(self, out: Path, job: Job) -> bool:
+        ak = self._resolve(AUTOKIT_CE)
+        if not ak.is_dir():
+            (out / "missing.txt").write_text("no AutoKit")
+            return False
+        if self.autokit_running or "autokit.exe" in self.running:
+            (out / "busy.txt").write_text("running")
+            return False
+        screen, hwdec = ak / "screenconfig", ak / "usehwdec"
+        if job.params.get("restore"):
+            src = self._resolve(f"{BACKUP_DIR}\\{job.params['restore']}")
+            if not src.is_dir():
+                (out / "backup-missing.txt").write_text("none")
+                return False
+            if (src / "screenconfig").exists():
+                shutil.copyfile(src / "screenconfig", screen)
+            if (src / "screenconfig.absent").exists():
+                screen.unlink(missing_ok=True)
+            if (src / "usehwdec.present").exists():
+                hwdec.write_bytes(b"")
+            if (src / "usehwdec.absent").exists():
+                hwdec.unlink(missing_ok=True)
+        else:
+            backup = self._resolve(f"{BACKUP_DIR}\\{job.id}")
+            backup.mkdir(parents=True, exist_ok=True)
+            if screen.exists():
+                shutil.copyfile(screen, backup / "screenconfig")
+            else:
+                (backup / "screenconfig.absent").write_bytes(b"")
+            (backup / ("usehwdec.present" if hwdec.exists() else "usehwdec.absent")).write_bytes(b"")
+            screen.write_text(job.params["screen"])
+            if job.params["decoder"] == "software":
+                hwdec.unlink(missing_ok=True)
+            else:
+                hwdec.write_bytes(b"")
+        image = ak / "Auto_Box_Update.img"
+        if image.exists():
+            image.unlink()
+            (out / "firmware-image-removed.txt").write_text("removed")
+        return True
+
+    def _snapshot(self, out: Path) -> None:
+        lines = []
+        for root in ("HKLM\\Services", "HKLM\\Drivers\\Active"):
+            for key in sorted(k for k in self.registry if k.startswith(root + "\\")):
+                lines.append(f"K|{key}")
+                lines += [f"V|{key}|{n}|{v}" for n, v in self.registry[key].items()]
+        lines.append("K|HKLM\\Init")
+        lines += [f"V|HKLM\\Init|{n}|{v}" for n, v in self.registry.get("HKLM\\Init", {}).items()]
+        lines.append("S|system|7.0")
+        (out / "registry.txt").write_text("".join(line + "\r\n" for line in lines))
