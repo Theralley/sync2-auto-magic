@@ -163,6 +163,12 @@ The `../syncextpack` clone is never modified. State is kept in `~/.s2am/<serial>
 Changing your SYNC 2 software is at your own risk and may affect your warranty. Do not set
 anything up while driving. This project is not affiliated with Ford, Apple, Google or Carlinkit.
 
+## License
+
+The code and documentation in this repository are licensed under the [MIT License](LICENSE).
+The license does not cover third-party material: SyncExtPack and its bundled tools, AutoKit,
+MortScript, and the compatibility picture keep their own terms.
+
 ## Credits
 
 - [SyncExtPack](https://github.com/chr0m1ng/syncextpack) by chr0m1ng and the XDA MyFord Touch
