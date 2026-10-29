@@ -33,11 +33,11 @@ run the same system, but nothing is guaranteed.
 |---|---|
 | 🍎 Apple CarPlay over a cable | Ready to test |
 | 🔊 Sound through the car's speakers | Fix built, **not yet confirmed in a car** |
-| 🤖 Android Auto with the same dongle | Next |
+| 🤖 Android Auto with the same dongle | Planned ([plan](docs/P2-AA-AUTOSTART-PLAN.md)) |
 | 💻 See what is installed on SYNC 2 from your Mac | Ready to test |
 | 🗑️ Remove apps from your Mac (menu only, or with all their files) | Ready to test |
 | 📦 Install apps from your Mac (SyncExtPack apps, AutoKit with the sound fix) | Ready to test |
-| ⚡ CarPlay starts by itself when you plug in the phone | Planned |
+| ⚡ CarPlay starts by itself when you plug in the phone | Planned ([plan](docs/P2-AA-AUTOSTART-PLAN.md)) |
 
 ## What you need
 
