@@ -30,8 +30,9 @@ car, wait 10 minutes.
 - **Cause:** AutoKit's folder holds a 4-byte file `lang` with a Windows language code. The stock
   file is 0x0804, Simplified Chinese. `PAL2.dll` maps the code to
   `\Temp\riddlebox\<Language>.lng`.
-- **Fix:** `s2am job autokit-config --lang english --serial S` (0x0409). It keeps a backup, and
-  `--restore <job>` undoes it. Verified in the car.
+- **Fix:** installs made with s2am since 30 October 2026 start in English (the stock file is
+  kept as `lang.orig`). For an older install, run `s2am job autokit-config --lang english
+  --serial S` (0x0409). It keeps a backup, and `--restore <job>` undoes it. Verified in the car.
 
 ### An app in the Apps menu does nothing when tapped
 - **Seen:** 2026-10-30. A previous owner's MirrorLink, Video Player, Navitel and Reboot showed

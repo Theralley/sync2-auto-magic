@@ -1,5 +1,6 @@
 """s2am command line.
 
+    s2am wizard                                  guided install: plain questions, one car trip at a time
     s2am window                                  key window and whether it is safe to build
     s2am stick check /Volumes/STICK              FAT32, MBR, size, nothing left to run
     s2am bootstrap prepare --serial S --stick /Volumes/STICK   first install, stage one
@@ -47,6 +48,11 @@ def _serial(value: str) -> str:
 
 def _record(job: Job, status: str, **extra) -> dict:
     return {**json.loads(job.to_json()), "status": status, **extra}
+
+
+def cmd_wizard(args) -> int:
+    from . import wizard  # the wizard drives this module, so import it late
+    return wizard.main()
 
 
 def cmd_window(args) -> int:
@@ -174,7 +180,7 @@ def _plan_install(args) -> tuple[dict, dict, list]:
     for source, car_path in plan.sources:
         print(f"  copy {car_path}" + ("  (whole folder)" if source.is_dir() else ""))
     if plan.app.lower() == "autokit":
-        print("  AutoKit gets the SYNC 2 sound patch (stock copies kept as *.orig)")
+        print("  AutoKit gets the SYNC 2 sound patch and starts in English (stock copies kept as *.orig)")
     print(f"  menu: {'add ' + plan.app + ' to the first free slot' if plan.adds_to_menu else 'unchanged (reinstall)'}")
     print(f"  size: {plan.size / 1e6:.1f} MB; close the app first (restart SYNC) if it is running")
     free = info.get("free", "")
@@ -531,6 +537,8 @@ def parser() -> argparse.ArgumentParser:
     sub = root.add_subparsers(dest="command", required=True)
 
     sub.add_parser("window", help="key window status").set_defaults(func=cmd_window)
+    sub.add_parser("wizard", help="guided install for everyone: plain questions, one car "
+                   "trip at a time").set_defaults(func=cmd_wizard)
 
     boot = sub.add_parser("bootstrap", help="first SyncExtPack install")
     boot_sub = boot.add_subparsers(dest="action", required=True)

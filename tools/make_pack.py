@@ -127,8 +127,9 @@ def verify_packs(staging: Path, result: Path, serial: str, apps: tuple[str, ...]
                               (change["file"] + ".orig", "original_sha256")):
                 if not (autokit / name).is_file() or sha256(autokit / name) != change[key]:
                     problems.append(f"AutoKit/{name} is missing or not the expected build")
-        elif not (autokit / change["file"]).is_file():
-            problems.append(f"AutoKit/{change['file']} is missing")
+        elif not (autokit / change["file"]).is_file() or \
+                ("sha256" in change and sha256(autokit / change["file"]) != change["sha256"]):
+            problems.append(f"AutoKit/{change['file']} is missing or not the expected build")
     menu = unpacked / MENU_PATH
     if menu.is_file():
         names = {n for n, _, _ in apps_menu.menu_entries(menu.read_bytes()) if n}

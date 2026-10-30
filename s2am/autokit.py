@@ -1,4 +1,4 @@
-"""Give an AutoKit folder SYNC 2 sound: patch its audio modules, keep both copies, add the hook.
+"""Ready an AutoKit folder for SYNC 2: sound patch (both copies kept, hook added) and English.
 
 Shared by tools/make_pack.py (first install) and `s2am job install AutoKit`.
 """
@@ -9,7 +9,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from .job import AUTOKIT_MODULES
+from .job import AUTOKIT_LANGS, AUTOKIT_MODULES, autokit_lang_file
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import patch_waveout  # noqa: E402
@@ -40,4 +40,11 @@ def patch_folder(folder: Path, hook: Path) -> list[dict]:
     shutil.copy2(hook, folder / patch_waveout.HOOK_DLL_NAME)
     changes.append({"file": patch_waveout.HOOK_DLL_NAME, "added_from": str(HOOK_SOURCE),
                     "sha256": hashlib.sha256(hook.read_bytes()).hexdigest()})
+    # The stock `lang` file is 0x0804 (Chinese); start in English, keep the stock file as lang.orig.
+    lang, english = folder / "lang", autokit_lang_file(AUTOKIT_LANGS["english"])
+    if lang.is_file() and lang.read_bytes() != english:
+        lang.with_name("lang.orig").write_bytes(lang.read_bytes())
+    lang.write_bytes(english)
+    changes.append({"file": "lang", "language": "english",
+                    "sha256": hashlib.sha256(english).hexdigest()})
     return changes

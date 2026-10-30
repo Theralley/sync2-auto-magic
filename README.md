@@ -3,11 +3,37 @@
 **Apple CarPlay (and soon Android Auto) for Ford SYNC 2 / MyFord Touch, using one USB dongle
 and free software.** It also includes a Mac tool that shows what is installed on your SYNC 2.
 
-> **Status: experimental, first car session done.** On 30 October 2026, on a 2016 Ford Mondeo
-> Mk5 (SYNC 3.10), the Mac toolkit read the car's apps, removed three dead apps, installed
-> AutoKit, Total Commander and Reboot, and switched AutoKit to English. CarPlay itself and the
-> sound fix wait for the adapter. Leaving AutoKit still freezes the screen (soft reset below).
-> Try it only if you are comfortable with the recovery steps.
+> **Status: experimental, first car session done.** CarPlay itself and the sound fix still wait
+> for the adapter, and leaving AutoKit freezes the screen (soft reset below). Try it only if you
+> are comfortable with the recovery steps.
+
+## Tested and working
+
+Tested in a real car: a **2016 Ford Mondeo Mk5, 8" SYNC 2, software 3.10 (EU)**, on
+**30 October 2026**. Details in [docs/P1-TESTLOG.md](docs/P1-TESTLOG.md).
+
+| What | Result in the car |
+|---|---|
+| Mac → USB stick → car → report back on the stick | **Works** |
+| Read what is installed on SYNC (`inventory`) | **Works** |
+| Remove apps with their files, several on one stick | **Works** (Video Player, MirrorLink, Navitel); SYNC restarts by itself |
+| Install AutoKit + Total Commander + Reboot on a car that already had SyncExtPack (`--apps-only`) | **Works**; all three appear under *Apps* |
+| Total Commander (file manager) | **Works** |
+| Reboot button | **Works** |
+| AutoKit opens | **Works**: shows its "connect the adapter" screen |
+| AutoKit in English | **Works** (`autokit-config --lang english`; new installs now start in English) |
+| AutoKit's sound patch installed | **Yes**: all three audio modules patched (whether it plays sound needs the adapter) |
+| Soft reset when the screen is stuck (power/volume knob + Seek-Up ⏭, 10 s) | **Works**; nothing is lost |
+
+**Not tested yet:**
+- CarPlay picture, touch, sound, Siri and calls: waiting for the adapter.
+- Android Auto: waiting for the adapter.
+- The first install through the wallpaper picker (`Installer.jpg`): the test car already had
+  SyncExtPack.
+- The guided installer (`s2am wizard`): tested on the Mac only.
+
+**Known problem:** leaving AutoKit with its Exit button freezes the screen. Use the soft reset;
+a fix is being worked on ([TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)).
 
 ---
 
@@ -34,7 +60,7 @@ run the same system, but nothing is guaranteed.
 | Feature | Status |
 |---|---|
 | AutoKit installed and opening on SYNC 2 | **Works in the car** (waits for the adapter) |
-| AutoKit in English | **Works in the car** (`autokit-config --lang english`; the stock app is Chinese) |
+| AutoKit in English | **Works in the car**; new installs start in English (the stock app is Chinese; `autokit-config --lang` changes it) |
 | Apple CarPlay over a cable | Waiting for the adapter |
 | Sound through the car's speakers | Fix installed (all three modules patched), waiting for the adapter |
 | Leaving AutoKit returns to SYNC | **Freezes the screen**: use the soft reset, see [If something goes wrong](#if-something-goes-wrong); a fix is planned |
@@ -55,7 +81,30 @@ run the same system, but nothing is guaranteed.
       (Windows and Linux are untested)
 - [ ] **Your APIM serial**: 8 characters, under *Settings → General → About SYNC*
 
-## Quick start
+## Easiest: the guided installer
+
+No terminal experience needed. It asks plain questions, checks your Mac and USB stick, builds
+everything, and tells you exactly what to do in the car, one trip at a time.
+
+1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and start it.
+2. Download this project: the green **Code** button → **Download ZIP**, then unzip it, or
+   use `git clone https://github.com/Theralley/sync2-auto-magic`.
+3. Plug in a USB stick (32 GB or less).
+4. Open the folder and **double-click `Install-SYNC2.command`**. If macOS blocks it, right-click
+   it and choose *Open*. Or run `python3 -m s2am wizard` in Terminal.
+
+The installer offers:
+
+- **Install CarPlay / Android Auto.** It finds out whether your car already has SyncExtPack
+  and picks the right route by itself.
+- **See what is on my SYNC.**
+- **Remove apps.**
+- **Help: SYNC is frozen.**
+
+If SyncExtPack (an upstream project) is missing, it offers to download it. Type `q` at any
+prompt to stop; nothing is lost.
+
+## Quick start (terminal)
 
 **1. Get the code.** Both folders must sit next to each other.
 
@@ -156,7 +205,7 @@ python3 -m s2am job install "AutoKit" --serial YOURSERIAL --reinstall     # upda
 ```
 
 The app goes into the first free slot of the Apps menu, using the same safe menu change as
-removal: backup, content check, verified copy. AutoKit always gets the sound patch. Restart
+removal: backup, content check, verified copy. AutoKit always gets the sound patch and starts in English. Restart
 SYNC before inserting the stick if the app is running. Every job pack is unpacked again on the
 Mac and checked file by file before you get it.
 
@@ -237,7 +286,7 @@ third-party tools never run directly on your Mac. Read
 <summary><b>For developers</b></summary>
 
 ```sh
-python3 -m unittest discover -s tests       # 175 tests; uses ../syncextpack (tested at 1a1eda0)
+python3 -m unittest discover -s tests       # 185 tests; uses ../syncextpack (tested at 1a1eda0)
 python3 tools/make_pack.py SERIAL --dry-run  # stage and patch only, no build
 python3 -m s2am window                       # is the current 30-day key window safe to build in?
 ```
@@ -245,7 +294,7 @@ python3 -m s2am window                       # is the current 30-day key window 
 | Folder | What is inside |
 |---|---|
 | `tools/` | `patch_waveout.py` (the sound fix), `make_pack.py` (builds the install pack) |
-| `s2am/` | The Mac toolkit: jobs, USB stick, reports, status/diff, a fake SYNC 2 for tests |
+| `s2am/` | The Mac toolkit: jobs, USB stick, reports, status/diff, the guided installer (`wizard.py`), a fake SYNC 2 for tests |
 | `docker/` | The offline Linux container that runs SyncExtPack's build tools |
 | `s2am/native/` | C sources of the WinCE helpers (`hello.exe`, `notifylog.exe`), built with CeGCC |
 | `docs/` | [PLAN.md](docs/PLAN.md) (research and decisions), [TOOLKIT-PLAN.md](docs/TOOLKIT-PLAN.md), [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) (symptom → fix), [MORTSCRIPT.md](docs/MORTSCRIPT.md) (the car's script rules), [P1-TESTLOG.md](docs/P1-TESTLOG.md) (car results) |

@@ -57,7 +57,8 @@ class Stage(unittest.TestCase):
             self.assertEqual(imports[-1], pw.HOOK_DLL_NAME)
         self.assertTrue((autokit / pw.HOOK_DLL_NAME).is_file())
         self.assertEqual([c["file"] for c in changes],
-                         list(mp.PATCH_TARGETS) + [pw.HOOK_DLL_NAME])
+                         list(mp.PATCH_TARGETS) + [pw.HOOK_DLL_NAME, "lang"])
+        self.assertEqual((autokit / "lang").read_bytes(), b"\x09\x04\x00\x00")  # English
 
     def test_stage_never_touches_upstream(self):
         mp.stage(self.upstream, self.staging)
@@ -122,8 +123,10 @@ class VerifyPacks(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp)
         self.result = self.tmp / "SyncExtPack" / "XV31M13H" / "SyncExtPack"
         self.result.mkdir(parents=True)
+        import hashlib
         self.changes = [{"file": "AutoKit.exe", "original_sha256": "a" * 64, "patched_sha256": "b" * 64},
-                        {"file": "WaveOutHooks.dll", "sha256": "c" * 64}]
+                        {"file": "WaveOutHooks.dll", "sha256": hashlib.sha256(b"h").hexdigest()},
+                        {"file": "lang", "sha256": hashlib.sha256(b"\x09\x04\x00\x00").hexdigest()}]
 
     def fake_unpack(self, good):
         def run(staging, *command, quiet=False):
@@ -141,6 +144,7 @@ class VerifyPacks(unittest.TestCase):
                 (target / path).write_bytes(data)
             autokit = target / "SyncExtendedPack/Apps/Media/AutoKit"
             (autokit / "AutoKit.exe").write_bytes(b"patched")
+            (autokit / "lang").write_bytes(b"\x09\x04\x00\x00" if good else b"\x04\x08\x00\x00")
             (autokit / "AutoKit.exe.patched").write_bytes(b"patched")
             (autokit / "AutoKit.exe.orig").write_bytes(b"orig" if good else b"wrong")
             menu = target / mp.MENU_PATH
