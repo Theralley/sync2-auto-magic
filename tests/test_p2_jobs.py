@@ -15,7 +15,8 @@ sys.path.insert(0, str(ROOT))
 
 from s2am import apps, cli, stick  # noqa: E402
 from s2am.fakecar import FakeCar  # noqa: E402
-from s2am.job import (AUTOKIT_CE, MENU_XML, Job, autokit_config_script, logger_loop,  # noqa: E402
+from s2am import native  # noqa: E402
+from s2am.job import (AUTOKIT_CE, MENU_XML, Job, autokit_config_script, logger_script,  # noqa: E402
                       meta, snapshot_script)
 
 UPSTREAM = ROOT.parent / "syncextpack"
@@ -59,15 +60,11 @@ class Scripts(unittest.TestCase):
         balanced(self, script)
         self.assertNotIn("NEED_REBOOT", meta(Job(SERIAL, "snap")).decode("utf-16-le"))
 
-    def test_logger_loop_is_bounded_and_read_only(self):
-        loop = logger_loop(Job(SERIAL, "log", params={"seconds": 60}))
-        self.assertIn("While (i < 60)", loop)
-        self.assertIn("Sleep(1000)", loop)
-        self.assertNotRegex(loop, r"\b(RegWrite\w*|RegDelete\w*|Delete|DelTree|Run|Kill)\(")
-        balanced(self, loop)
+    def test_logger_duration_is_bounded(self):
+        self.assertIn('\\s2amwatch.exe", "60 " & out)', logger_script(Job(SERIAL, "log", params={"seconds": 60})))
         for seconds in (5, 901, "60"):
             with self.subTest(seconds), self.assertRaises(ValueError):
-                logger_loop(Job(SERIAL, "log", params={"seconds": seconds}))
+                logger_script(Job(SERIAL, "log", params={"seconds": seconds}))
 
 
 @unittest.skipUnless(HAVE_UPSTREAM, "syncextpack fixtures not present")
@@ -75,9 +72,10 @@ class Loop(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp)
-        patcher = mock.patch.dict(os.environ, {"S2AM_HOME": str(self.tmp / "home")})
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        for patcher in (mock.patch.dict(os.environ, {"S2AM_HOME": str(self.tmp / "home")}),
+                        mock.patch.object(native, "binary", return_value=b"MZ stand-in")):
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.car = FakeCar(self.tmp / "car", SERIAL)
         self.car.put(f"{AUTOKIT_CE}\\AutoKit.exe", b"a" * 10)
         self.car.put(f"{AUTOKIT_CE}\\usehwdec", b"")
@@ -167,25 +165,25 @@ class Loop(unittest.TestCase):
                      "system: 7.0"):
             self.assertIn(text, report)
 
-    def test_logger_timeline_keeps_only_changes(self):
-        self.car.log_lines = ["start|2026-10-30 12:00:00", "12:00:01|0|desktop.exe|SYNC|CBX1:",
-                              "12:00:02|0|desktop.exe|SYNC|CBX1:", "12:00:03|1|AutoKit.exe|AutoKit|CBX1:",
-                              "12:00:04|1|AutoKit.exe|AutoKit|CBX1:", "end"]
+    def test_logger_report_shows_the_watch_log_and_the_logs_it_copied(self):
+        self.car.put(f"{AUTOKIT_CE}\\hwlog.log", b"box_plugout\r\n")
+        self.car.put("\\SyncExtendedPack\\_s2am\\guard.log", b"0|start|AutoKit.exe\r\n")
         job, _, imported = self.run_job("logger", "--seconds", "60")
         self.assertIn("applied", imported)
         report = self.cli("report", "--serial", SERIAL, job.id)[1]
-        self.assertIn("12:00:01|0|desktop.exe", report)
-        self.assertIn("12:00:03|1|AutoKit.exe", report)
-        self.assertNotIn("12:00:02", report)
-        self.assertNotIn("12:00:04", report)
+        for text in ("[watch.log", "12:00:00.010|proc+|57|AutoKit.exe", "|end",
+                     "[guard.log: runner guard log when the stick ran]", "0|start|AutoKit.exe",
+                     "[autokit-hwlog.log", "box_plugout"):
+            self.assertIn(text, report)
 
-    def test_logger_ships_its_own_runner_and_loop(self):
+    def test_logger_ships_the_watcher_and_starts_it_in_the_background(self):
         job, work, _ = self.run_job("logger")
         folder = work / "payload" / job.job_dir.lstrip("/")
-        self.assertTrue((folder / "s2amlog.exe").is_file())
-        self.assertIn("While (i < 180)", (folder / "s2amlog.mscr").read_text())
-        self.assertIn('Run("', (folder / "s2amjob.mscr").read_text())
-
+        self.assertEqual((folder / "s2amwatch.exe").read_bytes(), b"MZ stand-in")
+        self.assertFalse((folder / "s2amlog.exe").exists())
+        script = (folder / "s2amjob.mscr").read_text()
+        self.assertIn('\\s2amwatch.exe", "180 " & out)', script)
+        self.assertNotIn("RunWait", script)
 
 if __name__ == "__main__":
     unittest.main()

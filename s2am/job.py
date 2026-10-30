@@ -38,6 +38,7 @@ MENU_XML = "\\8inchSkins\\Ford\\Sync\\Apps\\Info\\SyncApps\\SyncApps.xml"
 AUTOKIT_CE = "\\SyncExtendedPack\\Apps\\Media\\AutoKit"
 TOOLS_CE = "\\SyncExtendedPack\\Apps\\Tools"
 GUARD_LOG = "\\SyncExtendedPack\\_s2am\\guard.log"
+AUTOKIT_LOGS = ("hwlog.log", "hwlog.txt")  # AutoKit writes hwlog.log into its folder
 # The modules tools/patch_waveout.py patches (tools/make_pack.py PATCH_TARGETS).
 AUTOKIT_MODULES = ("AutoKit.exe", "libgstwaveoutsink.dll", "libgstwaveform.dll")
 
@@ -206,6 +207,10 @@ def _inventory() -> list[str]:
         f"If (FileExists({_quote(GUARD_LOG)}))",
         f'  Copy({_quote(GUARD_LOG)}, out & "\\guard.log", TRUE)',
         "EndIf",
+        *[line for name in AUTOKIT_LOGS for line in (  # AutoKit's own log
+            f'If (FileExists({_quote(AUTOKIT_CE + chr(92) + name)}))',
+            f'  Copy({_quote(AUTOKIT_CE + chr(92) + name)}, out & "\\autokit-{name}", TRUE)',
+            "EndIf")],
     ]
 
 
@@ -384,7 +389,6 @@ AUTOKIT_LANGS = {"english": 0x0409, "german": 0x0407, "french": 0x040C, "spanish
 
 def autokit_lang_file(lcid: int) -> bytes:
     return lcid.to_bytes(4, "little")
-LOGGER_NAME = "s2amlog"
 
 
 def autokit_config_script(job: Job) -> str:
@@ -605,18 +609,22 @@ def snapshot_script(job: Job) -> str:
 
 
 def logger_script(job: Job) -> str:
-    """Start the logger(s) in the background, then report as usual (UpdateService waits for this).
+    """Start the watcher in the background, then report as usual (UpdateService waits for this).
 
-    With ``native`` the compiled notifylog.exe runs too: it receives AutoKit's
-    registered _UIGEAR_* window messages, which MortScript cannot see.
+    s2amwatch.exe records processes, windows in Z order, SYNC's DESKTOP, whether AutoKit
+    answers, and the driver list, and copies the guard's and AutoKit's logs when they
+    change. It replaced a MortScript loop that stopped after its first line in the car.
+    With ``native`` notifylog.exe runs too: it receives AutoKit's registered _UIGEAR_*
+    window messages.
     """
     seconds = job.params.get("seconds", 180)
-    lines = _header(job) + [
-        f'Run({_quote(ce_path(job.job_dir))} & "\\{LOGGER_NAME}.exe")',
-    ]
+    if not isinstance(seconds, int) or not 10 <= seconds <= 900:
+        raise ValueError(f"invalid logger duration {seconds!r}")
+    folder = _quote(ce_path(job.job_dir))
+    lines = _header(job) + [f'Run({folder} & "\\s2amwatch.exe", "{seconds} " & out)']
     if job.params.get("native"):
-        lines += [f'Run({_quote(ce_path(job.job_dir))} & "\\notifylog.exe", "{int(seconds)} " & out & "\\notify.txt")']
-    lines += ['WriteFile(out & "\\logger-started.txt", "leave the stick in until log.txt says end")']
+        lines += [f'Run({folder} & "\\notifylog.exe", "{seconds} " & out & "\\notify.txt")']
+    lines += ['WriteFile(out & "\\logger-started.txt", "leave the stick in until watch.log says end")']
     return _script(lines + _inventory() + _footer(job))
 
 
@@ -626,40 +634,6 @@ def hello_script(job: Job) -> str:
         f'RunWait({_quote(ce_path(job.job_dir))} & "\\hello.exe", out & "\\native-hello.txt")',
     ]
     return _script(lines + _inventory() + _footer(job))
-
-
-def logger_loop(job: Job) -> str:
-    """The background loop: every second, AutoKit's process, the foreground app and USB devices.
-
-    It writes into the job's report folder on the stick, so ``stick import`` picks
-    the log up; it ends by itself after ``seconds`` and nothing survives a restart.
-    """
-    seconds = job.params.get("seconds", 180)
-    if not isinstance(seconds, int) or not 10 <= seconds <= 900:
-        raise ValueError(f"invalid logger duration {seconds!r}")
-    return _script([
-        f"# s2am logger for job {job.id}",
-        'ErrorLevel("off")',
-        *_find_stick(job),
-        f'log = stick & "\\s2am\\reports\\{job.id}\\log.txt"',
-        'WriteFile(log, "start|" & FormatTime("Y-m-d H:i:s") & "^NL^", TRUE)',
-        "i = 0",
-        f"While (i < {seconds})",
-        '  devs = ""',
-        '  ForEach k in regSubKeys("HKLM", "Drivers\\Active")',
-        '    ForEach n, v in regValues("HKLM", "Drivers\\Active\\" & k)',
-        '      If (n eq "Name")',
-        '        devs = devs & v & " "',
-        "      EndIf",
-        "    EndForEach",
-        "  EndForEach",
-        '  line = FormatTime("H:i:s") & "|" & ProcExists("AutoKit.exe") & "|" & ActiveProcess()',
-        '  WriteFile(log, line & "|" & ActiveWindow() & "|" & devs & "^NL^", TRUE)',
-        "  Sleep(1000)",
-        "  i = i + 1",
-        "EndWhile",
-        'WriteFile(log, "end^NL^", TRUE)',
-    ])
 
 
 SCRIPTS = {
@@ -708,9 +682,6 @@ def stage(job: Job, upstream: Path, workdir: Path, extra: dict[str, bytes] | Non
     shutil.copy2(upstream / MORTSCRIPT_SOURCE, target / "MortScript.exe")
     shutil.copy2(upstream / MORTRUNNER_SOURCE, target / f"{RUNNER_NAME}.exe")
     (target / f"{RUNNER_NAME}.mscr").write_bytes(script)
-    if job.kind == "log":  # MortRunner renamed again runs the loop beside it
-        shutil.copy2(upstream / MORTRUNNER_SOURCE, target / f"{LOGGER_NAME}.exe")
-        (target / f"{LOGGER_NAME}.mscr").write_bytes(logger_loop(job).encode("ascii"))
     for name, data in (extra or {}).items():
         if "/" in name or "\\" in name or name.startswith("."):
             raise ValueError(f"invalid extra file name {name!r}")

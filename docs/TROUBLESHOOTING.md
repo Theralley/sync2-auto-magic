@@ -6,38 +6,61 @@ real car or a real build, unless it says otherwise. The car results are in
 
 **Soft reset (use it whenever SYNC is stuck):** with the car in Park, hold the
 **power/volume knob and Seek-Up (next track, ⏭)** for about 10 seconds, until the screen goes
-black. SYNC restarts and nothing is uninstalled. If that does not work: engine off, lock the
-car, wait 10 minutes.
+black. SYNC restarts and nothing is uninstalled. If that does not work (it did not, twice, after
+leaving AutoKit): **switch the car off and open and close the driver's door**, then start again.
+That brought SYNC back every time. Last resort: engine off, lock the car, wait 10 minutes.
 
 ---
 
 ## In the car
 
 ### Leaving AutoKit freezes the screen
+- **Fixed by the runner guard** (below); verified in the car on 2026-10-30, four Exits, SYNC
+  back about 3 s after each.
 - **Seen:** 2026-10-30, Mondeo Mk5, SYNC 3.10, no adapter connected. Tapping AutoKit's
-  **Exit** (Chinese 退出) leaves the screen frozen; the SYNC buttons do nothing.
-- **Cause:** found in the launcher's disassembly. `SyncAppsRunner.exe` hides SYNC's own
-  screen (window class `DESKTOP`, event `SYNC_DESKTOP_HIDE_UI`) while an app runs. It gives the
-  screen back (`SYNC_DESKTOP_SHOW_UI`, show `DESKTOP`, events `show` and `HandleShow`) only
-  when the app's **process ends**. AutoKit's Exit evidently leaves the process alive (hidden or
-  hanging), so the screen stays dead. A logger stick (`s2am job logger --seconds 300`) can
-  confirm which.
-- **Fix now:** soft reset (above). To avoid it, leave AutoKit with *Reboot* instead of Exit.
-- **Fix built (car test pending):** `s2am job runner-guard`. It puts a small guard
-  (`s2am/native/s2amrun.c`) in the launcher's place:
+  **Exit** (Chinese 退出) leaves the screen frozen; the SYNC buttons do nothing. The soft reset
+  did not help twice; switching the car off and opening and closing the driver's door did.
+- **Cause (measured in the car with `s2am job logger`):**
+  - AutoKit's Exit only **hides** AutoKit. Its own log (`hwlog.log` in its folder) says
+    `ManageApp.cpp(531): SW_HIDE`; the process keeps running and keeps answering.
+  - The launcher `SyncAppsRunner.exe` hid SYNC's own screen (window class `DESKTOP`) when
+    AutoKit started, and gives it back only when AutoKit's **process ends**. So it waits.
+  - What stays on the screen is SYNC's empty shell background: a window of class
+    `DesktopExplorerWindow` from `mishell.exe`, always visible behind everything.
+  - Car off and the door work because SYNC sleeps and, on waking, AutoKit is ended; the
+    launcher then gives the screen back within a second. SYNC does not reboot.
+- **Without the guard:** car off, driver's door open and closed (above), or leave AutoKit
+  with *Reboot* instead of Exit.
+- **Fix:** `s2am job runner-guard`. It puts a small guard (`s2am/native/s2amrun.c`) in the
+  launcher's place:
   - Ford's launcher is kept as `SyncAppsRunner.orig.exe` and still does all its own work.
-  - It acts only when **nothing usable is on the screen** for 5 s: no window of the app, SYNC
-    hidden, and no visible foreground window of any other program. So it never acts over the
-    reversing camera, and never on an app that is still starting.
-  - It then sends the app WM_CLOSE. If nothing becomes usable within 3 s, it ends the app,
+  - It acts only when **nothing usable is on the screen** for 3 s: no visible window at all
+    except the shell background. SYNC's screen, the reversing camera, a dialog or the app
+    itself all count as usable, so it never acts over them, nor on an app still starting.
+  - It then sends the app WM_CLOSE. If nothing becomes usable within 2 s, it ends the app,
     and the launcher gives the screen back.
-  - If SYNC still stays hidden after the app has ended, the guard gives it back itself, using
-    the launcher's own steps.
+  - If SYNC still stays hidden after that, the guard gives it back itself, using the
+    launcher's own steps.
   - Ford's launcher is recognised by its exact size. A damaged backup is rebuilt, and a
     launcher it does not recognise is never replaced.
   - It logs to `\SyncExtendedPack\_s2am\guard.log`; `s2am status` shows the last lines.
   - Undo: `s2am job runner-guard --off`.
+- **History:** the first guard (7bf95ed) did nothing in the car, for two reasons found in the
+  watch log: the app plugins pass the path with **forward slashes**
+  (`/SyncExtendedPack/Apps/Media/AutoKit/AutoKit.exe`), which it did not split, so it never
+  recognised AutoKit; and it counted the shell background as "another program in front".
+  The second guard fixes both. In the car it sends `WM_CLOSE` about 2 s after Exit, AutoKit
+  ends within 0.3 s, and Ford's launcher shows SYNC again.
 - SyncExtPack's `SyncAppsRunner_Eject.exe` is **not** the fix: it lacks the sound routing.
+
+### No reverse camera picture while AutoKit is open
+- **Seen:** 2026-10-30, with the runner guard, no adapter connected. In reverse, AutoKit's
+  screen stayed and the camera picture did not appear.
+- **Not the guard:** the watch log shows AutoKit's window visible and on top the whole time,
+  so the guard did nothing. AutoKit's own log grew fast at the same time.
+- **Cause:** not known yet. The camera picture has no window of its own; AutoKit's full-screen
+  window probably covers it.
+- **For now:** leave AutoKit (Exit) before reversing. Not tested with the adapter connected.
 
 ### AutoKit is in Chinese
 - **Seen:** 2026-10-30. The waiting screen reads 请使用车机USB接口 连接 AutoPlay 盒 ("connect the
@@ -94,6 +117,12 @@ car, wait 10 minutes.
   `s2am job remove "Name" --purge`, put it on a stick, insert it.
 
 ---
+
+### A logger stick recorded only its first line
+- **Seen:** 2026-10-30, the first logger (a MortScript loop): `log.txt` held `start|...` and
+  nothing else. The loop had **hung**, not ended: its process was still running half an hour
+  later and went away only when SYNC rebooted.
+- **Fix:** built in. The logger job now runs a compiled watcher (`s2amwatch.exe`) instead.
 
 ## On the Mac
 

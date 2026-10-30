@@ -6,26 +6,32 @@
  * class "DESKTOP" and sets the named event SYNC_DESKTOP_HIDE_UI, starts the app,
  * and a thread waits for the app's process to end. Only then does it give the
  * screen back: SYNC_DESKTOP_SHOW_UI, ShowWindow(DESKTOP), SetForegroundWindow,
- * then the events "show" and "HandleShow". If the app hides itself instead of
- * ending, or hangs while closing, the screen stays dead.
+ * then the events "show" and "HandleShow".
+ *
+ * What happens in the car (s2amwatch, 2026-10-30): AutoKit's Exit button only hides
+ * AutoKit's window (its log says SW_HIDE); the process keeps running. What is left on
+ * the screen is SYNC's shell background, a window of class DesktopExplorerWindow
+ * (mishell.exe) that is always visible behind everything. The runner keeps waiting,
+ * so the screen looks frozen until something ends AutoKit.
  *
  * This program starts the original runner (SyncAppsRunner.orig.exe, next to it)
  * with the same command line, so everything the stock runner does still happens.
  * While the app runs, it looks once a second. It acts only when NOTHING usable is
- * on the screen: no visible window of the app, SYNC's DESKTOP hidden, and no visible
- * foreground window of any other program (so never over the reversing camera or a
- * second program's picture).
+ * on the screen: no visible top-level window at all except that shell background.
+ * SYNC's DESKTOP, the reversing camera, a dialog or the app itself all count as
+ * usable, so it never acts over any of them.
  *   - the app has shown a window before and nothing usable has been on the screen
- *     for 5 s: the app gets WM_CLOSE; if nothing became usable again within 3 s it
+ *     for 3 s: the app gets WM_CLOSE; if nothing became usable again within 2 s it
  *     is terminated. The original runner then gives the screen back as usual.
- *   - the app has ended and nothing usable has been on the screen for 5 s: it gives
- *     the screen back itself, with the stock runner's own steps.
+ *   - the app has ended (or would not end) and nothing usable has been on the screen
+ *     for 3 s: it gives the screen back itself, with the stock runner's own steps.
  * It keeps watching while the app lives, whichever runner instance started it. A
  * second start while it watches (the icon tapped again) goes straight to the
  * original runner, which toggles the app as before.
  *
  * Every state change is appended to \SyncExtendedPack\_s2am\guard.log.
- * Usage: SyncAppsRunner.exe <app path>       (as the app plugins call it)
+ * Usage: SyncAppsRunner.exe <app path>       (as the app plugins call it; they use
+ *                                             forward slashes: /SyncExtendedPack/...)
  *        s2amrun.exe --s2am-selftest <file>  (writes what it can see, changes nothing)
  * Only COREDLL is imported; toolhelp.dll (which the stock runner also uses) is
  * loaded at run time.
@@ -33,12 +39,13 @@
 #include <windows.h>
 
 #define TICK_MS 1000
-#define STUCK_TICKS 5
-#define CLOSE_WAIT_MS 3000
+#define STUCK_TICKS 3
+#define CLOSE_WAIT_MS 2000
 #define CLOSE_POLL_MS 500
 #define LOG_PATH L"\\SyncExtendedPack\\_s2am\\guard.log"
 #define LOG_LIMIT (64 * 1024)
 #define ORIGINAL_NAME L"SyncAppsRunner.orig.exe"
+#define BACKGROUND_CLASS L"DesktopExplorerWindow"  /* mishell.exe, always visible */
 #define TH32CS_SNAPPROCESS 0x00000002
 #define TH32CS_SNAPNOHEAPS 0x40000000
 
@@ -165,31 +172,47 @@ static DWORD find_process(const WCHAR *name, int *count)
     return found;
 }
 
+/* Every visible top-level window is something the user can work with, except SYNC's
+ * shell background: on its own it is exactly what the frozen screen shows. */
+static BOOL usable(const WCHAR *cls, BOOL visible)
+{
+    return visible && wcscmp(cls, BACKGROUND_CLASS) != 0;
+}
+
 typedef struct {
     DWORD pid;
-    BOOL visible;
+    BOOL app_visible; /* a visible window of the app */
+    int others;       /* usable windows of anything else: SYNC, the camera, a dialog */
     BOOL close;
 } WindowScan;
 
 static BOOL CALLBACK scan_window(HWND window, LPARAM param)
 {
     WindowScan *scan = (WindowScan *)param;
+    WCHAR cls[40];
     DWORD pid = 0;
+    BOOL visible = IsWindowVisible(window);
     GetWindowThreadProcessId(window, &pid);
-    if (pid == scan->pid) {
-        if (IsWindowVisible(window))
-            scan->visible = TRUE;
+    if (!GetClassNameW(window, cls, 40))
+        cls[0] = L'\0';
+    if (scan->pid && pid == scan->pid) {
+        if (visible)
+            scan->app_visible = TRUE;
         if (scan->close)
             PostMessageW(window, WM_CLOSE, 0, 0);
+    } else if (usable(cls, visible)) {
+        scan->others++;
     }
     return TRUE;
 }
 
-static BOOL app_visible(DWORD pid)
+static void scan_screen(DWORD app, BOOL close, WindowScan *scan)
 {
-    WindowScan scan = {pid, FALSE, FALSE};
-    EnumWindows(scan_window, (LPARAM)&scan);
-    return scan.visible;
+    scan->pid = app;
+    scan->app_visible = FALSE;
+    scan->others = 0;
+    scan->close = close;
+    EnumWindows(scan_window, (LPARAM)scan);
 }
 
 static BOOL sync_visible(void)
@@ -198,21 +221,12 @@ static BOOL sync_visible(void)
     return desktop && IsWindowVisible(desktop);
 }
 
-/* A visible foreground window of another program (the camera, another app's picture). */
-static BOOL other_on_screen(DWORD app)
-{
-    DWORD pid = 0;
-    HWND front = GetForegroundWindow();
-    if (!front || !IsWindowVisible(front))
-        return FALSE;
-    GetWindowThreadProcessId(front, &pid);
-    return pid != app;
-}
-
 /* True when the screen shows nothing the user can work with: the frozen state. */
 static BOOL nothing_on_screen(DWORD app)
 {
-    return !(app && app_visible(app)) && !sync_visible() && !other_on_screen(app);
+    WindowScan scan;
+    scan_screen(app, FALSE, &scan);
+    return !scan.app_visible && scan.others == 0;
 }
 
 /* ---- what it does ------------------------------------------------------------------- */
@@ -239,34 +253,37 @@ static void show_sync(void)
     set_event(L"HandleShow");
 }
 
-/* WM_CLOSE first; terminate only if the app neither ends nor shows anything usable. */
-static void close_app(DWORD pid)
+/* WM_CLOSE first; terminate only if the app neither ends nor shows anything usable.
+ * TRUE when it had to terminate the app. */
+static BOOL close_app(DWORD pid)
 {
-    WindowScan scan = {pid, FALSE, TRUE};
+    WindowScan scan;
     HANDLE process = OpenProcess(0, FALSE, pid);
     DWORD waited;
     if (!process)
-        return;
-    EnumWindows(scan_window, (LPARAM)&scan);
+        return FALSE;
+    scan_screen(pid, TRUE, &scan);
     note("close", "sent WM_CLOSE to pid ", pid);
     for (waited = 0; waited < CLOSE_WAIT_MS; waited += CLOSE_POLL_MS) {
         if (WaitForSingleObject(process, CLOSE_POLL_MS) != WAIT_TIMEOUT) {
             note("closed", "pid ", pid);
             CloseHandle(process);
-            return;
+            return FALSE;
         }
         if (!nothing_on_screen(pid)) {
             note("recovered", "something is on the screen again, leaving pid ", pid);
             CloseHandle(process);
-            return;
+            return FALSE;
         }
     }
     TerminateProcess(process, 0);
     note("terminate", "pid ", pid);
     CloseHandle(process);
+    return TRUE;
 }
 
-/* The app's file name from "<path to app> [arguments]", quotes allowed. */
+/* The app's file name from "<path to app> [arguments]", quotes allowed. The plugins
+ * write the path with forward slashes, so both kinds separate folders. */
 static void app_name(const WCHAR *command, WCHAR *name, int size)
 {
     const WCHAR *start, *end, *slash;
@@ -283,7 +300,7 @@ static void app_name(const WCHAR *command, WCHAR *name, int size)
     if (!end)
         end = start + wcslen(start);
     for (slash = start; slash < end; slash++)
-        if (*slash == L'\\')
+        if (*slash == L'\\' || *slash == L'/')
             start = slash + 1;
     length = (int)(end - start);
     if (length >= size)
@@ -314,6 +331,8 @@ static int selftest(WCHAR *path)
     at = put_uint(at, desktop != NULL);
     at = put_text(at, "|desktop_visible ");
     at = put_uint(at, desktop && IsWindowVisible(desktop));
+    at = put_text(at, "|background ");
+    at = put_uint(at, FindWindowW(BACKGROUND_CLASS, NULL) != NULL);
     at = put_text(at, "\r\n");
     *at = '\0';
     append(path, line, TRUE);
@@ -326,7 +345,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
     PROCESS_INFORMATION runner;
     HANDLE guard;
     BOOL watching, seen = FALSE, shown = FALSE, restored = FALSE, runner_done = FALSE,
-         last_app = FALSE, last_vis = FALSE, last_sync = TRUE, last_empty = FALSE;
+         killed = FALSE, last_app = FALSE, last_vis = FALSE, last_sync = TRUE, last_empty = FALSE;
+    int last_others = -1;
     DWORD pid = 0, code = 0;
     HANDLE app_process = NULL;
     int hidden = 0, gone = 0, after = 0;
@@ -382,6 +402,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
     /* Watch while the original runner or the app lives (a second runner may own the app). */
     for (;;) {
         BOOL app, vis, sync, empty;
+        WindowScan scan;
         if (!runner_done) {
             if (WaitForSingleObject(runner.hProcess, TICK_MS) != WAIT_TIMEOUT) {
                 runner_done = TRUE;
@@ -396,25 +417,34 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
             app_process = NULL;
         }
         if (!app_process) {
-            pid = find_process(name, NULL);
+            DWORD found = find_process(name, NULL);
+            if (found && found != pid) {  /* a new instance (say a quick relaunch): start over */
+                shown = killed = restored = FALSE;
+                hidden = gone = 0;
+            }
+            pid = found;
             app_process = pid ? OpenProcess(0, FALSE, pid) : NULL;
         }
         app = pid != 0;
-        vis = app && app_visible(pid);
+        scan_screen(app ? pid : 0, FALSE, &scan);
+        vis = scan.app_visible;
         sync = sync_visible();
-        empty = nothing_on_screen(app ? pid : 0);
+        empty = !vis && scan.others == 0;
         if (app)
             seen = TRUE;
         if (vis)
             shown = TRUE;  /* not before: a starting app has no window yet */
-        if (app != last_app || vis != last_vis || sync != last_sync || empty != last_empty) {
-            char line[80], *at = line;
+        if (app != last_app || vis != last_vis || sync != last_sync || empty != last_empty ||
+            scan.others != last_others) {
+            char line[100], *at = line;
             at = put_text(at, "state|app ");
             at = put_uint(at, app);
             at = put_text(at, " app_visible ");
             at = put_uint(at, vis);
             at = put_text(at, " sync_visible ");
             at = put_uint(at, sync);
+            at = put_text(at, " other_windows ");
+            at = put_uint(at, (unsigned long)scan.others);
             at = put_text(at, " nothing_usable ");
             at = put_uint(at, empty);
             *at = '\0';
@@ -423,17 +453,19 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
             last_vis = vis;
             last_sync = sync;
             last_empty = empty;
+            last_others = scan.others;
         }
         hidden = (shown && app && empty) ? hidden + 1 : 0;
         if (hidden >= STUCK_TICKS) {
             note("stuck", "nothing usable on the screen, closing pid ", pid);
-            close_app(pid);
+            killed = close_app(pid);
             hidden = 0;
             shown = FALSE;
         }
-        gone = (seen && !app && empty) ? gone + 1 : 0;
+        gone = (seen && (!app || killed) && empty) ? gone + 1 : 0;
         if (gone >= STUCK_TICKS && !restored) {
-            note("restore", "app ended but SYNC stayed hidden", 0);
+            note("restore", app ? "app would not end, SYNC gets the screen, pid "
+                                : "app ended but SYNC stayed hidden, pid ", pid);
             show_sync();
             restored = TRUE;
         }

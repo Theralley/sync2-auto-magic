@@ -1,9 +1,11 @@
 """Tests for the runner guard: the native program's shape and the on/off job."""
 import contextlib
 import io
+import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -25,13 +27,16 @@ RUNNER = UPSTREAM / "FullPack/SyncExtendedPack/Apps/Tools/SyncAppsRunner.exe"
 STOCK = RUNNER.read_bytes() if RUNNER.exists() else b"Ford runner"
 GUARD = b"MZ s2amrun stand-in"
 PARAMS = {"stock_size": len(STOCK)}
+COMMANDS = ["/SyncExtendedPack/Apps/Media/AutoKit/AutoKit.exe",  # as AutoKitPlugin.dll writes it
+            "\\SyncExtendedPack\\Apps\\Tools\\explorer.exe",
+            '"/Storage Card/My Apps/App.exe" -x', "  App.exe arg"]
 
 
 class Source(unittest.TestCase):
     """The guard must repeat the stock runner's own steps; these come from its disassembly."""
 
     def test_gives_the_screen_back_like_the_stock_runner(self):
-        show = SOURCE[SOURCE.index("static void show_sync"):SOURCE.index("static void close_app")]
+        show = SOURCE[SOURCE.index("static void show_sync"):SOURCE.index("static BOOL close_app")]
         order = [show.index(s) for s in ('L"SYNC_DESKTOP_SHOW_UI"', "ShowWindow(desktop, SW_SHOW)",
                                          "SetForegroundWindow", 'L"show"', 'L"HandleShow"')]
         self.assertEqual(order, sorted(order))
@@ -46,16 +51,52 @@ class Source(unittest.TestCase):
         self.assertIn("shown", rule)
 
     def test_acts_only_when_nothing_usable_is_on_the_screen(self):
-        # both rules need the empty screen: no app window, no SYNC, no other foreground window
+        # both rules need the empty screen: no visible window but SYNC's shell background
         self.assertIn("empty", re.search(r"hidden = \((.*?)\)", SOURCE).group(1))
-        self.assertIn("empty", re.search(r"gone = \((.*?)\)", SOURCE).group(1))
-        nothing = SOURCE[SOURCE.index("static BOOL nothing_on_screen"):]
-        self.assertIn("other_on_screen(app)", nothing[:300])
-        close = SOURCE[SOURCE.index("static void close_app"):SOURCE.index("/* The app's file name")]
+        self.assertIn("empty", re.search(r"gone = \((.*)\) \?", SOURCE).group(1))
+        self.assertIn("empty = !vis && scan.others == 0;", SOURCE)
+        close = SOURCE[SOURCE.index("static BOOL close_app"):SOURCE.index("/* The app's file name")]
         self.assertLess(close.index("nothing_on_screen(pid)"), close.index("TerminateProcess"))
+
+    def test_the_background_is_the_one_measured_in_the_car(self):
+        # s2amwatch, 2026-10-30: after AutoKit's Exit only mishell.exe's window stayed visible
+        self.assertIn('#define BACKGROUND_CLASS L"DesktopExplorerWindow"', SOURCE)
+
+    def test_a_new_app_instance_starts_with_a_clean_state(self):
+        # a quick relaunch after a terminate must not inherit "killed" (Codex review)
+        adopt = SOURCE[SOURCE.index("DWORD found = find_process(name, NULL);"):]
+        adopt = adopt[:adopt.index("app_process = pid ?")]
+        self.assertIn("if (found && found != pid)", adopt)
+        for reset in ("shown = killed = restored = FALSE;", "hidden = gone = 0;"):
+            self.assertIn(reset, adopt)
 
     def test_keeps_watching_while_the_app_lives(self):
         self.assertIn("if (runner_done && !app)", SOURCE)
+
+    @unittest.skipUnless(shutil.which("cc"), "needs a C compiler")
+    def test_name_and_screen_rules_compiled_and_run(self):
+        """app_name and usable() from s2amrun.c itself, built for the Mac and run."""
+        def function(name):
+            start = SOURCE.rindex("\n", 0, SOURCE.index(f" {name}(")) + 1
+            return SOURCE[start:SOURCE.index("\n}\n", start) + 3]
+        background = re.search(r"#define BACKGROUND_CLASS .*", SOURCE).group()
+        program = "\n".join([
+            "#include <stdio.h>", "#include <wchar.h>", "typedef wchar_t WCHAR;", "typedef int BOOL;",
+            background, function("usable"), function("app_name"),
+            "int main(void) {", "    WCHAR name[260];",
+            *[f'    app_name(L{json.dumps(command)}, name, 260); printf("%ls\\n", name);'
+              for command in COMMANDS],
+            '    printf("%d %d %d %d\\n", usable(L"DesktopExplorerWindow", 1), usable(L"DESKTOP", 1),',
+            '           usable(L"VideoRenderer", 1), usable(L"DESKTOP", 0));',
+            "    return 0;", "}"])
+        work = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, work)
+        (work / "rules.c").write_text(program)
+        subprocess.run(["cc", "-Wall", "-Werror", "-o", str(work / "rules"), str(work / "rules.c")],
+                       check=True, capture_output=True)
+        out = subprocess.run([str(work / "rules")], check=True, capture_output=True, text=True).stdout
+        self.assertEqual(out.splitlines(), ["AutoKit.exe", "explorer.exe", "App.exe", "App.exe",
+                                            "0 1 1 0"])
 
     def test_registered_and_cached(self):
         self.assertEqual(native.PROGRAMS["s2amrun.exe"], "s2amrun.c")
@@ -127,8 +168,12 @@ class Loop(unittest.TestCase):
         self.assertEqual(self.runner("SyncAppsRunner.orig.exe"), STOCK)
         self.assertIn("runner guard (fixes the freeze when leaving an app): on", self.status())
 
-        self.run_job("runner-guard")  # turned on again (an update): the original stays Ford's
-        self.assertEqual(self.runner("SyncAppsRunner.orig.exe"), STOCK)
+        newer = GUARD + b" v2"  # turned on again with a newer guard: it replaces the old one
+        with mock.patch.object(native, "binary", return_value=newer):
+            imported = self.run_job("runner-guard")
+        self.assertIn("verified: runner guard is on", imported)
+        self.assertEqual(self.runner(), newer)
+        self.assertEqual(self.runner("SyncAppsRunner.orig.exe"), STOCK)  # still Ford's, never the guard
 
         imported = self.run_job("runner-guard", "--off")
         self.assertIn("verified: runner guard is off", imported)

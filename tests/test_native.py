@@ -74,6 +74,17 @@ class Scripts(unittest.TestCase):
         plain = logger_script(Job(SERIAL, "log", params={"seconds": 120}))
         self.assertNotIn("notifylog", plain)
 
+    def test_watcher_only_looks(self):
+        """It may ask AutoKit's window for nothing but WM_NULL, and never changes the car."""
+        source = (native.SOURCES / "s2amwatch.c").read_text()
+        code = "\n".join(l for l in source.splitlines() if not l.lstrip().startswith(("*", "/*")))
+        for call in ("GetWindowText", "PostMessage", "TerminateProcess", "DeleteFile", "RegSetValue",
+                     "RegCreateKey", "RegDeleteKey", "ShowWindow", "SetForegroundWindow", "SetEvent",
+                     "MoveFile", "CreateProcess"):
+            self.assertNotIn(call, code, call)
+        self.assertEqual(re.findall(r"SendMessageW\(([^,]+),\s*(\w+)", code), [("(HWND)window", "WM_NULL")])
+        self.assertIn("CopyFileW(copies[i][0], target", code)  # copies only to the stick
+
 
 @unittest.skipUnless(HAVE_UPSTREAM, "syncextpack fixtures not present")
 class Loop(unittest.TestCase):
@@ -116,6 +127,7 @@ class Loop(unittest.TestCase):
     def test_native_logger_report_shows_window_messages(self):
         job, work = self.run_job("logger", "--native", "--seconds", "60")
         self.assertTrue((work / "payload" / job.job_dir.lstrip("/") / "notifylog.exe").is_file())
+        self.assertTrue((work / "payload" / job.job_dir.lstrip("/") / "s2amwatch.exe").is_file())
         report = self.cli("report", "--serial", SERIAL, job.id)[1]
         self.assertIn("REG|_UIGEAR_BOX_NOTIFY_", report)
 

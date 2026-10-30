@@ -11,7 +11,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from .job import (AUTOKIT_CE, AUTOKIT_MODULES, BACKUP_DIR, GUARD_LOG, INVENTORY_ROOT, MENU_XML,
+from .job import (AUTOKIT_CE, AUTOKIT_LOGS, AUTOKIT_MODULES, BACKUP_DIR, GUARD_LOG, INVENTORY_ROOT, MENU_XML,
                   PHASE_DIR, PLUGINS_MASK, REPORTS_DIR, TOOLS_CE, Job, ce_path)
 
 
@@ -28,7 +28,8 @@ class FakeCar:
         self.running: set[str] = set()  # lower-case process names
         self.broken_copies: set[str] = set()  # lower-case CE paths whose Copy silently fails
         self.registry: dict[str, dict[str, str]] = {}  # "HKLM\\Services\\X" -> values
-        self.log_lines: list[str] = ["start|2026-10-30 12:00:00", "end"]
+        self.watch_lines: list[str] = ["12:00:00.000|start|s2am watch|seconds 180|toolhelp 1",
+                                       "12:00:00.010|proc+|57|AutoKit.exe|threads 9", "12:03:00.000|end"]
         self.notify_lines: list[str] = ["0|start|180", "5|REG|_UIGEAR_BOX_NOTIFY_|0x0000c0de", "9|end|"]
         self.power_cut_after_phase = False
         self.native_runs = True  # does a CeGCC program start on this car? (test knob)
@@ -107,7 +108,7 @@ class FakeCar:
             self._snapshot(out)
         if job.kind == "log":
             (out / "logger-started.txt").write_text("started")
-            (out / "log.txt").write_text("".join(f"{line}\r\n" for line in self.log_lines))
+            (out / "watch.log").write_text("".join(f"{line}\r\n" for line in self.watch_lines))
             if job.params.get("native"):
                 (out / "notify.txt").write_text("".join(f"{line}\r\n" for line in self.notify_lines))
         if job.kind == "hello":
@@ -148,6 +149,9 @@ class FakeCar:
         guard_log = self._resolve(GUARD_LOG)
         if guard_log.exists():
             shutil.copyfile(guard_log, out / "guard.log")
+        for name in AUTOKIT_LOGS:
+            if self._resolve(f"{AUTOKIT_CE}\\{name}").exists():
+                shutil.copyfile(self._resolve(f"{AUTOKIT_CE}\\{name}"), out / f"autokit-{name}")
         self.put(job.done_marker, job.id.encode())
         (out / "done.txt").write_text(f"{job.id} applied")
         (out / "info.txt").write_text(f"job={job.id}\r\ntime=2026-10-30 12:00:00\r\n"

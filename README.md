@@ -4,8 +4,8 @@
 and free software.** It also includes a Mac tool that shows what is installed on your SYNC 2.
 
 > **Status: experimental, first car session done.** CarPlay itself and the sound fix still wait
-> for the adapter, and leaving AutoKit freezes the screen (soft reset below). Try it only if you
-> are comfortable with the recovery steps.
+> for the adapter. Leaving AutoKit froze the screen; the runner guard fixes that (verified in
+> the car). Try it only if you are comfortable with the recovery steps.
 
 ## Tested and working
 
@@ -23,7 +23,8 @@ Tested in a real car: a **2016 Ford Mondeo Mk5, 8" SYNC 2, software 3.10 (EU)**,
 | AutoKit opens | **Works**: shows its "connect the adapter" screen |
 | AutoKit in English | **Works** (`autokit-config --lang english`; new installs now start in English) |
 | AutoKit's sound patch installed | **Yes**: all three audio modules patched (whether it plays sound needs the adapter) |
-| Soft reset when the screen is stuck (power/volume knob + Seek-Up ⏭, 10 s) | **Works**; nothing is lost |
+| Leave AutoKit with its Exit button, with the runner guard (`runner-guard`) | **Works**: SYNC is back about 3 s after Exit (four tries) |
+| Soft reset when the screen is stuck (power/volume knob + Seek-Up ⏭, 10 s) | **Worked once**; twice later it did not, and switching the car off did |
 
 **Not tested yet:**
 - CarPlay picture, touch, sound, Siri and calls: waiting for the adapter.
@@ -32,9 +33,12 @@ Tested in a real car: a **2016 Ford Mondeo Mk5, 8" SYNC 2, software 3.10 (EU)**,
   SyncExtPack.
 - The guided installer (`s2am wizard`): tested on the Mac only.
 
-**Known problem:** leaving AutoKit with its Exit button freezes the screen. Use the soft reset.
-A fix, the runner guard, is built and waits for its car test
-([TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)).
+**Known problems:**
+- Without the runner guard, leaving AutoKit with its Exit button freezes the screen, because
+  Exit only hides AutoKit. Install the guard (`s2am job runner-guard`). Without it, recover by
+  switching the car off and opening and closing the driver's door.
+- The reverse camera picture does not appear while AutoKit is open. Leave AutoKit before
+  reversing ([TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)).
 
 ---
 
@@ -64,7 +68,8 @@ run the same system, but nothing is guaranteed.
 | AutoKit in English | **Works in the car**; new installs start in English (the stock app is Chinese; `autokit-config --lang` changes it) |
 | Apple CarPlay over a cable | Waiting for the adapter |
 | Sound through the car's speakers | Fix installed (all three modules patched), waiting for the adapter |
-| Leaving AutoKit returns to SYNC | **Freezes the screen** with Ford's launcher. **Fix built, not yet tested in the car:** the runner guard (`s2am job runner-guard`, undo with `--off`). Until then, use the soft reset |
+| Leaving AutoKit returns to SYNC | **Works in the car with the runner guard** (`s2am job runner-guard`, undo with `--off`). Without it, Exit only hides AutoKit and the screen freezes |
+| Reverse camera while AutoKit is open | **Does not show** (seen in the car); leave AutoKit before reversing |
 | Android Auto with the same dongle | Waiting for the adapter (`autokit-config` sets the picture; [plan](docs/P2-AA-AUTOSTART-PLAN.md)) |
 | See what is installed on SYNC 2 from your Mac | **Works in the car** |
 | Remove apps from your Mac (one or several per stick, menu only or with their files) | **Works in the car** |
@@ -183,7 +188,7 @@ python3 -m s2am job autokit-config --serial YOURSERIAL               # AutoKit v
 python3 -m s2am job autokit-config --serial YOURSERIAL --lang english # AutoKit in English (video left alone)
 python3 -m s2am job autokit-config --serial YOURSERIAL --restore <id> # put the old settings back
 python3 -m s2am job snapshot --serial YOURSERIAL                     # read-only: services, startup, USB devices
-python3 -m s2am job logger --serial YOURSERIAL                       # 3-minute log while you plug/unplug the phone
+python3 -m s2am job logger --serial YOURSERIAL                       # 3 minutes: every program and window on the screen
 python3 -m s2am report --serial YOURSERIAL                           # show the newest report (snapshot, log timeline)
 python3 -m s2am native build                                         # build the WinCE helpers (CeGCC in Docker)
 python3 -m s2am job native-hello --serial YOURSERIAL                 # prove compiled code runs on your SYNC 2
@@ -249,7 +254,7 @@ Search **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** for the exact word
 
 | Problem | What to do |
 |---|---|
-| **Touchscreen frozen** after closing AutoKit | Known problem, seen in the car. Hold the **power/volume knob + Seek-Up** (the next-track button ⏭) for about 10 s until the screen goes black. SYNC restarts and nothing is uninstalled. Until the fix lands, leave AutoKit with *Reboot* instead of its Exit button. |
+| **Touchscreen frozen** after closing AutoKit | Install the runner guard (`s2am job runner-guard`); it fixes this, verified in the car. To recover now: switch the car off and open and close the driver's door. The soft reset (**power/volume knob + Seek-Up** ⏭, about 10 s) worked once but not after this freeze. Nothing is uninstalled either way. |
 | **A job stick shows a MortScript error** | Take a photo of it, tap OK and import the stick. `s2am` checks every script against the car's MortScript rules before it builds a stick ([docs/MORTSCRIPT.md](docs/MORTSCRIPT.md)). |
 | **CarPlay shows but there is no sound** | That is exactly what this project is testing. Please [open an issue](https://github.com/Theralley/sync2-auto-magic/issues) and include your SYNC version. |
 | **Undo the sound fix** | Open Total Commander (it is in *Apps*) and go to `\SyncExtendedPack\Apps\Media\AutoKit\`. Rename the `*.orig` files back to their original names. |
@@ -299,7 +304,7 @@ python3 -m s2am window                       # is the current 30-day key window 
 | `tools/` | `patch_waveout.py` (the sound fix), `make_pack.py` (builds the install pack) |
 | `s2am/` | The Mac toolkit: jobs, USB stick, reports, status/diff, the guided installer (`wizard.py`), a fake SYNC 2 for tests |
 | `docker/` | The offline Linux container that runs SyncExtPack's build tools |
-| `s2am/native/` | C sources of the WinCE helpers (`hello.exe`, `notifylog.exe`), built with CeGCC |
+| `s2am/native/` | C sources of the WinCE helpers (`hello.exe`, `notifylog.exe`, the runner guard `s2amrun.exe`, the watcher `s2amwatch.exe`), built with CeGCC |
 | `docs/` | [PLAN.md](docs/PLAN.md) (research and decisions), [TOOLKIT-PLAN.md](docs/TOOLKIT-PLAN.md), [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) (symptom → fix), [MORTSCRIPT.md](docs/MORTSCRIPT.md) (the car's script rules), [P1-TESTLOG.md](docs/P1-TESTLOG.md) (car results) |
 
 The `../syncextpack` clone is never modified. State is kept in `~/.s2am/<serial>/`; set

@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from s2am import mortscript  # noqa: E402
-from s2am.job import Job, autokit_script, hello_script, inventory_script, logger_loop, logger_script  # noqa: E402
+from s2am.job import Job, autokit_script, hello_script, inventory_script, logger_script  # noqa: E402
 
 SERIAL = "XV31M13H"
 
@@ -74,7 +74,7 @@ class JobScripts(unittest.TestCase):
         yield autokit_script(Job(SERIAL, "akpatch"), "patched")
         yield hello_script(Job(SERIAL, "hello"))
         yield logger_script(Job(SERIAL, "log", params={"seconds": 60, "native": True}))
-        yield logger_loop(Job(SERIAL, "log", params={"seconds": 60}))
+        yield logger_script(Job(SERIAL, "log", params={"seconds": 60}))
 
     def test_no_bare_keyword_lines(self):
         for text in self.scripts():

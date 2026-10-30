@@ -48,6 +48,10 @@ step is one `s2am` job stick with a check in the car.
   thread priority. It fixes the frozen touchscreen after leaving AutoKit, but not auto-start.
   SyncExtPack's own `SyncAppsRunner_Eject.exe` (the `PatchEject` unit) is **not** that fix: it
   is a cut-down runner without the RAC sound routing, so it would mute AutoKit.
+- **Cause and fix (measured later the same day):** Exit only hides AutoKit (`SW_HIDE`); Ford's
+  runner waits for the process to end. Our runner guard (AS-2) closes AutoKit once nothing
+  usable is on the screen, and SYNC comes back about 3 s after Exit. While AutoKit is open, the
+  reverse camera picture does not show; AS-3 must take that into account.
 
 ## Android Auto: phases (no new native code)
 
@@ -67,10 +71,10 @@ Step AS-5 is the only risky one. Everything before it disappears at the next res
 | Step | Job / action | Check in the car |
 |---|---|---|
 | AS-0 (built) | Read-only **snapshot** job (`s2am job snapshot`): `HKLM\Services`, `HKLM\Init`, `HKLM\Drivers\Active`, versions | Report imported; recovery card checked |
-| AS-1 (built) | **Logger** (`s2am job logger`), MortScript, started by a job and gone after a restart. Every second for 3 minutes, it writes `Drivers\Active`, AutoKit's window state and its process to the stick while you plug and unplug the phone | Does anything visible change when the phone, not the dongle, connects? |
+| AS-1 (built, works in the car) | **Logger** (`s2am job logger`): a compiled watcher (`s2amwatch.exe`), started by a job and gone after a restart. Twice a second for 3 minutes (up to 15), it writes changes in processes, windows, `Drivers\Active` and whether AutoKit answers to the stick, and copies the guard's and AutoKit's logs. The first MortScript version hung in the car | Does anything visible change when the phone, not the dongle, connects? |
 | AS-1b (built) | `s2am job logger --native` (also runs on its own if MortScript sees nothing): a small native logger (CeGCC in Docker) that records AutoKit's `_UIGEAR_BOX_NOTIFY_` messages | A map of state number to meaning |
-| AS-2a | **Diagnose the freeze** with the logger (`s2am job logger`): insert, open AutoKit, tap Exit, wait, soft reset, import. The log shows whether `AutoKit.exe` hangs on exit or exits while SYNC never takes the screen back | One log, before and after Exit |
-| AS-2 (built) | **Fix the freeze**: `s2am job runner-guard` puts our CeGCC guard (`s2am/native/s2amrun.c`) in SyncAppsRunner.exe's place. Ford's runner is kept as `.orig.exe` and started by the guard. The guard closes an app that hid itself while SYNC stays hidden, and shows SYNC with the runner's own steps if needed. Self-test before the swap; `--off` undoes it | Leaving AutoKit returns to SYNC (P1 tests T8/T9); `s2am status` shows the guard log |
+| AS-2a (done) | **Diagnose the freeze** with the logger (`s2am job logger`): insert, open AutoKit, tap Exit, wait, soft reset, import. The log shows whether `AutoKit.exe` hangs on exit or exits while SYNC never takes the screen back | One log, before and after Exit |
+| AS-2 (works in the car) | **Fix the freeze**: `s2am job runner-guard` puts our CeGCC guard (`s2am/native/s2amrun.c`) in SyncAppsRunner.exe's place. Ford's runner is kept as `.orig.exe` and started by the guard. The guard closes an app that hid itself while SYNC stays hidden, and shows SYNC with the runner's own steps if needed. Self-test before the swap; `--off` undoes it | Leaving AutoKit returns to SYNC (P1 tests T8/T9); `s2am status` shows the guard log |
 | AS-3 | **Trial watcher** (gone after a restart): keeps AutoKit loaded but hidden, brings it forward on phone connect, gives SYNC back on unplug. It handles fast replugging and refuses double launches | Plug in = CarPlay; unplug = SYNC, ten times in a row |
 | AS-4 | Rollback rehearsal: undo AS-2 and AS-3 and confirm the Phase 1 state | `s2am diff` shows the baseline |
 | AS-5 | **Start from boot** as a CE service registered like UPDATESVC. It waits 60 s first and does nothing if `\USB Disk\NOAUTOSTART` exists | Cold starts with and without phone and dongle |

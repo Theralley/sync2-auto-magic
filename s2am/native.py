@@ -21,7 +21,8 @@ import patch_waveout  # noqa: E402
 IMAGE = ("ghcr.io/enlyze/windows-ce-build-environment-arm"
          "@sha256:22ea23d697accaab2b98fb12d81ccc1faade90f9fe490f554ae7c5c194dfe27c")
 SOURCES = Path(__file__).resolve().parent / "native"
-PROGRAMS = {"hello.exe": "hello.c", "notifylog.exe": "notifylog.c", "s2amrun.exe": "s2amrun.c"}
+PROGRAMS = {"hello.exe": "hello.c", "notifylog.exe": "notifylog.c", "s2amrun.exe": "s2amrun.c",
+            "s2amwatch.exe": "s2amwatch.c"}
 CFLAGS = ("-O2", "-Wall", "-Wextra", "-Werror")
 SUBSYSTEM_WINDOWS_CE_GUI = 9
 

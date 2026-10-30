@@ -263,10 +263,11 @@ def cmd_job(args) -> int:
                 extra = {"lang": autokit_lang_file(AUTOKIT_LANGS[args.lang])}
     elif args.kind == "logger":
         params = {"seconds": args.seconds, "native": args.native}
+        extra = {"s2amwatch.exe": native.binary("s2amwatch.exe")}
         if args.native:
-            extra = {"notifylog.exe": native.binary("notifylog.exe")}
-        print(f"logger: insert the stick, then plug and unplug the phone a few times; leave the "
-              f"stick in for {args.seconds} s until the log ends, then import it")
+            extra["notifylog.exe"] = native.binary("notifylog.exe")
+        print(f"logger: insert the stick and leave it in; for {args.seconds} s it records every "
+              f"program and window on the screen. Do the test meanwhile, then import it")
     elif args.kind == "native-hello":
         extra = {"hello.exe": native.binary("hello.exe")}
     elif args.kind == "runner-guard":
@@ -309,8 +310,8 @@ def cmd_stick_prepare(args) -> int:
     if job.kind == "log":
         seconds = job.params.get("seconds", 180)
         print(f"in the car: insert the stick and LEAVE IT IN. After 'Install successfully completed' "
-              f"the logger runs for {seconds} s: plug and unplug the phone meanwhile, then wait "
-              f"{seconds} s more before pulling the stick")
+              f"the logger records for {seconds} s: do the test meanwhile. Leave the stick in "
+              f"even if you have to restart SYNC; pull it afterwards")
     else:
         print("in the car: insert the stick, wait for 'Install successfully completed', pull it")
     if job.kind in apps.MENU_KINDS:
@@ -520,6 +521,17 @@ def cmd_report(args) -> int:
     if (report / "log.txt").is_file():
         print("[log: time|AutoKit running|foreground process|window|USB devices], changes only")
         print("\n".join(_log_changes((report / "log.txt").read_text(errors="replace"))))
+    if (report / "watch.log").is_file():
+        print("[watch.log: time|event|details] processes, windows top to bottom, SYNC shown or "
+              "hidden, whether AutoKit answers; changes only")
+        print((report / "watch.log").read_text(errors="replace").rstrip())
+    for name, title in (("guard.log", "runner guard log when the stick ran"),
+                        ("guard-live.log", "runner guard log, last copy the watcher made"),
+                        ("autokit-hwlog.log", "AutoKit's own log when the stick ran"),
+                        ("autokit-hwlog-live.log", "AutoKit's own log, last copy the watcher made")):
+        if (report / name).is_file():
+            print(f"[{name}: {title}]")
+            print((report / name).read_text(errors="replace").rstrip())
     return 0
 
 
@@ -627,7 +639,7 @@ def parser() -> argparse.ArgumentParser:
     job_sub.add_parser("snapshot", parents=[common],
                        help="read-only: services, startup entries and USB devices").set_defaults(func=cmd_job)
     logger = job_sub.add_parser("logger", parents=[common],
-                                help="log AutoKit, the foreground app and USB devices every second")
+                                help="record every program and window on the screen, twice a second")
     logger.add_argument("--seconds", type=int, default=180)
     logger.add_argument("--native", action="store_true",
                         help="also run notifylog.exe, which records AutoKit's window messages")
