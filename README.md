@@ -32,8 +32,9 @@ Tested in a real car: a **2016 Ford Mondeo Mk5, 8" SYNC 2, software 3.10 (EU)**,
   SyncExtPack.
 - The guided installer (`s2am wizard`): tested on the Mac only.
 
-**Known problem:** leaving AutoKit with its Exit button freezes the screen. Use the soft reset;
-a fix is being worked on ([TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)).
+**Known problem:** leaving AutoKit with its Exit button freezes the screen. Use the soft reset.
+A fix, the runner guard, is built and waits for its car test
+([TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)).
 
 ---
 
@@ -63,7 +64,7 @@ run the same system, but nothing is guaranteed.
 | AutoKit in English | **Works in the car**; new installs start in English (the stock app is Chinese; `autokit-config --lang` changes it) |
 | Apple CarPlay over a cable | Waiting for the adapter |
 | Sound through the car's speakers | Fix installed (all three modules patched), waiting for the adapter |
-| Leaving AutoKit returns to SYNC | **Freezes the screen**: use the soft reset, see [If something goes wrong](#if-something-goes-wrong); a fix is planned |
+| Leaving AutoKit returns to SYNC | **Freezes the screen** with Ford's launcher. **Fix built, not yet tested in the car:** the runner guard (`s2am job runner-guard`, undo with `--off`). Until then, use the soft reset |
 | Android Auto with the same dongle | Waiting for the adapter (`autokit-config` sets the picture; [plan](docs/P2-AA-AUTOSTART-PLAN.md)) |
 | See what is installed on SYNC 2 from your Mac | **Works in the car** |
 | Remove apps from your Mac (one or several per stick, menu only or with their files) | **Works in the car** |
@@ -186,6 +187,8 @@ python3 -m s2am job logger --serial YOURSERIAL                       # 3-minute 
 python3 -m s2am report --serial YOURSERIAL                           # show the newest report (snapshot, log timeline)
 python3 -m s2am native build                                         # build the WinCE helpers (CeGCC in Docker)
 python3 -m s2am job native-hello --serial YOURSERIAL                 # prove compiled code runs on your SYNC 2
+python3 -m s2am job runner-guard --serial YOURSERIAL                 # fix: no frozen screen after leaving an app
+python3 -m s2am job runner-guard --off --serial YOURSERIAL           # put Ford's original launcher back
 python3 -m s2am job logger --native --serial YOURSERIAL              # also record AutoKit's window messages
 ```
 
@@ -286,7 +289,7 @@ third-party tools never run directly on your Mac. Read
 <summary><b>For developers</b></summary>
 
 ```sh
-python3 -m unittest discover -s tests       # 185 tests; uses ../syncextpack (tested at 1a1eda0)
+python3 -m unittest discover -s tests       # 202 tests; uses ../syncextpack (tested at 1a1eda0)
 python3 tools/make_pack.py SERIAL --dry-run  # stage and patch only, no build
 python3 -m s2am window                       # is the current 30-day key window safe to build in?
 ```

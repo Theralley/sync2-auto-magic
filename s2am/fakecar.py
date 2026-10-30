@@ -11,8 +11,8 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from .job import (AUTOKIT_CE, AUTOKIT_MODULES, BACKUP_DIR, INVENTORY_ROOT, MENU_XML, PHASE_DIR,
-                  PLUGINS_MASK, REPORTS_DIR, Job, ce_path)
+from .job import (AUTOKIT_CE, AUTOKIT_MODULES, BACKUP_DIR, GUARD_LOG, INVENTORY_ROOT, MENU_XML,
+                  PHASE_DIR, PLUGINS_MASK, REPORTS_DIR, TOOLS_CE, Job, ce_path)
 
 
 class PowerCut(Exception):
@@ -31,6 +31,7 @@ class FakeCar:
         self.log_lines: list[str] = ["start|2026-10-30 12:00:00", "end"]
         self.notify_lines: list[str] = ["0|start|180", "5|REG|_UIGEAR_BOX_NOTIFY_|0x0000c0de", "9|end|"]
         self.power_cut_after_phase = False
+        self.native_runs = True  # does a CeGCC program start on this car? (test knob)
         root.mkdir(parents=True, exist_ok=True)
 
     # Paths -----------------------------------------------------------------
@@ -100,6 +101,8 @@ class FakeCar:
             return
         if job.kind == "akcfg" and not self._autokit_config(out, job):
             return
+        if job.kind == "guard" and not self._runner_guard(out, job):
+            return
         if job.kind == "snap":
             self._snapshot(out)
         if job.kind == "log":
@@ -142,6 +145,9 @@ class FakeCar:
         lang = self._resolve(f"{AUTOKIT_CE}\\lang")
         if lang.exists():
             shutil.copyfile(lang, out / "autokit-lang.bin")
+        guard_log = self._resolve(GUARD_LOG)
+        if guard_log.exists():
+            shutil.copyfile(guard_log, out / "guard.log")
         self.put(job.done_marker, job.id.encode())
         (out / "done.txt").write_text(f"{job.id} applied")
         (out / "info.txt").write_text(f"job={job.id}\r\ntime=2026-10-30 12:00:00\r\n"
@@ -263,6 +269,44 @@ class FakeCar:
         if image.exists():
             image.unlink()
             (out / "firmware-image-removed.txt").write_text("removed")
+        return True
+
+    def _runner_guard(self, out: Path, job: Job) -> bool:
+        tools = self._resolve(TOOLS_CE)
+        runner, original = tools / "SyncAppsRunner.exe", tools / "SyncAppsRunner.orig.exe"
+        if {"syncappsrunner.exe", "syncappsrunner.orig.exe"} & self.running:
+            (out / "busy.txt").write_text("an app is open")
+            return False
+        if not runner.exists():
+            (out / "missing.txt").write_text("no runner")
+            return False
+        stock = job.params["stock_size"]
+        size = lambda path: path.stat().st_size  # noqa: E731
+        if job.params["action"] == "enable":
+            if not self.native_runs:
+                (out / "selftest-failed.txt").write_text("did not run")
+                return False
+            (out / "guard-selftest.txt").write_text("s2amrun ok|s2am runner guard|toolhelp 1|"
+                                                    "processes 40|desktop 1|desktop_visible 1\r\n")
+            if original.exists() and size(original) != stock:
+                if size(runner) != stock:
+                    (out / "backup-bad.txt").write_text("neither is Ford's")
+                    return False
+                original.unlink()
+            if not original.exists():
+                if size(runner) != stock:
+                    (out / "unknown-runner.txt").write_text("not Ford's")
+                    return False
+                shutil.copyfile(runner, original)
+            shutil.copyfile(self._resolve(ce_path(job.job_dir)) / "s2amrun.exe", runner)
+        elif original.exists():
+            if size(original) != stock:
+                (out / "backup-bad.txt").write_text("damaged keep")
+                return False
+            shutil.copyfile(original, runner)
+            original.unlink()
+        else:
+            (out / "guard-was-off.txt").write_text("off")
         return True
 
     def _snapshot(self, out: Path) -> None:

@@ -36,6 +36,8 @@ INVENTORY_ROOT = "\\SyncExtendedPack\\Apps"
 PLUGINS_MASK = "\\windows\\*Plugin.dll"
 MENU_XML = "\\8inchSkins\\Ford\\Sync\\Apps\\Info\\SyncApps\\SyncApps.xml"
 AUTOKIT_CE = "\\SyncExtendedPack\\Apps\\Media\\AutoKit"
+TOOLS_CE = "\\SyncExtendedPack\\Apps\\Tools"
+GUARD_LOG = "\\SyncExtendedPack\\_s2am\\guard.log"
 # The modules tools/patch_waveout.py patches (tools/make_pack.py PATCH_TARGETS).
 AUTOKIT_MODULES = ("AutoKit.exe", "libgstwaveoutsink.dll", "libgstwaveform.dll")
 
@@ -200,6 +202,9 @@ def _inventory() -> list[str]:
         "EndIf",
         f'If (FileExists({_quote(AUTOKIT_CE + chr(92) + "lang")}))',
         f'  Copy({_quote(AUTOKIT_CE + chr(92) + "lang")}, out & "\\autokit-lang.bin", TRUE)',
+        "EndIf",
+        f"If (FileExists({_quote(GUARD_LOG)}))",
+        f'  Copy({_quote(GUARD_LOG)}, out & "\\guard.log", TRUE)',
         "EndIf",
     ]
 
@@ -455,8 +460,10 @@ def autokit_config_script(job: Job) -> str:
                 "Else",
                 '  WriteFile(bk & "\\usehwdec.absent", "")',
                 "EndIf",
-                'If (NOT (FileExists(bk & "\\screenconfig") OR FileExists(bk & "\\screenconfig.absent")))',
-                *_stop("backup-failed.txt", "could not back up AutoKit's video settings; nothing changed", "  "),
+                'If (NOT FileExists(bk & "\\screenconfig"))',
+                '  If (NOT FileExists(bk & "\\screenconfig.absent"))',
+                *_stop("backup-failed.txt", "could not back up the AutoKit video settings; nothing changed", "    "),
+                "  EndIf",
                 "EndIf",
                 f'WriteFile(ak & "\\screenconfig", {_quote(screen)})',
                 'Delete(ak & "\\usehwdec")' if decoder == "software" else 'WriteFile(ak & "\\usehwdec", "")',
@@ -468,8 +475,10 @@ def autokit_config_script(job: Job) -> str:
                 "Else",
                 '  WriteFile(bk & "\\lang.absent", "")',
                 "EndIf",
-                'If (NOT (FileExists(bk & "\\lang") OR FileExists(bk & "\\lang.absent")))',
-                *_stop("backup-failed.txt", "could not back up AutoKit's language; nothing changed", "  "),
+                'If (NOT FileExists(bk & "\\lang"))',
+                '  If (NOT FileExists(bk & "\\lang.absent"))',
+                *_stop("backup-failed.txt", "could not back up the AutoKit language; nothing changed", "    "),
+                "  EndIf",
                 "EndIf",
                 f'Copy({_quote(ce_path(job.job_dir))} & "\\lang", ak & "\\lang", TRUE)',
             ]
@@ -479,6 +488,92 @@ def autokit_config_script(job: Job) -> str:
         '  WriteFile(out & "\\firmware-image-removed.txt", "a dongle firmware image was removed")',
         "EndIf",
     ]
+    return _script(lines + _inventory() + _footer(job))
+
+
+def guard_script(job: Job) -> str:
+    """Turn the runner guard on (s2amrun.exe takes SyncAppsRunner.exe's place) or off.
+
+    Ford's runner is recognised by its size (``stock_size``, taken from SyncExtPack at
+    build time; the builder refuses a guard of the same size). On: the guard first runs
+    its self-test on the car. Ford's runner is kept as SyncAppsRunner.orig.exe, and a
+    damaged keep (say a power cut mid-copy) is rebuilt from the live runner when that is
+    still Ford's. Only then is the guard copied over SyncAppsRunner.exe, checked by size.
+    Off: a good keep goes back. Neither runs while an app is open, since the runner's
+    file is in use then.
+    """
+    action, stock = job.params.get("action"), job.params.get("stock_size")
+    if action not in ("enable", "disable"):
+        raise ValueError(f"invalid runner guard action {action!r}")
+    if not isinstance(stock, int) or not 1024 <= stock <= 1024 * 1024:
+        raise ValueError(f"invalid size of Ford's runner {stock!r}")
+    runner, original = "tools & \"\\SyncAppsRunner.exe\"", "tools & \"\\SyncAppsRunner.orig.exe\""
+    guard = f'{_quote(ce_path(job.job_dir))} & "\\s2amrun.exe"'
+    lines = _header(job) + [
+        f"tools = {_quote(TOOLS_CE)}",
+        'If (ProcExists("SyncAppsRunner.exe"))',
+        *_stop("busy.txt", "an app is open: restart SYNC, then prepare the stick again", "  "),
+        "EndIf",
+        'If (ProcExists("SyncAppsRunner.orig.exe"))',
+        *_stop("busy.txt", "an app is open: restart SYNC, then prepare the stick again", "  "),
+        "EndIf",
+        f"If (NOT FileExists({runner}))",
+        *_stop("missing.txt", "SyncAppsRunner.exe is not on the car; install the app pack first", "  "),
+        "EndIf",
+    ]
+    if action == "enable":
+        lines += [
+            f'RunWait({guard}, "--s2am-selftest " & out & "\\guard-selftest.txt")',
+            'If (NOT FileExists(out & "\\guard-selftest.txt"))',
+            *_stop("selftest-failed.txt", "the guard did not run on this SYNC; nothing changed", "  "),
+            "EndIf",
+            f"If (FileExists({original}))",
+            f"  If (FileSize({original}) <> {stock})",  # a damaged keep
+            f"    If (FileSize({runner}) <> {stock})",
+            *_stop("backup-bad.txt", "neither the runner nor its kept copy is Ford's runner; "
+                   "install the app pack again", "      "),
+            "    EndIf",
+            f"    Delete({original})",
+            "  EndIf",
+            "EndIf",
+            f"If (NOT FileExists({original}))",  # keep Ford's runner, once
+            f"  If (FileSize({runner}) <> {stock})",
+            *_stop("unknown-runner.txt", "SyncAppsRunner.exe is not the runner s2am knows; "
+                   "nothing changed", "    "),
+            "  EndIf",
+            f"  Copy({runner}, {original}, FALSE)",
+            f"  If (FileSize({original}) <> {stock})",
+            f"    Delete({original})",
+            *_stop("backup-failed.txt", "could not keep a copy of the original runner; nothing changed", "    "),
+            "  EndIf",
+            "EndIf",
+            f"Copy({guard}, {runner}, TRUE)",
+            f"If (FileSize({runner}) <> FileSize({guard}))",
+            f"  Copy({original}, {runner}, TRUE)",
+            f"  If (FileSize({runner}) <> {stock})",
+            *_stop("copy-failed.txt", "the guard did not copy and the original runner could not be "
+                   "put back: run the runner-guard --off stick", "    "),
+            "  EndIf",
+            f"  Delete({original})",
+            *_stop("copy-failed.txt", "the guard did not copy; the original runner was put back", "  "),
+            "EndIf",
+        ]
+    else:
+        lines += [
+            f"If (FileExists({original}))",
+            f"  If (FileSize({original}) <> {stock})",
+            *_stop("backup-bad.txt", "the kept runner is damaged, so the guard stays on; install "
+                   "the app pack again to get Ford's runner back", "    "),
+            "  EndIf",
+            f"  Copy({original}, {runner}, TRUE)",
+            f"  If (FileSize({runner}) <> {stock})",
+            *_stop("copy-failed.txt", "could not put the original runner back; the guard stays on", "    "),
+            "  EndIf",
+            f"  Delete({original})",
+            "Else",
+            '  WriteFile(out & "\\guard-was-off.txt", "the runner guard was not on")',
+            "EndIf",
+        ]
     return _script(lines + _inventory() + _footer(job))
 
 
@@ -578,6 +673,7 @@ SCRIPTS = {
     "snap": snapshot_script,
     "log": logger_script,
     "hello": hello_script,
+    "guard": guard_script,
 }
 MENU_CHANGING = ("rm", "undo", "inst")  # SYNC reads SyncApps.xml at start, so these restart it
 

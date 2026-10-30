@@ -133,7 +133,7 @@ class Loop(unittest.TestCase):
     def test_language_script_copies_from_the_job_folder(self):
         script = autokit_config_script(Job(SERIAL, "akcfg", params={"lang": "english"}))
         self.assertIn('\\lang", ak & "\\lang", TRUE)', script)
-        guard = script.index('FileExists(bk & "\\lang.absent")))')
+        guard = script.index('If (NOT FileExists(bk & "\\lang.absent"))')
         self.assertLess(guard, script.index('\\lang", ak & "\\lang", TRUE)'))
         self.assertIn("backup-failed.txt", script[guard:])
         self.assertNotIn("screenconfig\", ", script.split("If (FileExists(ak")[0])

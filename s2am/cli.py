@@ -16,6 +16,7 @@
     s2am report --serial S [JOB_ID]              print a report (snapshot, logger timeline)
     s2am native build                            build the WinCE helpers (CeGCC in Docker)
     s2am job native-hello --serial S             prove compiled code runs on this SYNC 2
+    s2am job runner-guard --serial S [--off]     fix the frozen screen after leaving an app
     s2am stick prepare /Volumes/STICK --job DIR  put that job on a stick
     s2am stick import /Volumes/STICK             read back what the car wrote
     s2am status --serial XXXXXXXX                apps, plugins and menu from the last report
@@ -65,7 +66,7 @@ def cmd_window(args) -> int:
 
 JOB_KINDS = {"inventory": "inv", "autokit-stock": "akstock", "autokit-patched": "akpatch",
              "remove": "rm", "install": "inst", "undo": "undo", "autokit-config": "akcfg",
-             "snapshot": "snap", "logger": "log", "native-hello": "hello"}
+             "snapshot": "snap", "logger": "log", "native-hello": "hello", "runner-guard": "guard"}
 MARK = {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
 
 
@@ -268,6 +269,13 @@ def cmd_job(args) -> int:
               f"stick in for {args.seconds} s until the log ends, then import it")
     elif args.kind == "native-hello":
         extra = {"hello.exe": native.binary("hello.exe")}
+    elif args.kind == "runner-guard":
+        stock = (args.upstream / "FullPack/SyncExtendedPack/Apps/Tools/SyncAppsRunner.exe").stat().st_size
+        params = {"action": "disable" if args.off else "enable", "stock_size": stock}
+        if not args.off:
+            extra = {"s2amrun.exe": native.binary("s2amrun.exe")}
+            if len(extra["s2amrun.exe"]) == stock:  # the job tells them apart by size
+                raise ValueError("the guard is exactly the size of Ford's runner; change s2amrun.c")
     if getattr(args, "dry_run", False):
         return 0
     job = Job(serial=args.serial, kind=JOB_KINDS[args.kind], params=params)
@@ -330,6 +338,8 @@ def cmd_stick_import(args) -> int:
             print(f"  verified: native code runs on this SYNC 2 ({text.split('|')[1]})"
                   if text.startswith("s2am native hello ok") and "|" in text else
                   "  NOT verified: hello.exe wrote nothing; native code may not run here")
+        if record.get("kind") == "guard" and record["status"] == "applied":
+            print(f"  {_verify_guard(store, record)}")
         if record.get("kind") in apps.MENU_KINDS and record["status"] == "applied":
             verdict = _verify_menu(store, record)
             print(f"  {verdict}")
@@ -347,6 +357,25 @@ STOP_HINTS = {
     "failed": ": the job stopped before deleting anything; its report says why "
               "(copy-failed means the old menu was put back)",
 }
+
+
+def _guard_on(entries) -> bool:
+    return any(e.path.lower().endswith("\\tools\\syncappsrunner.orig.exe") for e in entries)
+
+
+def _verify_guard(store: Store, record: dict) -> str:
+    """Check the runner guard's state after a runner-guard job, from its own report."""
+    report = store.report(record["serial"], record["id"])
+    inventory = report / "inventory.txt" if report else None
+    if not inventory or not inventory.is_file():
+        return "not verified: the report has no inventory"
+    on = _guard_on(parse_inventory(inventory.read_text(errors="replace")))
+    if record["params"].get("action") == "enable":
+        selftest = report / "guard-selftest.txt"
+        seen = selftest.read_text(errors="replace").strip() if selftest.is_file() else "none"
+        return (f"verified: runner guard is on (self-test: {seen})" if on else
+                "NOT verified: the original runner was not kept, so the guard is not on")
+    return "verified: runner guard is off" if not on else "NOT verified: the guard is still on"
 
 
 def _verify_menu(store: Store, record: dict) -> str:
@@ -412,6 +441,14 @@ def cmd_status(args) -> int:
     print(f"  menu: {', '.join(menu) or 'missing from the report (SyncApps.xml not copied)'}")
     print(f"  AutoKit audio modules: {autokit_variant(entries)}")
     print(f"  AutoKit video: {autokit_settings(store.report(args.serial, job_id), entries)}")
+    print(f"  runner guard (fixes the freeze when leaving an app): "
+          f"{'on' if _guard_on(entries) else 'off'}")
+    guard_log = store.report(args.serial, job_id) / "guard.log"
+    if guard_log.is_file():
+        lines = guard_log.read_text(errors="replace").strip().splitlines()
+        print("  guard log (last 8 lines):")
+        for line in lines[-8:]:
+            print(f"    {line}")
     return 0
 
 
@@ -471,7 +508,7 @@ def cmd_report(args) -> int:
         return 1
     print(f"report {job_id}")
     for name in ("info.txt", "busy.txt", "stale.txt", "firmware-image-removed.txt",
-                 "native-hello.txt"):
+                 "native-hello.txt", "guard-selftest.txt", "selftest-failed.txt"):
         if (report / name).is_file():
             print(f"[{name}] " + (report / name).read_text(errors="replace").strip().replace("\r\n", "; "))
     if (report / "registry.txt").is_file():
@@ -597,6 +634,11 @@ def parser() -> argparse.ArgumentParser:
     logger.set_defaults(func=cmd_job)
     job_sub.add_parser("native-hello", parents=[common],
                        help="prove compiled code runs on this SYNC 2").set_defaults(func=cmd_job)
+    guard = job_sub.add_parser("runner-guard", parents=[common],
+                               help="stop the frozen screen after leaving an app (keeps Ford's "
+                                    "runner for --off)")
+    guard.add_argument("--off", action="store_true", help="put the original runner back")
+    guard.set_defaults(func=cmd_job)
     install = job_sub.add_parser("install", parents=[common],
                                  help="copy a SyncExtPack app to the car and add it to the menu")
     install.add_argument("app", help="the app name (see s2am apps)")

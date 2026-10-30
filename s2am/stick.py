@@ -24,7 +24,9 @@ UPDATER_DIR = "SyncExtPack"
 UPDATER_FILES = ("install.bin", "installed.bin", "install_log.txt", "pack_install.bin",
                  "Installer.jpg", "UpdateInstaller.dll", "update.bin")
 STOPPED = {"stale.txt": "stale", "busy.txt": "busy", "backup-failed.txt": "failed",
-           "backup-missing.txt": "failed", "copy-failed.txt": "failed", "payload-bad.txt": "failed"}
+           "backup-missing.txt": "failed", "copy-failed.txt": "failed", "payload-bad.txt": "failed",
+           "missing.txt": "failed", "selftest-failed.txt": "failed", "backup-bad.txt": "failed",
+           "unknown-runner.txt": "failed"}
 
 
 class StickError(Exception):

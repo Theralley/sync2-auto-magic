@@ -16,13 +16,28 @@ car, wait 10 minutes.
 ### Leaving AutoKit freezes the screen
 - **Seen:** 2026-10-30, Mondeo Mk5, SYNC 3.10, no adapter connected. Tapping AutoKit's
   **Exit** (Chinese 退出) leaves the screen frozen; the SYNC buttons do nothing.
-- **Cause:** not known yet. Either AutoKit hangs while closing, or it closes and the launcher
-  (`SyncAppsRunner.exe`) never hands the screen back to SYNC.
+- **Cause:** found in the launcher's disassembly. `SyncAppsRunner.exe` hides SYNC's own
+  screen (window class `DESKTOP`, event `SYNC_DESKTOP_HIDE_UI`) while an app runs. It gives the
+  screen back (`SYNC_DESKTOP_SHOW_UI`, show `DESKTOP`, events `show` and `HandleShow`) only
+  when the app's **process ends**. AutoKit's Exit evidently leaves the process alive (hidden or
+  hanging), so the screen stays dead. A logger stick (`s2am job logger --seconds 300`) can
+  confirm which.
 - **Fix now:** soft reset (above). To avoid it, leave AutoKit with *Reboot* instead of Exit.
-- **Next:** a logger stick records AutoKit's process and the active window, once a second,
-  while you tap Exit (`s2am job logger --seconds 300`). That log decides between JasonACT's
-  improved runner and our own ([P2 plan](P2-AA-AUTOSTART-PLAN.md), AS-2a/AS-2). SyncExtPack's
-  `SyncAppsRunner_Eject.exe` is **not** the fix: it lacks the sound routing.
+- **Fix built (car test pending):** `s2am job runner-guard`. It puts a small guard
+  (`s2am/native/s2amrun.c`) in the launcher's place:
+  - Ford's launcher is kept as `SyncAppsRunner.orig.exe` and still does all its own work.
+  - It acts only when **nothing usable is on the screen** for 5 s: no window of the app, SYNC
+    hidden, and no visible foreground window of any other program. So it never acts over the
+    reversing camera, and never on an app that is still starting.
+  - It then sends the app WM_CLOSE. If nothing becomes usable within 3 s, it ends the app,
+    and the launcher gives the screen back.
+  - If SYNC still stays hidden after the app has ended, the guard gives it back itself, using
+    the launcher's own steps.
+  - Ford's launcher is recognised by its exact size. A damaged backup is rebuilt, and a
+    launcher it does not recognise is never replaced.
+  - It logs to `\SyncExtendedPack\_s2am\guard.log`; `s2am status` shows the last lines.
+  - Undo: `s2am job runner-guard --off`.
+- SyncExtPack's `SyncAppsRunner_Eject.exe` is **not** the fix: it lacks the sound routing.
 
 ### AutoKit is in Chinese
 - **Seen:** 2026-10-30. The waiting screen reads 请使用车机USB接口 连接 AutoPlay 盒 ("connect the
