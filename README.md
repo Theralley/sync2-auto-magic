@@ -3,9 +3,11 @@
 **Apple CarPlay (and soon Android Auto) for Ford SYNC 2 / MyFord Touch, using one USB dongle
 and free software.** It also includes a Mac tool that shows what is installed on your SYNC 2.
 
-> **Status: experimental.** Everything here is built and tested on a computer, but has **not
-> yet been confirmed in a car**. The first in-car test (2016 Ford Mondeo Mk5) is coming. Try it
-> only if you are comfortable with the recovery steps below.
+> **Status: experimental, first car session done.** On 30 October 2026, on a 2016 Ford Mondeo
+> Mk5 (SYNC 3.10), the Mac toolkit read the car's apps, removed three dead apps, installed
+> AutoKit, Total Commander and Reboot, and switched AutoKit to English. CarPlay itself and the
+> sound fix wait for the adapter. Leaving AutoKit still freezes the screen (soft reset below).
+> Try it only if you are comfortable with the recovery steps.
 
 ---
 
@@ -31,12 +33,15 @@ run the same system, but nothing is guaranteed.
 
 | Feature | Status |
 |---|---|
-| Apple CarPlay over a cable | Ready to test |
-| Sound through the car's speakers | Fix built, **not yet confirmed in a car** |
-| Android Auto with the same dongle | Ready to test after the first install (`autokit-config` sets the picture; [plan](docs/P2-AA-AUTOSTART-PLAN.md)) |
-| See what is installed on SYNC 2 from your Mac | Ready to test |
-| Remove apps from your Mac (menu only, or with all their files) | Ready to test |
-| Install apps from your Mac (SyncExtPack apps, AutoKit with the sound fix) | Ready to test |
+| AutoKit installed and opening on SYNC 2 | **Works in the car** (waits for the adapter) |
+| AutoKit in English | **Works in the car** (`autokit-config --lang english`; the stock app is Chinese) |
+| Apple CarPlay over a cable | Waiting for the adapter |
+| Sound through the car's speakers | Fix installed (all three modules patched), waiting for the adapter |
+| Leaving AutoKit returns to SYNC | **Freezes the screen**: use the soft reset, see [If something goes wrong](#if-something-goes-wrong); a fix is planned |
+| Android Auto with the same dongle | Waiting for the adapter (`autokit-config` sets the picture; [plan](docs/P2-AA-AUTOSTART-PLAN.md)) |
+| See what is installed on SYNC 2 from your Mac | **Works in the car** |
+| Remove apps from your Mac (one or several per stick, menu only or with their files) | **Works in the car** |
+| Install apps from your Mac (SyncExtPack apps, AutoKit with the sound fix) | **Works in the car** (full app pack); single-app install is tested on the computer only |
 | CarPlay starts by itself when you plug in the phone | Being investigated: diagnostic jobs ready (`snapshot`, `logger`), the auto-start itself not built yet ([plan](docs/P2-AA-AUTOSTART-PLAN.md)) |
 
 ## What you need
@@ -79,6 +84,18 @@ prints an **"install before"** date: packs only work inside a 30-day window.
 3. Put the stick back in. The installation starts by itself, so wait for
    **"Install successfully completed!"**.
 
+**SyncExtPack already on the car?** If an older SyncExtPack is installed (an extra Apps menu
+from a previous owner, for example), skip the wallpaper step: run an inventory job first (below).
+If it comes back, the car's installer works, and one stick does the whole install:
+
+```sh
+python3 -m s2am bootstrap prepare --serial YOURSERIAL --stick /Volumes/SYNC --apps-only
+```
+
+That puts only the app pack on the stick, as `install.bin`. Insert it, wait for
+**"Install successfully completed!"** and the restart. The Apps menu is rewritten with AutoKit,
+Total Commander and Reboot.
+
 First time? Follow the step-by-step **[Phase 1 runbook](docs/P1-RUNBOOK.md)**. It covers the
 recovery stick, what to check at every step, and the CarPlay sound test. The upstream guide is
 SyncExtPack's [installation guide](https://github.com/chr0m1ng/syncextpack/blob/main/SYNCEXTPACK_INSTALLATION.md).
@@ -113,6 +130,7 @@ A stick never runs the same job twice, even if you leave it in. Jobs never touch
 
 ```sh
 python3 -m s2am job autokit-config --serial YOURSERIAL               # AutoKit video 800x480, software decoding
+python3 -m s2am job autokit-config --serial YOURSERIAL --lang english # AutoKit in English (video left alone)
 python3 -m s2am job autokit-config --serial YOURSERIAL --restore <id> # put the old settings back
 python3 -m s2am job snapshot --serial YOURSERIAL                     # read-only: services, startup, USB devices
 python3 -m s2am job logger --serial YOURSERIAL                       # 3-minute log while you plug/unplug the phone
@@ -151,6 +169,7 @@ You need a recent inventory report first, because the removal is planned from it
 python3 -m s2am job remove "Video Player" --serial YOURSERIAL --dry-run   # show what would change
 python3 -m s2am job remove "Video Player" --serial YOURSERIAL             # hide it from the Apps menu
 python3 -m s2am job remove "Video Player" --serial YOURSERIAL --purge     # ...and delete its files
+python3 -m s2am job remove MirrorLink Navitel --serial YOURSERIAL --purge  # several apps on one stick
 python3 -m s2am job undo <remove-job-id> --serial YOURSERIAL              # put it back in the menu
 ```
 
@@ -174,9 +193,12 @@ Then take the job stick to the car, as above. SYNC restarts after the job.
 
 ## If something goes wrong
 
+Search **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** for the exact words you see; every entry there was met in a real car or build. The short version:
+
 | Problem | What to do |
 |---|---|
-| **Touchscreen frozen** after closing AutoKit | Hold **Power + Seek-Up** (the next-track button) for about 10 s. SYNC restarts. |
+| **Touchscreen frozen** after closing AutoKit | Known problem, seen in the car. Hold the **power/volume knob + Seek-Up** (the next-track button ⏭) for about 10 s until the screen goes black. SYNC restarts and nothing is uninstalled. Until the fix lands, leave AutoKit with *Reboot* instead of its Exit button. |
+| **A job stick shows a MortScript error** | Take a photo of it, tap OK and import the stick. `s2am` checks every script against the car's MortScript rules before it builds a stick ([docs/MORTSCRIPT.md](docs/MORTSCRIPT.md)). |
 | **CarPlay shows but there is no sound** | That is exactly what this project is testing. Please [open an issue](https://github.com/Theralley/sync2-auto-magic/issues) and include your SYNC version. |
 | **Undo the sound fix** | Open Total Commander (it is in *Apps*) and go to `\SyncExtendedPack\Apps\Media\AutoKit\`. Rename the `*.orig` files back to their original names. |
 | **Remove everything** | Reinstall SYNC software 3.10 or 3.08 with the [firmware guide](https://github.com/chr0m1ng/syncextpack/blob/main/FIRMWARE_INSTALLATION.md). |
@@ -215,7 +237,7 @@ third-party tools never run directly on your Mac. Read
 <summary><b>For developers</b></summary>
 
 ```sh
-python3 -m unittest discover -s tests       # 157 tests; uses ../syncextpack (tested at 1a1eda0)
+python3 -m unittest discover -s tests       # 175 tests; uses ../syncextpack (tested at 1a1eda0)
 python3 tools/make_pack.py SERIAL --dry-run  # stage and patch only, no build
 python3 -m s2am window                       # is the current 30-day key window safe to build in?
 ```
@@ -226,7 +248,7 @@ python3 -m s2am window                       # is the current 30-day key window 
 | `s2am/` | The Mac toolkit: jobs, USB stick, reports, status/diff, a fake SYNC 2 for tests |
 | `docker/` | The offline Linux container that runs SyncExtPack's build tools |
 | `s2am/native/` | C sources of the WinCE helpers (`hello.exe`, `notifylog.exe`), built with CeGCC |
-| `docs/` | [PLAN.md](docs/PLAN.md) (research and decisions), [TOOLKIT-PLAN.md](docs/TOOLKIT-PLAN.md) |
+| `docs/` | [PLAN.md](docs/PLAN.md) (research and decisions), [TOOLKIT-PLAN.md](docs/TOOLKIT-PLAN.md), [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) (symptom → fix), [MORTSCRIPT.md](docs/MORTSCRIPT.md) (the car's script rules), [P1-TESTLOG.md](docs/P1-TESTLOG.md) (car results) |
 
 The `../syncextpack` clone is never modified. State is kept in `~/.s2am/<serial>/`; set
 `S2AM_HOME` to change it.

@@ -19,6 +19,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import mortscript
+
 JOBS_DIR = "/SyncExtendedPack/_s2am/jobs"
 DONE_DIR = "/SyncExtendedPack/_s2am/done"
 BACKUP_DIR = "\\SyncExtendedPack\\_s2am\\backup"
@@ -196,6 +198,9 @@ def _inventory() -> list[str]:
         f'If (FileExists({_quote(AUTOKIT_CE + chr(92) + "screenconfig")}))',
         f'  Copy({_quote(AUTOKIT_CE + chr(92) + "screenconfig")}, out & "\\autokit-screenconfig.txt", TRUE)',
         "EndIf",
+        f'If (FileExists({_quote(AUTOKIT_CE + chr(92) + "lang")}))',
+        f'  Copy({_quote(AUTOKIT_CE + chr(92) + "lang")}, out & "\\autokit-lang.bin", TRUE)',
+        "EndIf",
     ]
 
 
@@ -217,7 +222,10 @@ def _footer(job: Job) -> list[str]:
 
 
 def _script(lines: list[str]) -> str:
-    return "\r\n".join(lines) + "\r\n"
+    """The script text, with bare keywords hardened and checked by the car's rules."""
+    text = "\r\n".join(mortscript.harden(line) for line in lines) + "\r\n"
+    mortscript.check(text)
+    return text
 
 
 def inventory_script(job: Job) -> str:
@@ -363,6 +371,14 @@ def undo_script(job: Job) -> str:
 removal_script = menu_change_script
 
 SCREEN = re.compile(r"\d{3,4},\d{3,4},\d{1,2}")
+# AutoKit's ``lang`` file is a little-endian LCID; PAL2.dll maps it to \Temp\riddlebox\<x>.lng
+# (0x0409 English.lng, 0x0804 Chinese_chs.lng, ...). The stock folder ships 0x0804.
+AUTOKIT_LANGS = {"english": 0x0409, "german": 0x0407, "french": 0x040C, "spanish": 0x040A,
+                 "russian": 0x0419, "chinese": 0x0804}
+
+
+def autokit_lang_file(lcid: int) -> bytes:
+    return lcid.to_bytes(4, "little")
 LOGGER_NAME = "s2amlog"
 
 
@@ -405,29 +421,58 @@ def autokit_config_script(job: Job) -> str:
             'If (FileExists(src & "\\usehwdec.absent"))',
             '  Delete(ak & "\\usehwdec")',
             "EndIf",
+            'If (FileExists(src & "\\lang"))',
+            '  Copy(src & "\\lang", ak & "\\lang", TRUE)',
+            "EndIf",
+            'If (FileExists(src & "\\lang.absent"))',
+            '  Delete(ak & "\\lang")',
+            "EndIf",
         ]
     else:
-        screen, decoder = p.get("screen", ""), p.get("decoder", "")
-        if not SCREEN.fullmatch(screen) or decoder not in ("software", "hardware"):
+        screen, decoder, lang = p.get("screen"), p.get("decoder"), p.get("lang")
+        video = screen is not None or decoder is not None
+        if video and (not SCREEN.fullmatch(str(screen)) or decoder not in ("software", "hardware")):
             raise ValueError(f"invalid AutoKit settings {screen!r}/{decoder!r}")
+        if lang is not None and lang not in AUTOKIT_LANGS:
+            raise ValueError(f"invalid AutoKit language {lang!r}")
+        if not video and lang is None:
+            raise ValueError("nothing to set")
         lines += [
             'MkDir("\\SyncExtendedPack\\_s2am")',
             f"MkDir({_quote(BACKUP_DIR)})",
             f"bk = {_quote(BACKUP_DIR + chr(92) + job.id)}",
             "MkDir(bk)",
-            'If (FileExists(ak & "\\screenconfig"))',
-            '  Copy(ak & "\\screenconfig", bk & "\\screenconfig", TRUE)',
-            "Else",
-            '  WriteFile(bk & "\\screenconfig.absent", "")',
-            "EndIf",
-            'If (FileExists(ak & "\\usehwdec"))',
-            '  WriteFile(bk & "\\usehwdec.present", "")',
-            "Else",
-            '  WriteFile(bk & "\\usehwdec.absent", "")',
-            "EndIf",
-            f'WriteFile(ak & "\\screenconfig", {_quote(screen)})',
-            'Delete(ak & "\\usehwdec")' if decoder == "software" else 'WriteFile(ak & "\\usehwdec", "")',
         ]
+        if video:
+            lines += [
+                'If (FileExists(ak & "\\screenconfig"))',
+                '  Copy(ak & "\\screenconfig", bk & "\\screenconfig", TRUE)',
+                "Else",
+                '  WriteFile(bk & "\\screenconfig.absent", "")',
+                "EndIf",
+                'If (FileExists(ak & "\\usehwdec"))',
+                '  WriteFile(bk & "\\usehwdec.present", "")',
+                "Else",
+                '  WriteFile(bk & "\\usehwdec.absent", "")',
+                "EndIf",
+                'If (NOT (FileExists(bk & "\\screenconfig") OR FileExists(bk & "\\screenconfig.absent")))',
+                *_stop("backup-failed.txt", "could not back up AutoKit's video settings; nothing changed", "  "),
+                "EndIf",
+                f'WriteFile(ak & "\\screenconfig", {_quote(screen)})',
+                'Delete(ak & "\\usehwdec")' if decoder == "software" else 'WriteFile(ak & "\\usehwdec", "")',
+            ]
+        if lang is not None:  # four binary bytes: shipped in the job folder, then copied over
+            lines += [
+                'If (FileExists(ak & "\\lang"))',
+                '  Copy(ak & "\\lang", bk & "\\lang", TRUE)',
+                "Else",
+                '  WriteFile(bk & "\\lang.absent", "")',
+                "EndIf",
+                'If (NOT (FileExists(bk & "\\lang") OR FileExists(bk & "\\lang.absent")))',
+                *_stop("backup-failed.txt", "could not back up AutoKit's language; nothing changed", "  "),
+                "EndIf",
+                f'Copy({_quote(ce_path(job.job_dir))} & "\\lang", ak & "\\lang", TRUE)',
+            ]
     lines += [
         'If (FileExists(ak & "\\Auto_Box_Update.img"))',
         '  Delete(ak & "\\Auto_Box_Update.img")',

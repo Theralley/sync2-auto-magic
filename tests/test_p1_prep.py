@@ -189,6 +189,46 @@ class Bootstrap(Temp):
         self.assertEqual(code, 0, out.getvalue())
         self.assertIn("Installer.jpg", out.getvalue())
 
+    def test_apps_only_puts_just_the_app_pack_on_as_install_bin(self):
+        (self.stick / "SyncExtPack").mkdir()
+        (self.stick / "SyncExtPack" / "installed.bin").write_bytes(b"an earlier job")
+        record = bootstrap.prepare_apps_only(self.stick, SERIAL, self.make_build(), now=NOW)
+        updater = self.stick / "SyncExtPack"
+        self.assertEqual([p.name for p in updater.iterdir()], ["install.bin"])
+        self.assertEqual((updater / "install.bin").read_bytes(), b"pack_install.bin payload")
+        self.assertEqual(record["mode"], "apps-only")
+        self.assertTrue(list((self.stick / "s2am" / "history").rglob("installed.bin")))
+
+    def test_apps_only_never_leaves_an_unchecked_install_bin(self):
+        manifest = self.make_build()
+        data = json.loads(manifest.read_text())
+        data["usb_files"]["pack_install.bin"] = "0" * 64  # the stick copy will not match
+        manifest.write_text(json.dumps(data))
+        with self.assertRaisesRegex(bootstrap.BootstrapError, "does not match"):
+            bootstrap.prepare_apps_only(self.stick, SERIAL, manifest, now=NOW)
+        self.assertEqual(list((self.stick / "SyncExtPack").iterdir()), [])
+
+    def test_apps_only_waits_for_an_unimported_job(self):
+        (self.stick / "s2am" / "pending").mkdir(parents=True)
+        (self.stick / "s2am" / "pending" / "20261030-000000-inv-aaaa.json").write_text("{}")
+        with self.assertRaisesRegex(bootstrap.BootstrapError, "import it first"):
+            bootstrap.prepare_apps_only(self.stick, SERIAL, self.make_build(), now=NOW)
+        with self.assertRaisesRegex(bootstrap.BootstrapError, "expired"):
+            bootstrap.prepare_apps_only(self.stick, SERIAL,
+                                        self.make_build(expires=NOW - timedelta(minutes=1)),
+                                        now=NOW, force=True)
+
+    def test_cli_apps_only(self):
+        manifest = self.make_build(expires=datetime.now(timezone.utc) + timedelta(days=10))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), mock.patch.object(
+                cli.window, "check", return_value=(True, NOW)):
+            code = cli.main(["bootstrap", "prepare", "--serial", SERIAL, "--stick", str(self.stick),
+                             "--manifest", str(manifest), "--apps-only", "--any-path"])
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertIn("as install.bin", out.getvalue())
+        self.assertNotIn("Installer.jpg", out.getvalue())
+
     def test_job_stick_moves_stage_one_files_aside(self):
         bootstrap.prepare(self.stick, SERIAL, self.make_build(), now=NOW)
         (self.tmp / "job.bin").write_bytes(b"job")

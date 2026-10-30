@@ -32,7 +32,7 @@ from pathlib import Path
 
 from . import apps, autokit, bootstrap, diskcheck, native, pack, stick, window
 from .container import REPO, ContainerError
-from .job import AUTOKIT_CE, AUTOKIT_MODULES, SERIAL, Job, stage
+from .job import AUTOKIT_CE, AUTOKIT_LANGS, AUTOKIT_MODULES, SERIAL, Job, autokit_lang_file, stage
 from .state import Store, diff, parse_inventory
 
 UPSTREAM = REPO.parent / "syncextpack"
@@ -94,6 +94,14 @@ def cmd_bootstrap_prepare(args) -> int:
                                        "UTC); wait, or use --force")
     manifest = Path(args.manifest) if args.manifest else bootstrap.build(
         args.serial, REPO / "build" / "out")
+    if args.apps_only:
+        record = bootstrap.prepare_apps_only(stick_path, args.serial, manifest, force=args.force)
+        print(f"the app pack is on {stick_path} as install.bin; install before "
+              f"{record['install_before_utc']} UTC")
+        print("in the car: insert the stick, wait for 'Install successfully completed' and the "
+              "restart, then pull it. Check with an inventory job.")
+        _eject(stick_path, args)
+        return 0
     record = bootstrap.prepare(stick_path, args.serial, manifest, force=args.force)
     print(f"stage one is on {stick_path}; install before {record['install_before_utc']} UTC")
     print("in the car: Settings > Display > Wallpaper > Add > USB > Installer.jpg, wait for "
@@ -114,25 +122,36 @@ def cmd_bootstrap_finish(args) -> int:
 def _plan_remove(args) -> tuple[dict, dict]:
     """Plan a removal from the last report; prints exactly what will change."""
     report_id, entries, _, menu = _latest_menu(Store(), args.serial)
-    plan = apps.plan_removal(args.app, menu, entries, apps.catalog(args.upstream), args.purge)
-    print(f"remove {plan.app!r} (planned from report {report_id}):")
-    print(f"  menu: {plan.app} is taken out of the Apps menu (old menu backed up on the car)")
-    for path in plan.delete_dirs:
+    catalog = apps.catalog(args.upstream)
+    # Several apps go in one job: each is planned against the menu the previous one leaves.
+    names, dirs, files, kept, exes, after = [], [], [], [], [], menu
+    for name in args.app:
+        plan = apps.plan_removal(name, after, entries, catalog, args.purge)
+        names.append(plan.app)
+        dirs += [d for d in plan.delete_dirs if d not in dirs]
+        files += [f for f in plan.delete_files if f not in files]
+        kept += [k for k in plan.kept if k not in kept]
+        exes += [e for e in plan.executables if e not in exes]
+        after = plan.menu_after
+    label = ", ".join(names)
+    print(f"remove {label} (planned from report {report_id}):")
+    print(f"  menu: {label} {'is' if len(names) == 1 else 'are'} taken out of the Apps menu "
+          "(old menu backed up on the car)")
+    for path in dirs:
         print(f"  delete folder {path}")
-    for path in plan.delete_files:
+    for path in files:
         print(f"  delete file   {path}")
-    for line in plan.kept:
+    for line in kept:
         print(f"  keep          {line}")
     if not args.purge:
         print("  files stay on the car (add --purge to delete them); undo restores the menu")
     else:
         print("  undo restores the menu only; deleted files come back by reinstalling the app")
     print("  SYNC restarts after the job")
-    params = {"app": plan.app, "purge": args.purge, "based_on": report_id,
-              "expected_len": len(menu), "new_len": len(plan.menu_after),
-              "delete_dirs": plan.delete_dirs, "delete_files": plan.delete_files,
-              "executables": plan.executables}
-    return params, {"SyncApps.xml.expected": menu, "SyncApps.xml.new": plan.menu_after}
+    params = {"app": label, "apps": names, "purge": args.purge, "based_on": report_id,
+              "expected_len": len(menu), "new_len": len(after),
+              "delete_dirs": dirs, "delete_files": files, "executables": sorted(exes)}
+    return params, {"SyncApps.xml.expected": menu, "SyncApps.xml.new": after}
 
 
 def _latest_menu(store: Store, serial: str) -> tuple[str, list, dict, bytes]:
@@ -212,7 +231,8 @@ def _plan_undo(args) -> tuple[dict, dict]:
     print(f"undo {args.job_id}: put {params.get('app')!r} back in the Apps menu"
           + (" (its deleted files are not restored)" if params.get("purge") else ""))
     expected = menu.read_bytes()
-    return ({"target": args.job_id, "app": params.get("app"), "expected_len": len(expected)},
+    return ({"target": args.job_id, "app": params.get("app"), "apps": params.get("apps"),
+             "expected_len": len(expected)},
             {"SyncApps.xml.expected": expected})
 
 
@@ -229,7 +249,11 @@ def cmd_job(args) -> int:
             Store().job(args.serial, args.restore)  # must be a known job
             params = {"restore": args.restore}
         else:
-            params = {"screen": args.screen, "decoder": args.decoder}
+            if args.lang is None or args.screen is not None or args.decoder is not None:
+                params = {"screen": args.screen or "800,480,15", "decoder": args.decoder or "software"}
+            if args.lang is not None:  # four bytes, so the file travels in the job folder
+                params["lang"] = args.lang
+                extra = {"lang": autokit_lang_file(AUTOKIT_LANGS[args.lang])}
     elif args.kind == "logger":
         params = {"seconds": args.seconds, "native": args.native}
         if args.native:
@@ -327,10 +351,13 @@ def _verify_menu(store: Store, record: dict) -> str:
         return "not verified: the report has no SyncApps.xml"
     names = [name.lower() for name, _, _ in apps.menu_entries(xml.read_bytes()) if name]
     app = record.get("params", {}).get("app", "")
-    present = app.lower() in names
+    listed = record.get("params", {}).get("apps") or [app]
+    present = all(name.lower() in names for name in listed)
     if record["kind"] == "rm":
-        return f"verified: {app!r} is no longer in the menu" if not present else \
-            f"NOT verified: {app!r} is still in the menu"
+        still = [name for name in listed if name.lower() in names]
+        verb = "is" if len(listed) == 1 else "are"
+        return f"verified: {app!r} {verb} no longer in the menu" if not still else \
+            f"NOT verified: {still} still in the menu"
     if record["kind"] == "inst":
         inventory = report / "inventory.txt"
         listed = {e.path.replace("\\", "/").lower() for e in parse_inventory(
@@ -390,7 +417,11 @@ def autokit_settings(report: Path, entries) -> str:
     config = report / "autokit-screenconfig.txt"
     screen = config.read_text(errors="replace").strip() if config.is_file() else "default (800,480,15)"
     hardware = f"{AUTOKIT_CE}\\usehwdec".lower() in names
-    return f"screen {screen}, decoder {'hardware' if hardware else 'software'}"
+    lang = report / "autokit-lang.bin"
+    lcid = int.from_bytes(lang.read_bytes()[:4], "little") if lang.is_file() else None
+    names_by_id = {v: k for k, v in AUTOKIT_LANGS.items()}
+    language = names_by_id.get(lcid, f"0x{lcid:04x}") if lcid is not None else "unknown"
+    return f"screen {screen}, decoder {'hardware' if hardware else 'software'}, language {language}"
 
 
 def _registry_lines(text: str) -> list[str]:
@@ -507,6 +538,9 @@ def parser() -> argparse.ArgumentParser:
     boot_prepare.add_argument("--serial", type=_serial, required=True)
     boot_prepare.add_argument("--stick", required=True)
     boot_prepare.add_argument("--manifest", help="use an existing make_pack manifest instead of building")
+    boot_prepare.add_argument("--apps-only", action="store_true",
+                              help="the car already runs job sticks (UpdateService is there): "
+                                   "put only the app pack on the stick, as install.bin")
     boot_finish = boot_sub.add_parser("finish")
     boot_finish.add_argument("stick")
     for command, func in ((boot_prepare, cmd_bootstrap_prepare), (boot_finish, cmd_bootstrap_finish)):
@@ -531,14 +565,18 @@ def parser() -> argparse.ArgumentParser:
         job_sub.add_parser(name, parents=[common], help=help_text).set_defaults(func=cmd_job)
     remove = job_sub.add_parser("remove", parents=[common],
                                 help="take an app out of the Apps menu (--purge deletes its files)")
-    remove.add_argument("app", help="the name shown in the Apps menu (see s2am status)")
+    remove.add_argument("app", nargs="+",
+                        help="the names shown in the Apps menu (see s2am status); several go in one job")
     remove.add_argument("--purge", action="store_true", help="also delete the app's files")
     remove.add_argument("--dry-run", action="store_true", help="show the plan, build nothing")
     remove.set_defaults(func=cmd_job)
     config = job_sub.add_parser("autokit-config", parents=[common],
                                 help="set AutoKit's video size and decoder (Android Auto picture)")
-    config.add_argument("--screen", default="800,480,15", help="width,height,fps (default 800,480,15)")
-    config.add_argument("--decoder", choices=["software", "hardware"], default="software")
+    config.add_argument("--screen", help="width,height,fps (default 800,480,15)")
+    config.add_argument("--decoder", choices=["software", "hardware"], help="default software")
+    config.add_argument("--lang", choices=sorted(AUTOKIT_LANGS),
+                        help="AutoKit's own language (the stock folder is Chinese); "
+                             "on its own it leaves the video settings alone")
     config.add_argument("--restore", metavar="JOB_ID", help="put back what that config job replaced")
     config.set_defaults(func=cmd_job)
     job_sub.add_parser("snapshot", parents=[common],

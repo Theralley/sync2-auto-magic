@@ -92,7 +92,9 @@ def collect(staging: Path, serial: str) -> Path:
 
 # What a bootstrap pack must contain once unpacked, per default app (car paths).
 APP_FILES = {
-    "AutoKit": ("windows/AutoKitPlugin.dll", "SyncExtendedPack/Apps/Media/AutoKit/AutoKit.exe"),
+    # AutoKitPlugin starts AutoKit through SyncAppsRunner; without it the menu entry does nothing.
+    "AutoKit": ("windows/AutoKitPlugin.dll", "SyncExtendedPack/Apps/Media/AutoKit/AutoKit.exe",
+                "SyncExtendedPack/Apps/Tools/SyncAppsRunner.exe"),
     "Explorer": ("windows/ExplorerPlugin.dll", "SyncExtendedPack/Apps/Tools/explorer.exe"),
     "Reboot": ("windows/RebootPlugin.dll",),
 }

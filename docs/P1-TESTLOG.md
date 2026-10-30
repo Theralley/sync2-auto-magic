@@ -54,3 +54,39 @@ Fill one copy per car session. Test IDs match [P1-RUNBOOK.md](P1-RUNBOOK.md).
 ## Anything else
 
 -
+
+---
+
+# 2026-10-30: first car session (developer's car)
+
+| Field | Value |
+|---|---|
+| Car | 2016 Ford Mondeo Mk5, 8" SYNC 2 |
+| SYNC software | CCPU 3.10.16180.EA (EU), navigation 5.67.6, map F10 |
+| APIM serial | (private) |
+| Sticks | SanDisk Cruzer Micro 2 GB, FAT32 / MBR |
+| Adapter | not delivered yet |
+| sync2-auto-magic | the commit after b4b8ca0 that adds `docs/MORTSCRIPT.md` |
+
+**Starting point.** A previous owner had installed SyncExtPack in August 2022. The Apps menu
+showed MirrorLink, Video Player, Navitel and Reboot, and none of them opened. The inventory
+explained why: only Navitel's files and plugin were left (84.5 MB), and the shared launcher
+`Apps\Tools\SyncAppsRunner.exe` was gone. UpdateService was still resident, so job sticks
+worked without a reinstall.
+
+| Step | Result |
+|---|---|
+| Inventory job, first try | Stopped with "'If' without 'EndIf'" (MortScript bug, see [MORTSCRIPT.md](MORTSCRIPT.md)); no report |
+| Inventory job after the fix | Applied, report imported (**G6** for the old install) |
+| Remove Video Player (`--purge`) | Applied, verified; SYNC restarted by itself |
+| Remove MirrorLink + Navitel in one job (`--purge`) | Applied, verified; 125 MB freed |
+| App pack via `bootstrap prepare --apps-only` (AutoKit, Total Commander, Reboot) | Installed; Apps shows AutoKit, Total Commander, Reboot (**G1**) |
+| Total Commander opens | Yes |
+| Reboot restarts SYNC | Yes |
+| AutoKit opens | Yes: "connect the AutoPlay box" screen, in **Chinese** (stock `lang` = 0x0804) |
+| `autokit-config --lang english` | Applied; AutoKit shows English |
+| Final inventory | AutoKit installed, all three audio modules **patched**, language English, video defaults |
+| T8 leave AutoKit with its Exit button (**G5**) | **Fails**: the screen stays frozen. Soft reset (power/volume knob + Seek-Up ⏭, about 10 s) brings SYNC back, with nothing lost |
+
+**Open:** CarPlay (T1–T7) and the sound fix wait for the adapter. G5 needs a fix; see
+[P2-AA-AUTOSTART-PLAN.md](P2-AA-AUTOSTART-PLAN.md), AS-2.

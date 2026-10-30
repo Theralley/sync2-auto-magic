@@ -88,6 +88,15 @@ off, so do not build at the edges.
 
 ## Session 1: install (about 20 minutes)
 
+**SyncExtPack already on the car?** (an older Apps menu from a previous owner, for example)
+Run an inventory job stick first. If it comes back with a report, UpdateService is still there:
+remove dead apps with `s2am job remove A B --purge`, then use
+`s2am bootstrap prepare --serial S --stick /Volumes/SYNC --apps-only`, which puts only the app
+pack on the stick, as `install.bin`. Insert it once and skip steps 1.2 and 1.3. That is how the
+developer's car was set up on 2026-10-30 ([P1-TESTLOG.md](P1-TESTLOG.md)). After installing,
+switch AutoKit to English with `s2am job autokit-config --lang english`.
+
+
 | Step | Do | Check | If not |
 |---|---|---|---|
 | 1.1 | Start the engine and turn off Start-Stop. Wait until SYNC 2 has fully loaded | Home screen; **date and time correct** | Wrong clock: fix it in SYNC settings first |
@@ -202,7 +211,7 @@ timeline. The native log ends with an `|end|` line when it finished.
 
 | Situation | Action |
 |---|---|
-| Touchscreen does not respond | **Power + Seek-Up (next track) for 10 s**, car in Park (some cars ignore this) |
+| Touchscreen does not respond (also: after AutoKit's Exit, seen 2026-10-30) | **Hold the power/volume knob + Seek-Up (next track) for 10 s**, car in Park, until the screen goes black. Worked on the developer's Mondeo; nothing is uninstalled |
 | That does not help | Engine off, lock the car for 10 minutes, start again |
 | AutoKit misbehaves | Run the `autokit-stock` job stick, or in Total Commander copy the `*.orig` files over the live ones |
 | SYNC unusable | **Recovery stick B** (3.10): insert it, the update starts by itself; follow Ford's instructions. This restores Ford's software, but may **not** remove every SyncExtPack file. |

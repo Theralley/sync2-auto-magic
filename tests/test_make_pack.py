@@ -134,6 +134,7 @@ class VerifyPacks(unittest.TestCase):
                 return
             files = {"windows/AutoKitPlugin.dll": b"p", "windows/ExplorerPlugin.dll": b"p",
                      "windows/RebootPlugin.dll": b"p", "SyncExtendedPack/Apps/Tools/explorer.exe": b"e",
+                     "SyncExtendedPack/Apps/Tools/SyncAppsRunner.exe": b"r",
                      "SyncExtendedPack/Apps/Media/AutoKit/WaveOutHooks.dll": b"h"}
             for path, data in files.items():
                 (target / path).parent.mkdir(parents=True, exist_ok=True)

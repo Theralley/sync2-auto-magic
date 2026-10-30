@@ -115,6 +115,33 @@ class Loop(unittest.TestCase):
         self.assertIn("decoder hardware", self.status())
         self.assertFalse(self.car.exists(f"{AUTOKIT_CE}\\screenconfig"))
 
+    def test_language_alone_leaves_video_settings_and_restores(self):
+        self.car.put(f"{AUTOKIT_CE}\\lang", b"\x04\x08\x00\x00")  # stock: Chinese (0x0804)
+        self.run_job("inventory")
+        self.assertIn("language chinese", self.status())
+        configured, work, imported = self.run_job("autokit-config", "--lang", "english")
+        self.assertIn("applied", imported)
+        self.assertEqual(self.car._resolve(f"{AUTOKIT_CE}\\lang").read_bytes(), b"\x09\x04\x00\x00")
+        self.assertFalse(self.car.exists(f"{AUTOKIT_CE}\\screenconfig"))
+        self.assertTrue(self.car.exists(f"{AUTOKIT_CE}\\usehwdec"))
+        self.assertIn("decoder hardware, language english", self.status())
+        self.assertEqual((work / "payload" / configured.job_dir.lstrip("/") / "lang").read_bytes(),
+                         b"\x09\x04\x00\x00")
+        self.run_job("autokit-config", "--restore", configured.id)
+        self.assertEqual(self.car._resolve(f"{AUTOKIT_CE}\\lang").read_bytes(), b"\x04\x08\x00\x00")
+
+    def test_language_script_copies_from_the_job_folder(self):
+        script = autokit_config_script(Job(SERIAL, "akcfg", params={"lang": "english"}))
+        self.assertIn('\\lang", ak & "\\lang", TRUE)', script)
+        guard = script.index('FileExists(bk & "\\lang.absent")))')
+        self.assertLess(guard, script.index('\\lang", ak & "\\lang", TRUE)'))
+        self.assertIn("backup-failed.txt", script[guard:])
+        self.assertNotIn("screenconfig\", ", script.split("If (FileExists(ak")[0])
+        with self.assertRaises(ValueError):
+            autokit_config_script(Job(SERIAL, "akcfg", params={"lang": "klingon"}))
+        with self.assertRaises(ValueError):
+            autokit_config_script(Job(SERIAL, "akcfg", params={}))
+
     def test_firmware_image_is_removed_and_reported(self):
         self.run_job("inventory")
         self.car.put(f"{AUTOKIT_CE}\\Auto_Box_Update.img", b"fw")

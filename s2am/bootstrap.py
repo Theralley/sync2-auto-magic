@@ -109,6 +109,52 @@ def prepare(stick: Path, serial: str, manifest: Path, now: datetime | None = Non
     return record
 
 
+def prepare_apps_only(stick: Path, serial: str, manifest: Path, now: datetime | None = None,
+                      force: bool = False, apps: tuple[str, ...] = DEFAULT_APPS) -> dict:
+    """For a car whose UpdateService already runs job sticks: only the app pack, as install.bin.
+
+    That is stage two without stage one; Installer.jpg and the UpdateService files stay off
+    the stick.
+    """
+    now = now or datetime.now(timezone.utc)
+    data, archive = _load(manifest, serial, now, apps)
+    if datetime.fromisoformat(data["install_before_utc"]) - now < window.DEFAULT_MARGIN \
+            and not force:
+        raise BootstrapError("pack expires within two days; build in the next window, or force")
+    pending = sorted((stick / "s2am" / "pending").glob("*.json"))
+    if pending and not force:
+        raise BootstrapError(f"the stick still has a job waiting ({pending[0].stem}); "
+                             "import it first, or force")
+
+    target = stick / "SyncExtPack"
+    existing = sorted(p.name for p in target.iterdir()) if target.is_dir() else []
+    if existing:  # earlier job runs: installed.bin would stop UpdateService's rename
+        aside = stick / "s2am" / "history" / now.strftime("%Y%m%d-%H%M%S")
+        aside.mkdir(parents=True, exist_ok=True)
+        for name in existing:
+            shutil.move(str(target / name), str(aside / name))
+    target.mkdir(exist_ok=True)
+    with zipfile.ZipFile(archive) as zf:
+        content = zf.read("SyncExtPack/pack_install.bin")
+    # Written under a name UpdateService ignores, checked, and only then given the live name.
+    staged = target / "pack_install.bin"
+    staged.write_bytes(content)
+    if _sha256(staged) != data["usb_files"]["pack_install.bin"]:
+        staged.unlink()
+        raise BootstrapError("the app pack on the stick does not match the build")
+    staged.rename(target / "install.bin")
+
+    record = {"serial": serial, "mode": "apps-only",
+              "prepared_utc": now.isoformat(timespec="seconds"),
+              "finished_utc": now.isoformat(timespec="seconds"),
+              "install_before_utc": data["install_before_utc"],
+              "pack_install_sha256": data["usb_files"]["pack_install.bin"],
+              "archive": archive.name}
+    (stick / RECORD).parent.mkdir(parents=True, exist_ok=True)
+    (stick / RECORD).write_text(json.dumps(record, indent=2) + "\n")
+    return record
+
+
 def finish(stick: Path, now: datetime | None = None) -> dict:
     """The rename step: pack_install.bin becomes install.bin, after checks."""
     now = now or datetime.now(timezone.utc)

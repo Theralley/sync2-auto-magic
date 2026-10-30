@@ -139,6 +139,9 @@ class FakeCar:
         screen = self._resolve(f"{AUTOKIT_CE}\\screenconfig")
         if screen.exists():
             shutil.copyfile(screen, out / "autokit-screenconfig.txt")
+        lang = self._resolve(f"{AUTOKIT_CE}\\lang")
+        if lang.exists():
+            shutil.copyfile(lang, out / "autokit-lang.bin")
         self.put(job.done_marker, job.id.encode())
         (out / "done.txt").write_text(f"{job.id} applied")
         (out / "info.txt").write_text(f"job={job.id}\r\ntime=2026-10-30 12:00:00\r\n"
@@ -232,19 +235,30 @@ class FakeCar:
                 hwdec.write_bytes(b"")
             if (src / "usehwdec.absent").exists():
                 hwdec.unlink(missing_ok=True)
+            if (src / "lang").exists():
+                shutil.copyfile(src / "lang", ak / "lang")
+            if (src / "lang.absent").exists():
+                (ak / "lang").unlink(missing_ok=True)
         else:
             backup = self._resolve(f"{BACKUP_DIR}\\{job.id}")
             backup.mkdir(parents=True, exist_ok=True)
-            if screen.exists():
-                shutil.copyfile(screen, backup / "screenconfig")
-            else:
-                (backup / "screenconfig.absent").write_bytes(b"")
-            (backup / ("usehwdec.present" if hwdec.exists() else "usehwdec.absent")).write_bytes(b"")
-            screen.write_text(job.params["screen"])
-            if job.params["decoder"] == "software":
-                hwdec.unlink(missing_ok=True)
-            else:
-                hwdec.write_bytes(b"")
+            if "screen" in job.params:
+                if screen.exists():
+                    shutil.copyfile(screen, backup / "screenconfig")
+                else:
+                    (backup / "screenconfig.absent").write_bytes(b"")
+                (backup / ("usehwdec.present" if hwdec.exists() else "usehwdec.absent")).write_bytes(b"")
+                screen.write_text(job.params["screen"])
+                if job.params["decoder"] == "software":
+                    hwdec.unlink(missing_ok=True)
+                else:
+                    hwdec.write_bytes(b"")
+            if "lang" in job.params:
+                if (ak / "lang").exists():
+                    shutil.copyfile(ak / "lang", backup / "lang")
+                else:
+                    (backup / "lang.absent").write_bytes(b"")
+                shutil.copyfile(self._resolve(ce_path(job.job_dir)) / "lang", ak / "lang")
         image = ak / "Auto_Box_Update.img"
         if image.exists():
             image.unlink()

@@ -272,6 +272,27 @@ class Loop(unittest.TestCase):
         self.assertTrue(self.car.exists("\\SyncExtendedPack\\Apps\\Tools\\SyncAppsRunner.exe"))
         self.assertTrue(self.car.exists("\\SyncExtendedPack\\Apps\\Media\\AutoKit\\AutoKit.exe"))
 
+    def test_several_apps_in_one_job_and_undo_brings_them_all_back(self):
+        self.run_job("inventory")
+        removed, plan, imported = self.run_job("remove", "Video Player", "Reboot", "--purge")
+        self.assertIn("remove Video Player, Reboot", plan)
+        self.assertIn("are taken out of the Apps menu", plan)
+        self.assertIn("verified: 'Video Player, Reboot' are no longer in the menu", imported)
+        self.assertEqual(self.menu_names(), ["Total Commander", "AutoKit"])
+        self.assertFalse(self.car.exists("\\SyncExtendedPack\\Apps\\Media\\VideoPlayer"))
+        self.assertTrue(self.car.exists("\\SyncExtendedPack\\Apps\\Tools\\SyncAppsRunner.exe"))
+
+        _, _, imported = self.run_job("undo", removed.id)
+        self.assertIn("is back in the menu", imported)
+        self.assertEqual(self.menu_names(), ["Video Player", "Total Commander", "AutoKit", "Reboot"])
+
+    def test_naming_an_app_twice_is_refused(self):
+        self.run_job("inventory")
+        code, out = self.cli("job", "remove", "Reboot", "Reboot", "--serial", SERIAL, "--no-pack",
+                             "--work", str(self.tmp / "twice"))
+        self.assertNotEqual(code, 0)
+        self.assertIn("not in the Apps menu", out)
+
     def test_stale_menu_changes_nothing(self):
         self.run_job("inventory")
         self.car.put(MENU_XML, apps.render_menu(MENU + [("New", "NewPlugin", "")]))  # changed since
