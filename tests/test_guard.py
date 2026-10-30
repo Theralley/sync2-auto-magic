@@ -24,7 +24,7 @@ HAVE_UPSTREAM = (UPSTREAM / "FullPack").is_dir()
 SERIAL = "XV31M13H"
 SOURCE = (native.SOURCES / "s2amrun.c").read_text()
 RUNNER = UPSTREAM / "FullPack/SyncExtendedPack/Apps/Tools/SyncAppsRunner.exe"
-STOCK = RUNNER.read_bytes() if RUNNER.exists() else b"Ford runner"
+STOCK = RUNNER.read_bytes() if RUNNER.exists() else b"stock runner"
 GUARD = b"MZ s2amrun stand-in"
 PARAMS = {"stock_size": len(STOCK)}
 COMMANDS = ["/SyncExtendedPack/Apps/Media/AutoKit/AutoKit.exe",  # as AutoKitPlugin.dll writes it
@@ -161,7 +161,7 @@ class Loop(unittest.TestCase):
             cli.main(["status", "--serial", SERIAL])
         return out.getvalue()
 
-    def test_on_keeps_fords_runner_and_off_puts_it_back(self):
+    def test_on_keeps_the_stock_runner_and_off_puts_it_back(self):
         imported = self.run_job("runner-guard")
         self.assertIn("verified: runner guard is on (self-test: s2amrun ok", imported)
         self.assertEqual(self.runner(), GUARD)
@@ -173,7 +173,7 @@ class Loop(unittest.TestCase):
             imported = self.run_job("runner-guard")
         self.assertIn("verified: runner guard is on", imported)
         self.assertEqual(self.runner(), newer)
-        self.assertEqual(self.runner("SyncAppsRunner.orig.exe"), STOCK)  # still Ford's, never the guard
+        self.assertEqual(self.runner("SyncAppsRunner.orig.exe"), STOCK)  # still the stock runner, never the guard
 
         imported = self.run_job("runner-guard", "--off")
         self.assertIn("verified: runner guard is off", imported)
@@ -192,7 +192,7 @@ class Loop(unittest.TestCase):
         self.assertIn("busy", self.run_job("runner-guard"))
         self.assertEqual(self.runner(), STOCK)
 
-    def test_a_damaged_keep_is_rebuilt_from_fords_runner(self):
+    def test_a_damaged_keep_is_rebuilt_from_the_stock_runner(self):
         self.car.put(f"{TOOLS_CE}\\SyncAppsRunner.orig.exe", STOCK[:100])  # power cut mid-copy
         self.assertIn("runner guard is on", self.run_job("runner-guard"))
         self.assertEqual(self.runner("SyncAppsRunner.orig.exe"), STOCK)
@@ -210,7 +210,7 @@ class Loop(unittest.TestCase):
         self.assertIn("failed", self.run_job("runner-guard", "--off"))
         self.assertEqual(self.runner(), GUARD)  # still working, not replaced by a broken file
 
-    def test_builder_refuses_a_guard_the_size_of_fords_runner(self):
+    def test_builder_refuses_a_guard_the_size_of_the_stock_runner(self):
         with mock.patch.object(native, "binary", return_value=b"x" * len(STOCK)):
             out = io.StringIO()
             with contextlib.redirect_stderr(out):

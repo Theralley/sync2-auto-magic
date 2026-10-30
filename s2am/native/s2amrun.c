@@ -63,7 +63,7 @@ typedef BOOL (WINAPI *ProcessFn)(HANDLE, ProcessEntry *);
 typedef BOOL (WINAPI *CloseSnapshotFn)(HANDLE);
 
 /* Named in the self-test. Its size also keeps this file from ever being the size of
- * Ford's runner, which the install job uses to tell the two apart (and checks). */
+ * the stock runner, which the install job uses to tell the two apart (and checks). */
 const char s2am_guard_id[1024] = "s2am runner guard";
 
 static SnapshotFn snapshot;

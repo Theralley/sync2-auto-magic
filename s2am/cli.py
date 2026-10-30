@@ -276,7 +276,7 @@ def cmd_job(args) -> int:
         if not args.off:
             extra = {"s2amrun.exe": native.binary("s2amrun.exe")}
             if len(extra["s2amrun.exe"]) == stock:  # the job tells them apart by size
-                raise ValueError("the guard is exactly the size of Ford's runner; change s2amrun.c")
+                raise ValueError("the guard is exactly the size of the stock runner; change s2amrun.c")
     if getattr(args, "dry_run", False):
         return 0
     job = Job(serial=args.serial, kind=JOB_KINDS[args.kind], params=params)

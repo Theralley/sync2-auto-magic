@@ -25,6 +25,8 @@ That brought SYNC back every time. Last resort: engine off, lock the car, wait 1
     `ManageApp.cpp(531): SW_HIDE`; the process keeps running and keeps answering.
   - The launcher `SyncAppsRunner.exe` hid SYNC's own screen (window class `DESKTOP`) when
     AutoKit started, and gives it back only when AutoKit's **process ends**. So it waits.
+    The launcher is SyncExtPack's, not Ford's: it comes with SyncExtPack's app pack
+    (`SyncExtendedPack/Apps/Tools/SyncAppsRunner.exe`, 11776 bytes).
   - What stays on the screen is SYNC's empty shell background: a window of class
     `DesktopExplorerWindow` from `mishell.exe`, always visible behind everything.
   - Car off and the door work because SYNC sleeps and, on waking, AutoKit is ended; the
@@ -33,7 +35,7 @@ That brought SYNC back every time. Last resort: engine off, lock the car, wait 1
   with *Reboot* instead of Exit.
 - **Fix:** `s2am job runner-guard`. It puts a small guard (`s2am/native/s2amrun.c`) in the
   launcher's place:
-  - Ford's launcher is kept as `SyncAppsRunner.orig.exe` and still does all its own work.
+  - SyncExtPack's launcher is kept as `SyncAppsRunner.orig.exe` and still does all its own work.
   - It acts only when **nothing usable is on the screen** for 3 s: no visible window at all
     except the shell background. SYNC's screen, the reversing camera, a dialog or the app
     itself all count as usable, so it never acts over them, nor on an app still starting.
@@ -41,7 +43,7 @@ That brought SYNC back every time. Last resort: engine off, lock the car, wait 1
     and the launcher gives the screen back.
   - If SYNC still stays hidden after that, the guard gives it back itself, using the
     launcher's own steps.
-  - Ford's launcher is recognised by its exact size. A damaged backup is rebuilt, and a
+  - SyncExtPack's launcher is recognised by its exact size. A damaged backup is rebuilt, and a
     launcher it does not recognise is never replaced.
   - It logs to `\SyncExtendedPack\_s2am\guard.log`; `s2am status` shows the last lines.
   - Undo: `s2am job runner-guard --off`.
@@ -50,8 +52,10 @@ That brought SYNC back every time. Last resort: engine off, lock the car, wait 1
   (`/SyncExtendedPack/Apps/Media/AutoKit/AutoKit.exe`), which it did not split, so it never
   recognised AutoKit; and it counted the shell background as "another program in front".
   The second guard fixes both. In the car it sends `WM_CLOSE` about 2 s after Exit, AutoKit
-  ends within 0.3 s, and Ford's launcher shows SYNC again.
+  ends within 0.3 s, and SyncExtPack's launcher shows SYNC again.
 - SyncExtPack's `SyncAppsRunner_Eject.exe` is **not** the fix: it lacks the sound routing.
+- **Reported upstream:** [chr0m1ng/syncextpack#4](https://github.com/chr0m1ng/syncextpack/issues/4),
+  with the cause, this workaround and an offer of a PR for the pack.
 
 ### No reverse camera picture while AutoKit is open
 - **Seen:** 2026-10-30, with the runner guard, no adapter connected. In reverse, AutoKit's

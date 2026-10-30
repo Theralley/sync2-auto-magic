@@ -68,7 +68,7 @@ run the same system, but nothing is guaranteed.
 | AutoKit in English | **Works in the car**; new installs start in English (the stock app is Chinese; `autokit-config --lang` changes it) |
 | Apple CarPlay over a cable | Waiting for the adapter |
 | Sound through the car's speakers | Fix installed (all three modules patched), waiting for the adapter |
-| Leaving AutoKit returns to SYNC | **Works in the car with the runner guard** (`s2am job runner-guard`, undo with `--off`). Without it, Exit only hides AutoKit and the screen freezes |
+| Leaving AutoKit returns to SYNC | **Works in the car with the runner guard** (`s2am job runner-guard`, undo with `--off`). Without it, Exit only hides AutoKit and the screen freezes. Reported upstream: [syncextpack#4](https://github.com/chr0m1ng/syncextpack/issues/4) |
 | Reverse camera while AutoKit is open | **Does not show** (seen in the car); leave AutoKit before reversing |
 | Android Auto with the same dongle | Waiting for the adapter (`autokit-config` sets the picture; [plan](docs/P2-AA-AUTOSTART-PLAN.md)) |
 | See what is installed on SYNC 2 from your Mac | **Works in the car** |
@@ -193,7 +193,7 @@ python3 -m s2am report --serial YOURSERIAL                           # show the 
 python3 -m s2am native build                                         # build the WinCE helpers (CeGCC in Docker)
 python3 -m s2am job native-hello --serial YOURSERIAL                 # prove compiled code runs on your SYNC 2
 python3 -m s2am job runner-guard --serial YOURSERIAL                 # fix: no frozen screen after leaving an app
-python3 -m s2am job runner-guard --off --serial YOURSERIAL           # put Ford's original launcher back
+python3 -m s2am job runner-guard --off --serial YOURSERIAL           # put SyncExtPack's original launcher back
 python3 -m s2am job logger --native --serial YOURSERIAL              # also record AutoKit's window messages
 ```
 

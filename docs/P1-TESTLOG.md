@@ -96,7 +96,7 @@ worked without a reinstall.
 | Step | Result |
 |---|---|
 | Logger job (MortScript loop, 300 s), then AutoKit, Exit | The loop wrote its first line and nothing more, so it recorded nothing. Exit froze the screen again. **The soft reset did not work this time**; the car had to be switched off and the driver's door opened and closed |
-| Runner guard job (`runner-guard`) | Applied: self-test passed on the car (`toolhelp 1`, `desktop 1`), Ford's runner kept as `SyncAppsRunner.orig.exe` (11776 B), guard installed (12800 B). AutoKit still opens through it |
+| Runner guard job (`runner-guard`) | Applied: self-test passed on the car (`toolhelp 1`, `desktop 1`), SyncExtPack's runner kept as `SyncAppsRunner.orig.exe` (11776 B), guard installed (12800 B). AutoKit still opens through it |
 | AutoKit, Exit, with the guard | **Still frozen**; same recovery (car off, door open and closed) |
 
 The guard's own log stays on the car (`\SyncExtendedPack\_s2am\guard.log`) and was not on
@@ -131,7 +131,7 @@ What the watch log showed:
 
 | Step | Result |
 |---|---|
-| Runner guard upgrade job (second guard) | Applied: self-test passed (`toolhelp 1`, `desktop 1`, `background 1`); Ford's runner stays `SyncAppsRunner.orig.exe` |
+| Runner guard upgrade job (second guard) | Applied: self-test passed (`toolhelp 1`, `desktop 1`, `background 1`); SyncExtPack's runner stays `SyncAppsRunner.orig.exe` |
 | Logger job with the watcher (600 s), then AutoKit opened five times | Recorded until the stick was pulled at 494 s |
 | AutoKit, Exit, four times | **Works**: SYNC's screen was back each time, about 3 s after Exit |
 | Reverse camera while AutoKit is open | **No camera picture**. Not caused by the guard (see below); open |
@@ -140,7 +140,7 @@ What the watch log showed, the same at every Exit:
 - AutoKit hid its window (`SW_HIDE`), leaving only the shell background visible.
 - About 2 s later the guard logged `stuck|nothing usable on the screen` and sent AutoKit
   `WM_CLOSE`. AutoKit ended within 0.1–0.3 s, so the guard never had to force it.
-- Ford's launcher then ended and showed `DESKTOP` in the same second, as it does after any
+- SyncExtPack's launcher then ended and showed `DESKTOP` in the same second, as it does after any
   app. The guard's own fallback was never needed.
 - The guard now recognises AutoKit (`app 1`) and counts the shell background as nothing
   (`other_windows 0` while AutoKit is hidden).
@@ -151,6 +151,10 @@ window appeared or disappeared in that time: AutoKit stayed on top and visible, 
 did nothing. The camera picture is drawn without a window of its own, and AutoKit's full-screen
 window seems to cover it. The 258 KB log was overwritten by the next opening's copy, so what
 AutoKit logged is not known yet.
+
+The freeze and the workaround are reported upstream as
+[chr0m1ng/syncextpack#4](https://github.com/chr0m1ng/syncextpack/issues/4), since the launcher
+comes with SyncExtPack's app pack.
 
 **Open:** CarPlay (T1–T7) and the sound fix wait for the adapter. The reverse camera while
 AutoKit is open needs its own investigation.

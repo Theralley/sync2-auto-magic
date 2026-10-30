@@ -498,11 +498,11 @@ def autokit_config_script(job: Job) -> str:
 def guard_script(job: Job) -> str:
     """Turn the runner guard on (s2amrun.exe takes SyncAppsRunner.exe's place) or off.
 
-    Ford's runner is recognised by its size (``stock_size``, taken from SyncExtPack at
-    build time; the builder refuses a guard of the same size). On: the guard first runs
-    its self-test on the car. Ford's runner is kept as SyncAppsRunner.orig.exe, and a
+    The stock runner (SyncExtPack's, not Ford's) is recognised by its size (``stock_size``,
+    taken from SyncExtPack at build time; the builder refuses a guard of the same size). On: the guard first runs
+    its self-test on the car. The stock runner is kept as SyncAppsRunner.orig.exe, and a
     damaged keep (say a power cut mid-copy) is rebuilt from the live runner when that is
-    still Ford's. Only then is the guard copied over SyncAppsRunner.exe, checked by size.
+    still the stock one. Only then is the guard copied over SyncAppsRunner.exe, checked by size.
     Off: a good keep goes back. Neither runs while an app is open, since the runner's
     file is in use then.
     """
@@ -510,7 +510,7 @@ def guard_script(job: Job) -> str:
     if action not in ("enable", "disable"):
         raise ValueError(f"invalid runner guard action {action!r}")
     if not isinstance(stock, int) or not 1024 <= stock <= 1024 * 1024:
-        raise ValueError(f"invalid size of Ford's runner {stock!r}")
+        raise ValueError(f"invalid size of the stock runner {stock!r}")
     runner, original = "tools & \"\\SyncAppsRunner.exe\"", "tools & \"\\SyncAppsRunner.orig.exe\""
     guard = f'{_quote(ce_path(job.job_dir))} & "\\s2amrun.exe"'
     lines = _header(job) + [
@@ -534,13 +534,13 @@ def guard_script(job: Job) -> str:
             f"If (FileExists({original}))",
             f"  If (FileSize({original}) <> {stock})",  # a damaged keep
             f"    If (FileSize({runner}) <> {stock})",
-            *_stop("backup-bad.txt", "neither the runner nor its kept copy is Ford's runner; "
+            *_stop("backup-bad.txt", "neither the runner nor its kept copy is the stock runner; "
                    "install the app pack again", "      "),
             "    EndIf",
             f"    Delete({original})",
             "  EndIf",
             "EndIf",
-            f"If (NOT FileExists({original}))",  # keep Ford's runner, once
+            f"If (NOT FileExists({original}))",  # keep the stock runner, once
             f"  If (FileSize({runner}) <> {stock})",
             *_stop("unknown-runner.txt", "SyncAppsRunner.exe is not the runner s2am knows; "
                    "nothing changed", "    "),
@@ -567,7 +567,7 @@ def guard_script(job: Job) -> str:
             f"If (FileExists({original}))",
             f"  If (FileSize({original}) <> {stock})",
             *_stop("backup-bad.txt", "the kept runner is damaged, so the guard stays on; install "
-                   "the app pack again to get Ford's runner back", "    "),
+                   "the app pack again to get the stock runner back", "    "),
             "  EndIf",
             f"  Copy({original}, {runner}, TRUE)",
             f"  If (FileSize({runner}) <> {stock})",
