@@ -277,3 +277,15 @@ the screen job found no way to write outside the screen's folder, and four thing
   like one.
 
 Tests: 236 pass.
+
+R3b, the same day: the call history with big rows (76 px, three to a page, the name 26 px),
+built by `build_phone_history.py --rows`: two numbers in Ford's class changed in place
+(rowHeight 50 to 76, visibleRowCount 5 to 3) and the row's layout through FFDec's XML form,
+nothing recompiled; every other tag byte for byte and every value read back.
+
+| Job | install.bin | Rehearsal |
+|---|---|---|
+| `screen-6ffe`: big rows | 273,888 bytes | after R3a and its undo: verified, 1 file byte for byte |
+| `screen-4dca`: undo | 271,144 bytes | after the cleanup: verified, Ford's screen back |
+
+In the car: R3a, then its undo (which also proves a screen undo in the car), then R3b.
