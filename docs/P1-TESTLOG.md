@@ -169,7 +169,7 @@ One stick (32 GB, FAT32) carried an install job for SyncExtPack's Video Player
 
 | Step | Result |
 |---|---|
-| Install job (single app) | Applied; Video Player in the Apps menu and opening. The stick has not been imported yet |
+| Install job (single app) | Applied; Video Player in the Apps menu and opening. Imported 2026-10-31: menu entry and files verified |
 | 800x480 H.264 (files 01–03) | **Play fine** |
 | 720p and 1080p (files 04, 05) | Glitch ("bugged") |
 | Sound through the car's speakers | **Yes**, in every file |
@@ -185,3 +185,22 @@ One stick (32 GB, FAT32) carried an install job for SyncExtPack's Video Player
   `autokit-config` sets, though AutoKit decodes with its own decoder.
 - Not noted: left/right, the volume knob, and whether SYNC came back after the player.
 
+
+# 2026-10-31: drive logger
+
+The 2 GB stick carried `s2am job logger --drive`: the watcher plus the new `s2amdrive.exe`,
+for up to four hours. Inserted at 10:12, the car driven, the stick pulled at about 10:34.
+
+| Step | Result |
+|---|---|
+| Job, then both programs running | Yes; `s2amdrive.exe` started, so every COREDLL function it needs exists on the car |
+| System facts | Windows CE 6.0, i.MX51, OEM "Ford Sync GenII", 483 MB memory, screen 800x480 at 16 bits |
+| List of every file (`files.txt`) | 18518 entries in 31 s |
+| Copy of `\8inchSkins` with SHA-256 (`skins.txt`) | 1253 files, 51 MB, 0 errors, in 11 minutes |
+| Processor load every 10 s | Works per program. 95-100% busy during the copy, about 80% after it; `Desktop.exe` about 52% even with a still screen |
+| Screenshots | 19 taken, but **only the coloured background shows**: the Flash screens are drawn on a layer a screen copy cannot read |
+
+- The logger itself used about 13% of the processor after the copy, almost all for copying
+  the screen once a second. A later version should do that far less often.
+- What the files show is written up in
+  [sync-redesign's FINDINGS.md](https://github.com/Theralley/sync-redesign/blob/main/docs/FINDINGS.md).

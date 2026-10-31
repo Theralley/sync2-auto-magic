@@ -8,7 +8,7 @@
  * changed, to <folder>\watch.log, and a heartbeat every 10 s so the log shows when
  * it stopped. It copies the runner guard's log and AutoKit's own log into the folder
  * whenever they change, numbered, so no run's log is lost. It changes nothing on the
- * car and exits after <seconds>.
+ * car and exits after <seconds> (at most four hours).
  *
  * It never asks another program for its window title: that is a message, and a hung
  * program would hang the watcher too. The answer check runs in a thread of its own.
@@ -580,7 +580,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
         seconds = seconds * 10 + (DWORD)(*at++ - L'0');
     while (*at == L' ' || *at == L'"')
         at++;
-    if (seconds < 10 || seconds > 3600 || !*at || wcslen(at) + 12 >= MAX_PATH)
+    if (seconds < 10 || seconds > 14400 || !*at || wcslen(at) + 12 >= MAX_PATH)
         return 1;
     wcscpy(folder, at);
     while (wcslen(folder) && (folder[wcslen(folder) - 1] == L'"' || folder[wcslen(folder) - 1] == L' ' ||

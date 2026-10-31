@@ -34,7 +34,8 @@ from pathlib import Path
 
 from . import apps, autokit, bootstrap, diskcheck, native, pack, stick, window
 from .container import REPO, ContainerError
-from .job import AUTOKIT_CE, AUTOKIT_LANGS, AUTOKIT_MODULES, SERIAL, Job, autokit_lang_file, stage
+from .job import (AUTOKIT_CE, AUTOKIT_LANGS, AUTOKIT_MODULES, DRIVE_SECONDS, SERIAL, Job, autokit_lang_file,
+                  stage)
 from .state import Store, diff, parse_inventory
 
 UPSTREAM = REPO.parent / "syncextpack"
@@ -262,12 +263,20 @@ def cmd_job(args) -> int:
                 params["lang"] = args.lang
                 extra = {"lang": autokit_lang_file(AUTOKIT_LANGS[args.lang])}
     elif args.kind == "logger":
-        params = {"seconds": args.seconds, "native": args.native}
+        seconds = args.seconds or (DRIVE_SECONDS if args.drive else 180)
+        params = {"seconds": seconds, "native": args.native}
         extra = {"s2amwatch.exe": native.binary("s2amwatch.exe")}
         if args.native:
             extra["notifylog.exe"] = native.binary("notifylog.exe")
-        print(f"logger: insert the stick and leave it in; for {args.seconds} s it records every "
-              f"program and window on the screen. Do the test meanwhile, then import it")
+        if args.drive:
+            params["drive"] = True
+            extra["s2amdrive.exe"] = native.binary("s2amdrive.exe")
+            print(f"drive logger: insert the stick and leave it in while you drive; for up to {seconds} s "
+                  "it records the screens (screenshots), processor load, every file's name and a copy "
+                  "of Ford's screen files. Pull the stick when you are done, then import it")
+        else:
+            print(f"logger: insert the stick and leave it in; for {seconds} s it records every "
+                  f"program and window on the screen. Do the test meanwhile, then import it")
     elif args.kind == "native-hello":
         extra = {"hello.exe": native.binary("hello.exe")}
     elif args.kind == "runner-guard":
@@ -307,7 +316,12 @@ def cmd_stick_prepare(args) -> int:
     print(f"job {job.id} is on {args.stick}")
     if archive.exists():
         print(f"earlier UpdateService files moved to {archive}")
-    if job.kind == "log":
+    if job.kind == "log" and job.params.get("drive"):
+        print("in the car: insert the stick and LEAVE IT IN. After 'Install successfully completed' "
+              "drive and use SYNC as usual (screens change only when parked or by a passenger). "
+              "Pull the stick when you are done; the logger stops by itself after "
+              f"{job.params.get('seconds', DRIVE_SECONDS)} s")
+    elif job.kind == "log":
         seconds = job.params.get("seconds", 180)
         print(f"in the car: insert the stick and LEAVE IT IN. After 'Install successfully completed' "
               f"the logger records for {seconds} s: do the test meanwhile. Leave the stick in "
@@ -544,6 +558,21 @@ def cmd_report(args) -> int:
         print("[watch.log: time|event|details] processes, windows top to bottom, SYNC shown or "
               "hidden, whether AutoKit answers; changes only")
         print((report / "watch.log").read_text(errors="replace").rstrip())
+    if (report / "drive.log").is_file():
+        print("[drive.log: time|event|details] system facts, processor load every 10 s, screenshots, "
+              "the file copy")
+        print(_log_text(report / "drive.log"))
+        shots = sorted((report / "screens").glob("*.bmp")) if (report / "screens").is_dir() else []
+        print(f"[screens] {len(shots)} screenshots in {report / 'screens'}")
+        if (report / "skins.txt").is_file():
+            lines = (report / "skins.txt").read_text(errors="replace").splitlines()
+            files = sum(1 for line in lines if line.startswith("F|"))
+            errors = sum(1 for line in lines if line.startswith("E|"))
+            total = next((line for line in lines if line.startswith("T|")), "T|not finished")
+            print(f"[skins.txt] {files} screen files copied to {report / 'skins'}, {errors} failed; {total[2:]}")
+        if (report / "files.txt").is_file():
+            count = sum(1 for _ in (report / "files.txt").open(errors="replace"))
+            print(f"[files.txt] {count} folders and files listed")
     for name, title in (("guard.log", "runner guard log when the stick ran"),
                         ("guard-live.log", "runner guard log, last copy the watcher made"),
                         ("autokit-hwlog.log", "AutoKit's own log when the stick ran"),
@@ -663,7 +692,10 @@ def parser() -> argparse.ArgumentParser:
                        help="read-only: services, startup entries and USB devices").set_defaults(func=cmd_job)
     logger = job_sub.add_parser("logger", parents=[common],
                                 help="record every program and window on the screen, twice a second")
-    logger.add_argument("--seconds", type=int, default=180)
+    logger.add_argument("--seconds", type=int, help="default 180, or four hours with --drive")
+    logger.add_argument("--drive", action="store_true",
+                        help="also run s2amdrive.exe while you drive: screenshots, processor load, "
+                             "the file list and a copy of Ford's screen files (for a redesign)")
     logger.add_argument("--native", action="store_true",
                         help="also run notifylog.exe, which records AutoKit's window messages")
     logger.set_defaults(func=cmd_job)

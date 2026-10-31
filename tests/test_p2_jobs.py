@@ -66,6 +66,17 @@ class Scripts(unittest.TestCase):
             with self.subTest(seconds), self.assertRaises(ValueError):
                 logger_script(Job(SERIAL, "log", params={"seconds": seconds}))
 
+    def test_drive_logger_runs_both_programs_for_at_most_four_hours(self):
+        script = logger_script(Job(SERIAL, "log", params={"seconds": 14400, "drive": True}))
+        self.assertIn('\\s2amwatch.exe", "14400 " & out)', script)
+        self.assertIn('\\s2amdrive.exe", "14400 " & out)', script)
+        self.assertNotIn("RunWait", script)
+        balanced(self, script)
+        self.assertNotIn("s2amdrive", logger_script(Job(SERIAL, "log", params={"seconds": 60})))
+        for params in ({"seconds": 14401, "drive": True}, {"seconds": 3600}):
+            with self.subTest(params), self.assertRaises(ValueError):
+                logger_script(Job(SERIAL, "log", params=params))
+
 
 @unittest.skipUnless(HAVE_UPSTREAM, "syncextpack fixtures not present")
 class Loop(unittest.TestCase):
@@ -199,6 +210,18 @@ class Loop(unittest.TestCase):
         self.assertEqual((lines[0], lines[19], lines[-1]), ("line 1", "line 20", "line 500"))
         self.assertIn("300 lines left out", lines[20])
         self.assertEqual(lines[21], "line 321")
+
+    def test_drive_logger_ships_both_programs_and_its_report_counts_what_came_back(self):
+        job, work, imported = self.run_job("logger", "--drive")
+        self.assertIn("applied", imported)
+        folder = work / "payload" / job.job_dir.lstrip("/")
+        self.assertTrue((folder / "s2amdrive.exe").is_file())
+        self.assertIn('\\s2amdrive.exe", "14400 " & out)', (folder / "s2amjob.mscr").read_text())
+        report = self.cli("report", "--serial", SERIAL, job.id)[1]
+        for text in ("[drive.log", "load|cpu 41%|memory 60%", "[screens] 1 screenshots",
+                     "[skins.txt] 1 screen files copied", "0 failed; complete|1 files",
+                     "[files.txt] 2 folders and files listed", "[watch.log"):
+            self.assertIn(text, report)
 
     def test_logger_ships_the_watcher_and_starts_it_in_the_background(self):
         job, work, _ = self.run_job("logger")

@@ -31,6 +31,9 @@ class FakeCar:
         self.watch_lines: list[str] = ["12:00:00.000|start|s2am watch|seconds 180|toolhelp 1",
                                        "12:00:00.010|proc+|57|AutoKit.exe|threads 9", "12:03:00.000|end"]
         self.notify_lines: list[str] = ["0|start|180", "5|REG|_UIGEAR_BOX_NOTIFY_|0x0000c0de", "9|end|"]
+        self.drive_lines: list[str] = ["12:00:00.000|start|s2am drive|seconds 14400",
+                                       "12:00:10.000|load|cpu 41%|memory 60%, 51200 KB free|Desktop.exe 30%",
+                                       "12:00:11.000|screen|screens\\0001-120011.bmp|first", "12:05:00.000|end"]
         self.watch_copies: dict[str, bytes] = {}  # numbered log copies the watcher leaves on the stick
         self.power_cut_after_phase = False
         self.native_runs = True  # does a CeGCC program start on this car? (test knob)
@@ -114,6 +117,15 @@ class FakeCar:
                 (out / name).write_bytes(data)
             if job.params.get("native"):
                 (out / "notify.txt").write_text("".join(f"{line}\r\n" for line in self.notify_lines))
+            if job.params.get("drive"):
+                (out / "drive.log").write_text("".join(f"{line}\r\n" for line in self.drive_lines))
+                (out / "files.txt").write_text("D|\\8inchSkins\r\nF|\\8inchSkins\\a.swf|3\r\n")
+                (out / "skins.txt").write_text("F|\\8inchSkins\\a.swf|3|" + "0" * 64 + "\r\n"
+                                               "T|complete|1 files|3 bytes|0 errors\r\n")
+                (out / "skins" / "8inchSkins").mkdir(parents=True)
+                (out / "skins" / "8inchSkins" / "a.swf").write_bytes(b"FWS")
+                (out / "screens").mkdir()
+                (out / "screens" / "0001-120000.bmp").write_bytes(b"BM")
         if job.kind == "hello":
             (out / "native-hello.txt").write_text("s2am native hello ok|wince 7.0 build 3500|uptime_ms 1\r\n")
         lines = []

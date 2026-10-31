@@ -73,6 +73,7 @@ run the same system, but nothing is guaranteed.
 | Play MP4 videos from a USB stick (SyncExtPack's Video Player) | **Works in the car** at 800x480 (H.264), with sound and correct colours; 720p and 1080p glitch, and the sound runs slightly off the picture. Install with `s2am job install "Video Player"`; test videos from `tools/make_test_videos.py`. Parked only |
 | Android Auto with the same dongle | Waiting for the adapter (`autokit-config` sets the picture; [plan](docs/P2-AA-AUTOSTART-PLAN.md)) |
 | See what is installed on SYNC 2 from your Mac | **Works in the car** |
+| Drive logger for a redesign: system facts, processor load, every file, a copy of Ford's screens (`logger --drive`) | **Works in the car** (one 22-minute drive). Its screen copies show only the coloured background, not the Flash screens. Findings: [sync-redesign](https://github.com/Theralley/sync-redesign/blob/main/docs/FINDINGS.md) |
 | Remove apps from your Mac (one or several per stick, menu only or with their files) | **Works in the car** |
 | Install apps from your Mac (SyncExtPack apps, AutoKit with the sound fix) | **Works in the car**: the full app pack, and single apps (Video Player) |
 | CarPlay starts by itself when you plug in the phone | Being investigated: diagnostic jobs ready (`snapshot`, `logger`), the auto-start itself not built yet ([plan](docs/P2-AA-AUTOSTART-PLAN.md)) |
@@ -196,6 +197,7 @@ python3 -m s2am job native-hello --serial YOURSERIAL                 # prove com
 python3 -m s2am job runner-guard --serial YOURSERIAL                 # fix: no frozen screen after leaving an app
 python3 -m s2am job runner-guard --off --serial YOURSERIAL           # put SyncExtPack's original launcher back
 python3 -m s2am job logger --native --serial YOURSERIAL              # also record AutoKit's window messages
+python3 -m s2am job logger --drive --serial YOURSERIAL               # while you drive, up to 4 h: load, files, Ford's screens
 python3 tools/make_test_videos.py OUTFOLDER                          # test videos for the Video Player (needs ffmpeg, Pillow)
 ```
 

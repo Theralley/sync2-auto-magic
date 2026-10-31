@@ -127,6 +127,85 @@ class Scripts(unittest.TestCase):
         self.assertEqual(fits, "0")
 
 
+class Drive(unittest.TestCase):
+    """The plain-C helpers of s2amdrive.c (between "pure: begin" and "pure: end"), built for the Mac."""
+
+    @classmethod
+    def setUpClass(cls):
+        source = (native.SOURCES / "s2amdrive.c").read_text()
+        pure = source[source.index("/* pure: begin"):source.index("/* pure: end */")]
+        program = "\n".join([
+            "#include <stdio.h>", "#include <stdlib.h>", "#include <string.h>",
+            "typedef unsigned int DWORD;", "typedef unsigned char BYTE;", "typedef int BOOL;",
+            "#define TRUE 1", "#define FALSE 0", re.search(r"#define SHOT_EVERY_MS .*", source).group(), pure,
+            "static int hex(int c) { return c <= '9' ? c - '0' : c - 'a' + 10; }",
+            "int main(int argc, char **argv) {",
+            "    if (argc > 1 && strcmp(argv[1], \"sha\") == 0) {",  # sha <hex data> <chunk size>
+            "        size_t n = strlen(argv[2]) / 2, i, step = (size_t)atoi(argv[3]);",
+            "        BYTE *data = malloc(n + 1), digest[32]; Sha256 sha;",
+            "        for (i = 0; i < n; i++) data[i] = (BYTE)(hex(argv[2][2 * i]) * 16 + hex(argv[2][2 * i + 1]));",
+            "        sha256_init(&sha);",
+            "        for (i = 0; i < n; i += step) sha256_update(&sha, data + i, (DWORD)(n - i < step ? n - i : step));",
+            "        sha256_final(&sha, digest);",
+            "        for (i = 0; i < 32; i++) printf(\"%02x\", digest[i]);",
+            "        printf(\"\\n\"); return 0;",
+            "    }",
+            "    if (argc > 1 && strcmp(argv[1], \"bmp\") == 0) {",  # a 5x3 picture, one red pixel
+            "        int width = 5, height = 3, stride = (width * 3 + 3) & ~3; BYTE header[54], pixels[48];",
+            "        FILE *out = fopen(argv[2], \"wb\");",
+            "        memset(pixels, 0, sizeof(pixels)); pixels[2 * stride + 2] = 255;",  # bottom-up: top row
+            "        bmp_header(header, width, height, stride);",
+            "        fwrite(header, 1, 54, out); fwrite(pixels, 1, (size_t)(stride * height), out); fclose(out);",
+            "        return 0;",
+            "    }",
+            "    {",
+            "        BYTE frame[48 * 16]; BOOL black; DWORD a, b;",
+            "        memset(frame, 0, sizeof(frame)); a = frame_hash(frame, 16, 16, 48, &black);",
+            "        printf(\"%d \", black); frame[0] = 9; b = frame_hash(frame, 16, 16, 48, &black);",
+            "        printf(\"%d %d\\n\", black, a != b);",
+            # first; the same again; changed but not still; still; kept changing 30 s
+            "        printf(\"%d %d %d %d %d\\n\", want_shot(1, 0, 0, FALSE, 0), want_shot(1, 1, 1, TRUE, 99999),",
+            "               want_shot(2, 1, 1, TRUE, 1000), want_shot(2, 2, 1, TRUE, 1000),",
+            "               want_shot(3, 2, 1, TRUE, SHOT_EVERY_MS));",
+            "    }",
+            "    return 0;", "}"])
+        cls.work = Path(tempfile.mkdtemp())
+        (cls.work / "drive.c").write_text(program)
+        subprocess.run(["cc", "-Wall", "-Werror", "-o", str(cls.work / "drive"), str(cls.work / "drive.c")],
+                       check=True, capture_output=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.work)
+
+    def run_helper(self, *args):
+        return subprocess.run([str(self.work / "drive"), *args], check=True, capture_output=True,
+                              text=True).stdout
+
+    def test_sha256_matches_python_at_every_block_edge(self):
+        import hashlib
+        for length in (0, 3, 55, 56, 63, 64, 65, 119, 1000, 70000):
+            data = bytes((7 * i + length) % 256 for i in range(length))
+            for step in (1, 7, 64, 32768):
+                with self.subTest(length=length, step=step):
+                    out = self.run_helper("sha", data.hex(), str(step)).strip()
+                    self.assertEqual(out, hashlib.sha256(data).hexdigest())
+
+    def test_screenshot_header_gives_a_bmp_the_mac_opens_upright(self):
+        from PIL import Image
+        path = self.work / "shot.bmp"
+        self.run_helper("bmp", str(path))
+        with Image.open(path) as image:
+            self.assertEqual(image.size, (5, 3))
+            self.assertEqual(image.convert("RGB").getpixel((0, 0)), (255, 0, 0))
+            self.assertEqual(image.convert("RGB").getpixel((0, 2)), (0, 0, 0))
+
+    def test_screenshots_are_taken_once_a_screen_settles(self):
+        hashes, decisions = self.run_helper().splitlines()
+        self.assertEqual(hashes, "1 0 1")  # all black, then not; a changed pixel changes the hash
+        self.assertEqual(decisions.split(), ["1", "0", "0", "1", "1"])
+
+
 @unittest.skipUnless(HAVE_UPSTREAM, "syncextpack fixtures not present")
 class Loop(unittest.TestCase):
     def setUp(self):
