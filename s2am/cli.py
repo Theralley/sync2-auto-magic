@@ -34,8 +34,8 @@ from pathlib import Path
 
 from . import apps, autokit, bootstrap, diskcheck, native, pack, stick, theme, window
 from .container import REPO, ContainerError
-from .job import (AUTOKIT_CE, AUTOKIT_LANGS, AUTOKIT_MODULES, DRIVE_SECONDS, SERIAL, Job, autokit_lang_file,
-                  stage)
+from .job import (AUTOKIT_CE, AUTOKIT_LANGS, AUTOKIT_MODULES, DRIVE_SECONDS, SCREENS, SERIAL, SWAP_KINDS, Job,
+                  autokit_lang_file, stage)
 from .state import Store, diff, parse_inventory
 
 UPSTREAM = REPO.parent / "syncextpack"
@@ -68,7 +68,7 @@ def cmd_window(args) -> int:
 JOB_KINDS = {"inventory": "inv", "autokit-stock": "akstock", "autokit-patched": "akpatch",
              "remove": "rm", "install": "inst", "undo": "undo", "autokit-config": "akcfg",
              "snapshot": "snap", "logger": "log", "native-hello": "hello", "runner-guard": "guard",
-             "theme": "theme", "apps-menu": "appmenu", "cleanup": "clean"}
+             "theme": "theme", "apps-menu": "appmenu", "cleanup": "clean", "screen": "screen"}
 MARK = {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
 
 
@@ -305,6 +305,13 @@ def cmd_job(args) -> int:
             print(f"apps-menu: replaces SyncApps.swf and adds {len(params['added'])} tile pictures, backing up "
                   "the menu first; SYNC restarts. Build the restore stick now as well: "
                   "s2am job apps-menu --restore <this job>")
+    elif args.kind == "screen":
+        params, extra = theme.plan_screen(Store(), args.serial, args.screen, args.swf, args.restore, args.fetch)
+        if params.get("restore"):
+            print(f"screen: puts Ford's own {params['screen']} back (what {args.restore} replaced); SYNC restarts")
+        else:
+            print(f"screen: replaces Ford's {params['screen']}, backing it up first; SYNC restarts. "
+                  "Build the restore stick now as well: s2am job screen --restore <this job>")
     if getattr(args, "dry_run", False):
         return 0
     job = Job(serial=args.serial, kind=JOB_KINDS[args.kind], params=params)
@@ -347,7 +354,7 @@ def cmd_stick_prepare(args) -> int:
               f"even if you have to restart SYNC; pull it afterwards")
     else:
         print("in the car: insert the stick, wait for 'Install successfully completed', pull it")
-    if job.kind in apps.MENU_KINDS or job.kind in ("theme", "appmenu"):
+    if job.kind in apps.MENU_KINDS or job.kind in SWAP_KINDS:
         print("SYNC restarts after this job")
     _eject(Path(args.stick), args)
     return 0
@@ -379,7 +386,7 @@ def cmd_stick_import(args) -> int:
                 if (report / "cleanup.txt").is_file() else []
             gone, stuck = sum(x.startswith("D|") for x in listed), [x[2:] for x in listed if x.startswith("S|")]
             print(f"  removed {gone} old job folders" + (f"; still there: {stuck}" if stuck else ""))
-        if record.get("kind") in ("theme", "appmenu") and record["status"] == "applied" and report \
+        if record.get("kind") in SWAP_KINDS and record["status"] == "applied" and report \
                 and not record.get("replayed"):
             print(f"  {theme.verify(report, record['params'], record['kind'])}")
         if record.get("kind") in apps.MENU_KINDS and record["status"] == "applied":
@@ -756,6 +763,15 @@ def parser() -> argparse.ArgumentParser:
     menu.add_argument("--fetch", action="append", default=[], metavar="PATTERN",
                       help="also copy matching car files to the stick, read-only")
     menu.set_defaults(func=cmd_job)
+    screen = job_sub.add_parser("screen", parents=[common],
+                                help="one of Ford's screens, rebuilt on this Mac from the car's own "
+                                     "(sync-redesign), backed up first; undo with --restore JOB")
+    screen.add_argument("--screen", choices=SCREENS, help="which of Ford's screens")
+    screen.add_argument("--swf", type=Path, help="the new screen (built on this Mac from the car's own)")
+    screen.add_argument("--restore", metavar="JOB_ID", help="put back what that screen job replaced")
+    screen.add_argument("--fetch", action="append", default=[], metavar="PATTERN",
+                        help="also copy matching car files to the stick, read-only")
+    screen.set_defaults(func=cmd_job)
     install = job_sub.add_parser("install", parents=[common],
                                  help="copy a SyncExtPack app to the car and add it to the menu")
     install.add_argument("app", help="the app name (see s2am apps)")

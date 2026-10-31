@@ -7,6 +7,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+import zlib
 from pathlib import Path
 from unittest import mock
 
@@ -22,7 +23,19 @@ from s2am.state import Store  # noqa: E402
 
 HAVE_UPSTREAM = (ROOT.parent / "syncextpack" / "SyncExtPack").exists()
 SERIAL = "XV31M13H"
-MENU = b"FWS\x08" + bytes(range(256)) * 80  # SyncExtPack's SyncApps.swf, as far as the job can tell
+SCREEN = "Phone/PhoneHistory/PhoneHistory.swf"
+
+
+def flash(version: int, body: bytes, compressed: bool = False) -> bytes:
+    """A whole Flash file, as far as the jobs check: signature, version and the right length."""
+    length = (8 + len(body)).to_bytes(4, "little")
+    data = zlib.compress(body) if compressed else body
+    return (b"CWS" if compressed else b"FWS") + bytes([version]) + length + data
+
+
+MENU = flash(8, bytes(range(256)) * 80)  # SyncExtPack's SyncApps.swf, as far as the job can tell
+HISTORY = flash(10, bytes(range(255, -1, -1)) * 60, compressed=True)  # Ford's call history screen
+HISTORY_CE = "\\8inchSkins\\Ford\\Sync\\Apps\\Phone\\PhoneHistory\\PhoneHistory.swf"
 COLORS = {"Ford": ("0x966716", "0x45a180", "0xb3252a", "0x008cff"),
           "Lincoln": ("0x774732", "0x135D52", "0x78243E", "0x3B59A6")}
 
@@ -88,6 +101,24 @@ class Checks(unittest.TestCase):
         with self.assertRaises(ValueError):  # a theme job cannot touch the menu, nor the other way round
             swap_script(Job(SERIAL, "theme", params={"files": menu}))
 
+    def test_screen_script_writes_only_that_screens_folder(self):
+        files = {"PhoneHistory.swf": {"old": 9, "new": 10, "old_sha256": "a", "new_sha256": "b"}}
+        script = swap_script(Job(SERIAL, "screen", params={"screen": SCREEN, "files": files}))
+        self.assertIn('th = "\\8inchSkins\\Ford\\Sync\\Apps\\Phone\\PhoneHistory"', script)
+        for target in re.findall(r"Copy\([^,]+, ([^,]+), TRUE\)", script):
+            self.assertRegex(target, r'^(th|bk|out)')
+        self.assertNotRegex(script, r"\b(Delete|DelTree|RmDir|RegWrite\w*|Run)\(")
+        self.assertIn("NEED_REBOOT=True", meta(Job(SERIAL, "screen")).decode("utf-16-le"))
+        # the stick's copy of the backup is checked too, before the screen is touched
+        self.assertLess(script.index('If (FileSize(out & "\\backup\\PhoneHistory.swf") <> 9)'),
+                        script.index('Copy(jd & "\\new-PhoneHistory.swf"'))
+        for params in ({"screen": "AppConsole/AppConsole.swf", "files": {"AppConsole.swf": files["PhoneHistory.swf"]}},
+                       {"screen": "../Phone/PhoneHistory/PhoneHistory.swf", "files": files},
+                       {"screen": SCREEN, "files": {"Phone.swf": files["PhoneHistory.swf"]}},
+                       {"screen": SCREEN, "files": files, "added": {"Tiles\\a.png": {"new": 5}}}):
+            with self.subTest(params), self.assertRaises(ValueError):
+                swap_script(Job(SERIAL, "screen", params=params))
+
 
 @unittest.skipUnless(HAVE_UPSTREAM, "syncextpack fixtures not present")
 class Loop(unittest.TestCase):
@@ -105,6 +136,7 @@ class Loop(unittest.TestCase):
             self.car.put(f"\\8inchSkins\\Lincoln\\Sync\\Themes\\{name}", self.lincoln[name])
         self.car.put("\\Windows\\bthcsr.dll", b"MZ bluetooth")
         self.car.put(f"{APPS_MENU_CE}\\SyncApps.swf", MENU)
+        self.car.put(HISTORY_CE, HISTORY)
         self.stick = self.tmp / "stick"
         self.stick.mkdir()
         self.drive_log()
@@ -121,6 +153,9 @@ class Loop(unittest.TestCase):
         menu = report / "skins" / "8inchSkins" / "Ford" / "Sync" / "Apps" / "Info" / "SyncApps"
         menu.mkdir(parents=True)
         (menu / "SyncApps.swf").write_bytes(MENU)
+        screen = report / "skins" / "8inchSkins" / "Ford" / "Sync" / "Apps" / SCREEN
+        screen.parent.mkdir(parents=True)
+        screen.write_bytes(HISTORY)
         store = Store()
         job = Job(SERIAL, "log", params={"seconds": 600, "drive": True})
         store.save_job(SERIAL, job.id, {**__import__("json").loads(job.to_json()), "status": "applied"})
@@ -257,7 +292,7 @@ class Loop(unittest.TestCase):
 
     def test_new_apps_menu_then_restore(self):
         swf = self.tmp / "SyncApps-tiles.swf"
-        swf.write_bytes(b"FWS\x08" + b"tiles" * 4000)
+        swf.write_bytes(flash(8, b"tiles" * 4000))
         job, work, imported = self.run_job("apps-menu", "--swf", str(swf), "--tiles", str(self.tiles()))
         self.assertIn("verified: the new Apps menu is on the car (4 files match byte for byte)", imported)
         self.assertEqual(self.car._resolve(f"{APPS_MENU_CE}\\SyncApps.swf").read_bytes(), swf.read_bytes())
@@ -277,7 +312,7 @@ class Loop(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("not a Flash file", out)
         good = self.tmp / "good.swf"
-        good.write_bytes(b"FWS\x08" + b"x" * 100)
+        good.write_bytes(flash(8, b"x" * 100))
         (tiles / "evil name.png").write_bytes(b"\x89PNG\r\n\x1a\n")
         code, out = self.cli("job", "apps-menu", "--swf", str(good), "--tiles", str(tiles), "--serial", SERIAL,
                              "--no-pack")
@@ -296,6 +331,69 @@ class Loop(unittest.TestCase):
         self.assertIn(f'WriteFile(jd & "\\keep-{cleanup.id}"', script)
         self.assertIn('ForEach d in directories("\\SyncExtendedPack\\_s2am\\jobs\\*")', script)
         self.assertEqual(script.count("DelTree("), 1)
+
+    def test_ford_screen_then_restore(self):
+        swf = self.tmp / "PhoneHistory.swf"
+        swf.write_bytes(flash(10, b"our icons" * 1000, compressed=True))
+        job, work, imported = self.run_job("screen", "--screen", SCREEN, "--swf", str(swf))
+        self.assertIn("verified: the new screen is on the car (1 files match byte for byte)", imported)
+        self.assertEqual(self.car._resolve(HISTORY_CE).read_bytes(), swf.read_bytes())
+        self.assertEqual((Store().report(SERIAL, job.id) / "backup" / "PhoneHistory.swf").read_bytes(), HISTORY)
+        self.assertIn("NEED_REBOOT=True", (work / "meta.txt").read_bytes().decode("utf-16-le"))
+        _, _, imported = self.run_job("screen", "--restore", job.id)
+        self.assertIn("verified: the original screen is back (1 files match byte for byte)", imported)
+        self.assertEqual(self.car._resolve(HISTORY_CE).read_bytes(), HISTORY)
+
+    def test_screen_undo_still_builds_after_a_newer_drive_log(self):
+        swf = self.tmp / "PhoneHistory.swf"
+        swf.write_bytes(flash(10, b"our icons" * 1000, compressed=True))
+        job, _, _ = self.run_job("screen", "--screen", SCREEN, "--swf", str(swf))
+        later = self.tmp / "later"  # a drive log taken after the change copies our screen
+        (later / "skins" / "8inchSkins" / "Ford" / "Sync" / "Apps" / SCREEN).parent.mkdir(parents=True)
+        (later / "skins" / "8inchSkins" / "Ford" / "Sync" / "Apps" / SCREEN).write_bytes(swf.read_bytes())
+        log = Job(SERIAL, "log", params={"seconds": 600, "drive": True})
+        Store().save_job(SERIAL, log.id, {**__import__("json").loads(log.to_json()), "status": "applied"})
+        Store().save_report(SERIAL, log.id, later)
+        _, _, imported = self.run_job("screen", "--restore", job.id)
+        self.assertIn("verified: the original screen is back", imported)
+        self.assertEqual(self.car._resolve(HISTORY_CE).read_bytes(), HISTORY)
+
+    def test_another_ford_version_of_the_same_size_is_caught_and_undone_to_itself(self):
+        other = HISTORY[:-1] + bytes([HISTORY[-1] ^ 1])  # not what the Mac planned against, same size
+        self.car.put(HISTORY_CE, other)
+        swf = self.tmp / "PhoneHistory.swf"
+        swf.write_bytes(flash(10, b"our icons" * 1000, compressed=True))
+        job, _, imported = self.run_job("screen", "--screen", SCREEN, "--swf", str(swf))
+        self.assertIn("NOT verified: the backup on the stick is missing or differs", imported)
+        _, _, imported = self.run_job("screen", "--restore", job.id)
+        self.assertEqual(self.car._resolve(HISTORY_CE).read_bytes(), other)  # what was really there
+
+    def test_a_changed_car_screen_stops_the_screen_job(self):
+        swf = self.tmp / "PhoneHistory.swf"
+        swf.write_bytes(flash(10, b"our icons" * 1000, compressed=True))
+        self.car.put(HISTORY_CE, HISTORY + b"a newer Ford version")
+        _, _, imported = self.run_job("screen", "--screen", SCREEN, "--swf", str(swf))
+        self.assertIn("stale", imported)
+        self.assertEqual(self.car._resolve(HISTORY_CE).read_bytes(), HISTORY + b"a newer Ford version")
+
+    def test_screen_job_refuses_what_it_should_not_do(self):
+        for data, why in ((b"<html>", "not a Flash file"), (b"CWS\x0a", "not a Flash file"),
+                          (flash(10, b"x" * 100, compressed=True)[:-3], "not a Flash file"),
+                          (flash(8, b"x" * 100, compressed=True), "same version"),
+                          (HISTORY, "the same as the car's")):
+            swf = self.tmp / "new.swf"
+            swf.write_bytes(data)
+            code, out = self.cli("job", "screen", "--screen", SCREEN, "--swf", str(swf), "--serial", SERIAL,
+                                 "--no-pack")
+            with self.subTest(why):
+                self.assertNotEqual(code, 0)
+                self.assertIn(why, out)
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):  # not on the list
+            cli.main(["job", "screen", "--screen", "AppConsole/AppConsole.swf", "--swf", str(swf), "--serial", SERIAL])
+        theme_job, _, _ = self.run_job("theme", "--preset", "lincoln")
+        code, out = self.cli("job", "screen", "--restore", theme_job.id, "--serial", SERIAL, "--no-pack")
+        self.assertNotEqual(code, 0)
+        self.assertIn("is not a screen job", out)
 
     def test_no_drive_log_no_theme(self):
         shutil.rmtree(self.tmp / "home")

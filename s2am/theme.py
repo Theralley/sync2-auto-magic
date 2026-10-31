@@ -19,8 +19,10 @@ import fnmatch
 import hashlib
 import re
 import xml.etree.ElementTree as ElementTree
+import zlib
 from pathlib import Path
 
+from .job import SCREENS
 from .state import Store
 
 THEMES_CE = "\\8inchSkins\\Ford\\Sync\\Themes"
@@ -37,6 +39,19 @@ class ThemeError(ValueError):
 
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def whole_flash(data: bytes) -> bool:
+    """A complete Flash file: FWS or CWS, and exactly as long as its header says."""
+    if len(data) < 21 or data[:3] not in (b"FWS", b"CWS"):
+        return False
+    length = int.from_bytes(data[4:8], "little")
+    if data[:3] == b"FWS":
+        return length == len(data)
+    try:
+        return 8 + len(zlib.decompress(data[8:])) == length
+    except zlib.error:
+        return False
 
 
 def latest_report_with(store: Store, serial: str, relative: str) -> Path | None:
@@ -201,7 +216,7 @@ def plan_menu(store: Store, serial: str, swf: Path | None, tiles: Path | None, r
     if swf is None or tiles is None:
         raise ThemeError("give --swf and --tiles (or --restore JOB)")
     new = swf.read_bytes()
-    if new[:3] not in (b"FWS", b"CWS") or new[3] < 6 or len(new) > 2 * 1024 * 1024:
+    if not whole_flash(new) or new[3] < 6 or len(new) > 2 * 1024 * 1024:
         raise ThemeError(f"{swf} is not a Flash file SYNC's player can load")
     if new == old:
         raise ThemeError("the new Apps menu is the same as the car's; nothing to do")
@@ -222,10 +237,68 @@ def plan_menu(store: Store, serial: str, swf: Path | None, tiles: Path | None, r
     return params, extra
 
 
+APPS_FOLDER = "skins/8inchSkins/Ford/Sync/Apps"
+
+
+def screen_original(store: Store, serial: str, screen: str) -> bytes:
+    """The car's own copy of one of Ford's screens, from the newest drive log."""
+    if screen not in SCREENS:
+        raise ThemeError(f"s2am does not change {screen}; it may change {', '.join(SCREENS)}")
+    report = latest_report_with(store, serial, f"{APPS_FOLDER}/{screen}")
+    if report is None:
+        raise ThemeError("no copy of that screen yet: run `s2am job logger --drive` first")
+    return (report / APPS_FOLDER / screen).read_bytes()
+
+
+def replaced_screen(store: Store, serial: str, target: dict) -> bytes:
+    """What a screen job really replaced: the backup its stick brought back (the car's own bytes,
+    even if they were not what the Mac planned against), else a drive log's copy with the hash
+    the job recorded, from any drive log, not only the newest."""
+    screen = target["params"]["screen"]
+    name = screen.rsplit("/", 1)[1]
+    report = store.report(serial, target["id"])
+    backup = report / "backup" / name if report else None
+    if backup and backup.is_file() and backup.stat().st_size == target["params"]["files"][name]["old"]:
+        return backup.read_bytes()
+    want = target["params"]["files"][name]["old_sha256"]
+    for record in reversed(store.jobs(serial)):
+        copy = store.report(serial, record["id"])
+        copy = copy / APPS_FOLDER / screen if copy else None
+        if copy and copy.is_file() and sha256(copy.read_bytes()) == want:
+            return copy.read_bytes()
+    raise ThemeError(f"no copy of what {target['id']} replaced: import its stick first, or keep the drive log")
+
+
+def plan_screen(store: Store, serial: str, screen: str | None, swf: Path | None, restore: str | None,
+                fetch: list[str]) -> tuple[dict, dict[str, bytes]]:
+    """(job params, job folder files) for a screen job: one of Ford's screens replaced by a
+    version built on this Mac from the car's own (sync-redesign), or (``restore``) Ford's back."""
+    if restore:
+        target = store.job(serial, restore)
+        if target.get("kind") != "screen" or target["params"].get("restore"):
+            raise ThemeError(f"{restore} is not a screen job")
+        screen = target["params"]["screen"]
+        old, name = replaced_screen(store, serial, target), screen.rsplit("/", 1)[1]
+        return ({"restore": restore, "screen": screen, "files": {name: len(old)}, "sha256": {name: sha256(old)},
+                 "fetch": fetch_list(store, serial, fetch)},
+                {f"orig-{name}": old})
+    if screen is None or swf is None:
+        raise ThemeError("give --screen and --swf (or --restore JOB)")
+    old, new, name = screen_original(store, serial, screen), swf.read_bytes(), screen.rsplit("/", 1)[1]
+    if not whole_flash(new) or new[3] != old[3] or len(new) > 2 * 1024 * 1024:
+        raise ThemeError(f"{swf} is not a Flash file of the same version as Ford's {name}")
+    if new == old:
+        raise ThemeError("the new screen is the same as the car's; nothing to do")
+    params = {"screen": screen, "fetch": fetch_list(store, serial, fetch),
+              "files": {name: {"old": len(old), "new": len(new), "old_sha256": sha256(old),
+                               "new_sha256": sha256(new)}}}
+    return params, {f"new-{name}": new}
+
+
 def verify(report: Path, params: dict, kind: str = "theme") -> str:
     """After import: did the car end up with exactly the planned files (and a whole backup)?"""
     applied = report / "applied"
-    name = "theme" if kind == "theme" else "Apps menu"
+    name = {"theme": "theme", "appmenu": "Apps menu"}.get(kind, "screen")
     if params.get("restore"):
         expected = params["sha256"]
         what = f"the original {name} is back"

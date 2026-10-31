@@ -12,7 +12,8 @@ import shutil
 from pathlib import Path
 
 from .job import (AUTOKIT_CE, AUTOKIT_LOGS, AUTOKIT_MODULES, BACKUP_DIR, GUARD_LOG, INVENTORY_ROOT, MENU_XML,
-                  PHASE_DIR, PLUGINS_MASK, REPORTS_DIR, SWAPS, TOOLS_CE, Job, ce_path)
+                  PHASE_DIR, PLUGINS_MASK, REPORTS_DIR, SWAP_KINDS, TOOLS_CE, Job, ce_path,
+                  swap_target)
 
 
 class PowerCut(Exception):
@@ -108,7 +109,7 @@ class FakeCar:
             return
         if job.kind == "guard" and not self._runner_guard(out, job):
             return
-        if job.kind in SWAPS and not self._swap(out, job):
+        if job.kind in SWAP_KINDS and not self._swap(out, job):
             return
         if job.kind == "clean":
             jobs = self._resolve(ce_path(job.job_dir)).parent
@@ -194,7 +195,7 @@ class FakeCar:
         target.write_bytes(data)
 
     def _swap(self, out: Path, job: Job) -> bool:
-        p, th = job.params, self._resolve(SWAPS[job.kind][0])
+        p, th = job.params, self._resolve(swap_target(job.kind, job.params)[0])
         jd = self._resolve(ce_path(job.job_dir))
         files, added = p["files"], p.get("added") or {}
 

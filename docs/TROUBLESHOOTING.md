@@ -100,6 +100,12 @@ That brought SYNC back every time. Last resort: engine off, lock the car, wait 1
   `Tiles\` and do nothing. The rest of SYNC is not affected: the Apps menu loads only when
   you open Apps.
 
+### A rebuilt Ford screen does not open or looks wrong
+- **Fix:** insert its undo stick (`s2am job screen --restore <job>`). It carries Ford's original
+  screen itself; SYNC restarts with it. Only screens SYNC loads when they are opened are ever
+  changed (the call history first), so the rest of SYNC, the climate and the camera are not
+  affected.
+
 ### An app in the Apps menu does nothing when tapped
 - **Seen:** 2026-10-30. A previous owner's MirrorLink, Video Player, Navitel and Reboot showed
   in the menu, but nothing happened on tap: no error, no freeze.

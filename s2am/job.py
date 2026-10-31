@@ -661,6 +661,22 @@ APPS_MENU_CE = "\\8inchSkins\\Ford\\Sync\\Apps\\Info\\SyncApps"  # the Apps menu
 SWAPS = {"theme": (THEMES_CE, THEME_FILES, "theme"),
          "appmenu": (APPS_MENU_CE, ("SyncApps.swf",), "Apps menu")}
 ADDED = re.compile(r"Tiles\\[A-Za-z0-9_-]{1,40}\.png")  # files an Apps menu job may add
+FORD_APPS_CE = "\\8inchSkins\\Ford\\Sync\\Apps"
+# Ford's own screens a screen job may replace, one file each. Only screens SYNC loads when they
+# are opened (never the start-up ones: the four main areas, Home and the frame).
+SCREENS = ("Phone/PhoneHistory/PhoneHistory.swf",)
+SWAP_KINDS = (*SWAPS, "screen")
+
+
+def swap_target(kind: str, params: dict) -> tuple[str, tuple[str, ...], str]:
+    """(the one folder a swap job writes to, the files it may replace there, what it is called)."""
+    if kind == "screen":
+        screen = params.get("screen")
+        if screen not in SCREENS:
+            raise ValueError(f"not a screen s2am may change: {screen!r}")
+        folder, name = screen.rsplit("/", 1)
+        return f"{FORD_APPS_CE}\\{folder.replace('/', chr(92))}", (name,), "screen"
+    return SWAPS[kind]
 
 
 def _flat(relative: str) -> str:
@@ -670,15 +686,16 @@ def _flat(relative: str) -> str:
 def swap_script(job: Job) -> str:
     """Replace a few of SYNC's files (or put a swap job's originals back); SYNC restarts.
 
-    Theme jobs swap the five files in THEMES_CE, Apps menu jobs SyncApps.swf in APPS_MENU_CE
-    and add tile pictures under it. The job first checks that the car still has the files
-    the Mac planned against (Theme.XML by content, the rest by size), backs them up on the
-    car and copies that backup onto the stick, copies the new ones in and checks their sizes,
-    copying the backup back if one did not copy whole. What it applied goes back to the stick,
-    so the Mac can compare every byte after import. The restore carries the originals itself.
+    Theme jobs swap the five files in THEMES_CE, Apps menu jobs SyncApps.swf in APPS_MENU_CE and
+    add tile pictures under it, screen jobs one of Ford's screens listed in SCREENS. The job
+    first checks that the car still has the files the Mac planned against (Theme.XML by content,
+    the rest by size), backs them up on the car and copies that backup onto the stick, copies
+    the new ones in and checks their sizes, copying the backup back if one did not copy whole.
+    What it applied goes back to the stick, so the Mac can compare every byte after import. The
+    restore carries the originals itself.
     """
     p = job.params
-    folder, allowed, what = SWAPS[job.kind]
+    folder, allowed, what = swap_target(job.kind, p)
     files, added = p.get("files") or {}, p.get("added") or {}
     if not files or any(name not in allowed for name in files):
         raise ValueError(f"invalid {what} files {sorted(files)!r}")
@@ -739,10 +756,11 @@ def swap_script(job: Job) -> str:
         for name in files:  # the stick gets the car's backup, so the Mac checks what a restore would use
             lines += [f'Copy(th & "\\{name}", bk & "\\{name}", TRUE)',
                       f'Copy(bk & "\\{name}", out & "\\backup\\{name}", TRUE)']
-        for name, f in files.items():
-            lines += [f'If (FileSize(bk & "\\{name}") <> {f["old"]})',
-                      *_stop("backup-failed.txt", f"could not back up the {what}; nothing changed", "  "),
-                      "EndIf"]
+        for name, f in files.items():  # both copies whole, the car's and the stick's, before any change
+            for copy in (f'bk & "\\{name}"', f'out & "\\backup\\{name}"'):
+                lines += [f'If (FileSize({copy}) <> {f["old"]})',
+                          *_stop("backup-failed.txt", f"could not back up the {what}; nothing changed", "  "),
+                          "EndIf"]
         for sub in sorted({name.rsplit("\\", 1)[0] for name in added}):
             lines.append(f'MkDir(th & "\\{sub}")')
         lines += [f'Copy(jd & "\\add-{_flat(name)}", th & "\\{name}", TRUE)' for name in added]
@@ -821,10 +839,11 @@ SCRIPTS = {
     "guard": guard_script,
     "theme": swap_script,
     "appmenu": swap_script,
+    "screen": swap_script,
     "clean": cleanup_script,
 }
 MENU_CHANGING = ("rm", "undo", "inst")  # SYNC reads SyncApps.xml at start, so these restart it
-RESTARTING = MENU_CHANGING + ("theme", "appmenu")  # and its theme and Apps menu
+RESTARTING = MENU_CHANGING + SWAP_KINDS  # and its theme, Apps menu and screens
 
 
 def meta(job: Job) -> bytes:

@@ -252,3 +252,28 @@ after the Apps menu test. Nothing has gone to the car. Order and checklist (Swed
 - 32 GB stick: step 1, `theme-fd69` (the Night colours); `install.bin` read back identical.
 - 2 GB stick, reformatted by Rasmus: the read-only check passes. It now carries the undo,
   `theme-78ed`; `install.bin` identical after writing and again after a remount.
+
+## Same day: R3a prepared, the first of Ford's own screens
+
+`s2am job screen` replaces one of Ford's screens from an allowlist that holds only screens SYNC
+loads when they are opened. First: the call history (`Phone\PhoneHistory\PhoneHistory.swf`),
+built by sync-redesign's `tools/build_phone_history.py` from the car's own copy: eight pictures
+replaced by our icons, every other tag byte for byte. It answers whether SYNC accepts a changed
+Ford file.
+
+| Job | install.bin | Rehearsal |
+|---|---|---|
+| `screen-78f6`: our call history screen | 273,888 bytes | verified, 1 file byte for byte |
+| `screen-e9a6`: undo | 271,144 bytes | verified, Ford's screen back |
+
+The rehearsal ran after the other prepared steps, on the same simulated car. A Codex review of
+the screen job found no way to write outside the screen's folder, and four things now fixed:
+- the undo takes what the job really replaced (the backup its stick brought back), else any
+  drive log's copy with the recorded hash, so a newer drive log no longer blocks it, and a
+  different Ford version of the same size is put back as it was;
+- every swap job checks the stick's copy of the backup as well as the car's before it changes
+  anything (steps 1 to 4 were built before this and keep the script proven in the car);
+- the new screen must be a whole Flash file (its length as its header says), not only start
+  like one.
+
+Tests: 236 pass.
