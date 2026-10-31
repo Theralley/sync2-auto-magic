@@ -321,3 +321,35 @@ Rasmus: calls sound boxy, with no bass (narrowband Bluetooth calls?). See
 - A Codex review found seven things, all fixed with tests: secrets under ordinary names, a stale
   completion file after a cut-short run, the Accept command's coding field, failed links counted,
   both size caps, write failures, and a CVSD-only choice. Tests pass.
+
+# 2026-10-31, evening: the first bundle in the car
+
+Rasmus ran both sticks the same evening. Both imported on 2026-11-01:
+
+| Stick | Run | Import |
+|---|---|---|
+| 32 GB, `bundle-1c35` | 20:55 (car clock), MortScript 4.3.0.15 | every part applied and verified: Night 5 files, SyncExtPack's menu back, our menu 11 files, R3b 1 file, all byte for byte; cleanup removed 20 old job folders and kept the bundle's own |
+| 2 GB, `bundle-8737` | 23:49 | every part applied and verified: Ford's call history, SyncExtPack's menu and Ford's theme are back, all byte for byte |
+
+What Rasmus saw:
+- After the change stick: **only the Apps menu looked different** (the Swedish names). The Night
+  colours are on the car but barely visible: the glow is dimmer and the area buttons a little
+  stronger, nothing else (Theme.XML colours only the glow and the area buttons, as with
+  Lincoln's colours). Whether he opened the call history (R3b) is still to be asked.
+- **The changed Ford file did not break SYNC:** with R3b on the car SYNC kept running, and the
+  undo stick ran normally afterwards.
+- Taking the stick out and in again did not install anything. **Expected:** SyncExtPack renames a
+  used `install.bin` to `installed.bin`, and every part's done marker stops a second run. A stick
+  needs a new job for each visit.
+- After the undo, AutoKit was slow to start once, then worked.
+
+Second visit prepared (on Rasmus's attempt to install again), built fresh from the same files and
+rehearsed on a simulated SYNC in the car's state after the undo (Ford's theme, SyncExtPack's menu,
+Ford's call history, our Swedish tiles left in `Tiles`):
+
+| Job | Parts, in order | install.bin | Rehearsal |
+|---|---|---|---|
+| `bundle-5dbf` | Night (`theme-ff1b`), our menu with Swedish tiles (`appmenu-fc33`), R3b (`screen-b0eb`); each plans the same change as before | 1,938,704 bytes | every part verified byte for byte |
+| `bundle-9ea6` | undo all: `screen-da40`, `appmenu-93e9`, `theme-9156` | 1,838,360 bytes | after the bundle: the car as before |
+
+Both sticks read back identical after writing and after a remount.

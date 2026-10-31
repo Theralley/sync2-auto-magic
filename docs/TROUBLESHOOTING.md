@@ -146,6 +146,8 @@ That brought SYNC back every time. Last resort: engine off, lock the car, wait 1
 - **Check:** `s2am stick import` (pending, or processed?). Is `SyncExtPack/install.bin` on the stick?
 - **Fix:** with no UpdateService, do the first install (README *Quick start*, the wallpaper
   step). A used stick: prepare a new job; `stick prepare` moves the old files aside.
+- **Seen:** 2026-10-31, the first bundle: taken out and put back, the used stick did nothing.
+  That is the protection working, not a fault.
 
 ### SYNC restarted after a job
 - **Expected** for jobs that change the Apps menu (remove, install, undo) and for the app pack.
