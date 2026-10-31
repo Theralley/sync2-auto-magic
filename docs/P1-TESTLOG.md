@@ -335,7 +335,11 @@ What Rasmus saw:
 - After the change stick: **only the Apps menu looked different** (the Swedish names). The Night
   colours are on the car but barely visible: the glow is dimmer and the area buttons a little
   stronger, nothing else (Theme.XML colours only the glow and the area buttons, as with
-  Lincoln's colours). Whether he opened the call history (R3b) is still to be asked.
+  Lincoln's colours).
+- **The call history (R3b) looked unchanged** when Rasmus opened it. He does not remember how
+  many rows it showed, or whether SYNC had restarted first, so it is open whether SYNC drew our
+  screen. Theme.XML and the call history are both read only after a restart; the Apps menu is
+  read when Apps opens. The next visit decides it, with a photo after the restart.
 - **The changed Ford file did not break SYNC:** with R3b on the car SYNC kept running, and the
   undo stick ran normally afterwards.
 - Taking the stick out and in again did not install anything. **Expected:** SyncExtPack renames a
