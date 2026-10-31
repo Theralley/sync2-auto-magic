@@ -7,9 +7,9 @@
  * on SYNC (files.txt) and copies Ford's screens, \8inchSkins, to <folder>\skins, with
  * the size and SHA-256 of each file (skins.txt). Every 10 s it logs how busy the
  * processor is, the free memory, and the programs that used the processor most. Every
- * second it copies the screen; a picture that has changed and then held still for a
- * second (or every 30 s while it keeps changing, like a moving map) is saved as a BMP
- * in <folder>\screens.
+ * 10 s it copies the screen; a picture that has changed and then held still until the
+ * next look (or every 30 s while it keeps changing, like a moving map) is saved as a BMP
+ * in <folder>\screens. Only the layer under SYNC's Flash screens can be copied this way.
  *
  * It only reads from the car: everything it writes goes to the stick. Its threads run
  * below normal priority, so SYNC's own work always comes first. It stops after
@@ -27,6 +27,7 @@
 #define LOAD_EVERY_MS 10000
 #define HEARTBEAT_MS 60000
 #define SHOT_EVERY_MS 30000
+#define LOOK_EVERY_MS 10000  /* a screen copy costs about 13% of the processor at once a second */
 #define MAX_SHOTS 3000
 #define MAX_LINES 400000
 #define DUMP_RESERVE_MB 600  /* the copy of the screens leaves this much for screenshots */
@@ -1041,7 +1042,7 @@ static void look_at_screen(DWORD now)
 
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int show)
 {
-    DWORD seconds = 0, started, last_load, last_heartbeat, idle_before = 0, reported_files = 0;
+    DWORD seconds = 0, started, last_load, last_look, last_heartbeat, idle_before = 0, reported_files = 0;
     BOOL idle_known, screen_ok, listing_reported = FALSE, dump_reported = FALSE;
     WCHAR *at = command, path[MAX_PATH];
     HANDLE worker;
@@ -1084,7 +1085,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
     if (in_folder(path, L"\\screens"))
         CreateDirectoryW(path, NULL);
     screen_ok = screen_setup();
-    begin(screen_ok ? "screen|copying the screen every second" : "screen|cannot copy the screen");
+    begin(screen_ok ? "screen|copying the screen every 10 s" : "screen|cannot copy the screen");
     end_line();
     worker = CreateThread(NULL, 0, dump, NULL, 0, NULL);
     begin(worker ? "files|listing every file, then copying \\8inchSkins" : "files|could not start");
@@ -1093,12 +1094,15 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
     if (idle_known)
         idle_before = idle_time();
     last_load = last_heartbeat = started;
+    last_look = started - LOOK_EVERY_MS;  /* the first look at once */
     flush();
 
     for (;;) {
         DWORD now = GetTickCount();
-        if (screen_ok)
+        if (screen_ok && now - last_look >= LOOK_EVERY_MS) {
             look_at_screen(now);
+            last_look = now;
+        }
         if (now - last_load >= LOAD_EVERY_MS) {
             DWORD idle_now = idle_known ? idle_time() : 0;
             sample_load(now - last_load, idle_now - idle_before, idle_known);

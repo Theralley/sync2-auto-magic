@@ -12,7 +12,7 @@ import shutil
 from pathlib import Path
 
 from .job import (AUTOKIT_CE, AUTOKIT_LOGS, AUTOKIT_MODULES, BACKUP_DIR, GUARD_LOG, INVENTORY_ROOT, MENU_XML,
-                  PHASE_DIR, PLUGINS_MASK, REPORTS_DIR, TOOLS_CE, Job, ce_path)
+                  PHASE_DIR, PLUGINS_MASK, REPORTS_DIR, THEMES_CE, TOOLS_CE, Job, ce_path)
 
 
 class PowerCut(Exception):
@@ -108,6 +108,8 @@ class FakeCar:
             return
         if job.kind == "guard" and not self._runner_guard(out, job):
             return
+        if job.kind == "theme" and not self._theme(out, job):
+            return
         if job.kind == "snap":
             self._snapshot(out)
         if job.kind == "log":
@@ -179,6 +181,57 @@ class FakeCar:
             data = data[: len(data) // 2]
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
+
+    def _theme(self, out: Path, job: Job) -> bool:
+        p, th = job.params, self._resolve(THEMES_CE)
+        jd = self._resolve(ce_path(job.job_dir))
+        files = p["files"]
+
+        def stop(marker: str) -> bool:
+            (out / marker).write_text(marker)
+            return False
+        if not th.is_dir():
+            return stop("missing.txt")
+        if p.get("restore"):
+            if any((jd / f"orig-{n}").stat().st_size != size for n, size in files.items()):
+                return stop("payload-bad.txt")
+            for name in files:
+                self._copy(jd / f"orig-{name}", th / name)
+            if any((th / n).stat().st_size != size for n, size in files.items()):
+                return stop("copy-failed.txt")
+            done = "theme-restored.txt"
+        else:
+            if (th / "Theme.XML").read_bytes() != (jd / "old-Theme.XML").read_bytes():
+                return stop("stale.txt")
+            if any((th / n).stat().st_size != f["old"] for n, f in files.items()):
+                return stop("stale.txt")
+            if any((jd / f"new-{n}").stat().st_size != f["new"] for n, f in files.items()):
+                return stop("payload-bad.txt")
+            backup = self._resolve(f"{BACKUP_DIR}\\{job.id}")
+            if backup.is_dir():
+                return stop("stale.txt")  # this job started once before
+            (out / "backup").mkdir()
+            for name in files:
+                self._copy(th / name, backup / name)
+                shutil.copyfile(backup / name, out / "backup" / name)  # the car's backup, onto the stick
+            if any((backup / n).stat().st_size != f["old"] for n, f in files.items()):
+                return stop("backup-failed.txt")
+            for name in files:
+                self._copy(jd / f"new-{name}", th / name)
+            if any((th / n).stat().st_size != f["new"] for n, f in files.items()):
+                for name in files:
+                    self._copy(backup / name, th / name)
+                return stop("copy-failed.txt")
+            done = "theme-applied.txt"
+        (out / "applied").mkdir()
+        for name in files:
+            shutil.copyfile(th / name, out / "applied" / name)
+        (out / done).write_text(job.id)
+        for path in p.get("fetch") or []:
+            if self.exists(path):
+                (out / "fetched").mkdir(exist_ok=True)
+                shutil.copyfile(self._resolve(path), out / "fetched" / path.strip("\\").replace("\\", "_"))
+        return True
 
     def _change_menu(self, out: Path, job: Job) -> bool:
         """The remove/undo scripts' effect, step by step; False when the script stops early."""

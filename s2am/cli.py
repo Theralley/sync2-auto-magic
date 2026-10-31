@@ -32,7 +32,7 @@ import xml.etree.ElementTree as ElementTree
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import apps, autokit, bootstrap, diskcheck, native, pack, stick, window
+from . import apps, autokit, bootstrap, diskcheck, native, pack, stick, theme, window
 from .container import REPO, ContainerError
 from .job import (AUTOKIT_CE, AUTOKIT_LANGS, AUTOKIT_MODULES, DRIVE_SECONDS, SERIAL, Job, autokit_lang_file,
                   stage)
@@ -67,7 +67,8 @@ def cmd_window(args) -> int:
 
 JOB_KINDS = {"inventory": "inv", "autokit-stock": "akstock", "autokit-patched": "akpatch",
              "remove": "rm", "install": "inst", "undo": "undo", "autokit-config": "akcfg",
-             "snapshot": "snap", "logger": "log", "native-hello": "hello", "runner-guard": "guard"}
+             "snapshot": "snap", "logger": "log", "native-hello": "hello", "runner-guard": "guard",
+             "theme": "theme"}
 MARK = {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
 
 
@@ -286,6 +287,15 @@ def cmd_job(args) -> int:
             extra = {"s2amrun.exe": native.binary("s2amrun.exe")}
             if len(extra["s2amrun.exe"]) == stock:  # the job tells them apart by size
                 raise ValueError("the guard is exactly the size of the stock runner; change s2amrun.c")
+    elif args.kind == "theme":
+        params, extra = theme.plan(Store(), args.serial, args.preset, args.source, args.restore, args.fetch)
+        if params.get("restore"):
+            print(f"theme: puts back what {args.restore} replaced ({', '.join(params['files'])}); SYNC restarts")
+        else:
+            print(f"theme: replaces {', '.join(params['files'])} in {theme.THEMES_CE}, backing them up first; "
+                  "SYNC restarts. Build the restore stick now as well: s2am job theme --restore <this job>")
+        if params.get("fetch"):
+            print(f"  and copies {len(params['fetch'])} car files to the stick for study (read-only)")
     if getattr(args, "dry_run", False):
         return 0
     job = Job(serial=args.serial, kind=JOB_KINDS[args.kind], params=params)
@@ -328,7 +338,7 @@ def cmd_stick_prepare(args) -> int:
               f"even if you have to restart SYNC; pull it afterwards")
     else:
         print("in the car: insert the stick, wait for 'Install successfully completed', pull it")
-    if job.kind in apps.MENU_KINDS:
+    if job.kind in apps.MENU_KINDS or job.kind == "theme":
         print("SYNC restarts after this job")
     _eject(Path(args.stick), args)
     return 0
@@ -355,6 +365,8 @@ def cmd_stick_import(args) -> int:
                   "  NOT verified: hello.exe wrote nothing; native code may not run here")
         if record.get("kind") == "guard" and record["status"] == "applied":
             print(f"  {_verify_guard(store, record)}")
+        if record.get("kind") == "theme" and record["status"] == "applied" and report and not record.get("replayed"):
+            print(f"  {theme.verify(report, record['params'])}")
         if record.get("kind") in apps.MENU_KINDS and record["status"] == "applied":
             verdict = _verify_menu(store, record)
             print(f"  {verdict}")
@@ -365,12 +377,12 @@ def cmd_stick_import(args) -> int:
 
 
 STOP_HINTS = {
-    "stale": ": the car's menu changed since the job was planned. Nothing changed; run an "
-             "inventory, then plan again",
+    "stale": ": the car's files changed since the job was planned. Nothing changed; run an "
+             "inventory (or a drive log, for a theme), then plan again",
     "busy": ": the app was running and nothing changed. UpdateService used up the stick anyway: "
             "restart SYNC, run `s2am stick prepare` with the same job again, then insert it",
     "failed": ": the job stopped before deleting anything; its report says why "
-              "(copy-failed means the old menu was put back)",
+              "(copy-failed: the old files were copied back; for a theme, run its restore stick to be sure)",
 }
 
 
@@ -706,6 +718,17 @@ def parser() -> argparse.ArgumentParser:
                                     "runner for --off)")
     guard.add_argument("--off", action="store_true", help="put the original runner back")
     guard.set_defaults(func=cmd_job)
+    colours = job_sub.add_parser("theme", parents=[common],
+                                 help="change SYNC's colours (Theme.XML and the four area gradients), "
+                                      "backed up first; undo with --restore JOB")
+    colours.add_argument("--preset", choices=theme.PRESETS, help="lincoln: the Lincoln skin's colours")
+    colours.add_argument("--from", dest="source", type=Path,
+                         help="a folder with your own Theme.XML and/or yellow/green/red/blue.bmp")
+    colours.add_argument("--restore", metavar="JOB_ID", help="put back what that theme job replaced")
+    colours.add_argument("--fetch", action="append", default=[], metavar="PATTERN",
+                         help="also copy matching car files to the stick, read-only "
+                              "(e.g. '\\Windows\\bt*.dll'); matched against the last drive log")
+    colours.set_defaults(func=cmd_job)
     install = job_sub.add_parser("install", parents=[common],
                                  help="copy a SyncExtPack app to the car and add it to the menu")
     install.add_argument("app", help="the app name (see s2am apps)")

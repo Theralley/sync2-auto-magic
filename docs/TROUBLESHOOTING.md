@@ -88,6 +88,12 @@ That brought SYNC back every time. Last resort: engine off, lock the car, wait 1
   `ffmpeg -i in.mp4 -vf scale=800:-2 -c:v libx264 -profile:v baseline -c:a aac out.mp4`
   (`-2` keeps the proportions).
 
+### The colours look wrong after a theme job, or SYNC acts up
+- **Fix:** insert the theme job's undo stick (`s2am job theme --restore <job>`, built together
+  with the change). It carries Ford's original files itself and SYNC restarts with them.
+- The full ladder, down to reinstalling SYNC 3.10, is in
+  [sync-redesign's RECOVERY.md](https://github.com/Theralley/sync-redesign/blob/main/docs/RECOVERY.md).
+
 ### An app in the Apps menu does nothing when tapped
 - **Seen:** 2026-10-30. A previous owner's MirrorLink, Video Player, Navitel and Reboot showed
   in the menu, but nothing happened on tap: no error, no freeze.

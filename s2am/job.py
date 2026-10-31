@@ -636,6 +636,110 @@ def logger_script(job: Job) -> str:
     return _script(lines + _inventory() + _footer(job))
 
 
+THEMES_CE = "\\8inchSkins\\Ford\\Sync\\Themes"  # the only folder a theme job writes to
+THEME_FILES = ("Theme.XML", "yellow.bmp", "green.bmp", "red.bmp", "blue.bmp")
+
+
+def _fetch(job: Job) -> list[str]:
+    """Read-only copies of car files into the report (``fetched``), for study on the Mac."""
+    paths = job.params.get("fetch") or []
+    if len(paths) > 150:
+        raise ValueError("too many files to fetch")
+    lines = ['MkDir(out & "\\fetched")'] if paths else []
+    for path in paths:
+        if not path.startswith("\\") or path.lower().startswith("\\usb") or ".." in path:
+            raise ValueError(f"invalid fetch path {path!r}")
+        flat = path.strip("\\").replace("\\", "_")
+        lines += [f"If (FileExists({_quote(path)}))",
+                  f'  Copy({_quote(path)}, out & "\\fetched\\{flat}", TRUE)',
+                  "EndIf"]
+    return lines
+
+
+def theme_script(job: Job) -> str:
+    """Change SYNC's colours (or put a theme job's backup back); SYNC restarts to load them.
+
+    The job writes only the five files in THEMES_CE. It first checks that the car still has
+    the files the Mac planned against (Theme.XML by content, the pictures by size), backs
+    them up on the car and onto the stick, copies the new ones in and checks their sizes,
+    putting the backup straight back if one did not copy whole. What it applied goes back to
+    the stick, so the Mac can compare every byte after import.
+    """
+    p = job.params
+    files = p.get("files") or {}
+    if not files or any(name not in THEME_FILES for name in files):
+        raise ValueError(f"invalid theme files {sorted(files)!r}")
+    lines = _header(job) + [
+        f"th = {_quote(THEMES_CE)}",
+        f"jd = {_quote(ce_path(job.job_dir))}",
+        "If (NOT DirExists(th))",
+        *_stop("missing.txt", "the car has no Ford theme folder; nothing changed", "  "),
+        "EndIf",
+    ]
+    if p.get("restore"):
+        if not JOB_ID.fullmatch(p["restore"]):
+            raise ValueError(f"invalid restore target {p['restore']!r}")
+        # The originals travel in the job folder (checked against the theme job's record on the
+        # Mac), so the undo works even if the car's own backup is gone or damaged.
+        for name, size in files.items():
+            lines += [f'If (FileSize(jd & "\\orig-{name}") <> {_length(size)})',
+                      *_stop("payload-bad.txt", "the job's original theme files are incomplete; nothing changed",
+                             "  "),
+                      "EndIf"]
+        lines += [f'Copy(jd & "\\orig-{name}", th & "\\{name}", TRUE)' for name in files]
+        lines.append("ok = 1")
+        for name, size in files.items():
+            lines += [f'If (FileSize(th & "\\{name}") <> {size})', "  ok = 0", "EndIf"]
+        lines += ["If (ok = 0)",
+                  *_stop("copy-failed.txt", "a file did not copy back whole; run the restore stick again",
+                         "  "),
+                  "EndIf"]
+        done = "theme-restored.txt"
+    else:
+        lines += ['If (ReadFile(th & "\\Theme.XML") ne ReadFile(jd & "\\old-Theme.XML"))',
+                  *_stop("stale.txt", "the car's theme is not the one the Mac planned against; nothing changed",
+                         "  "),
+                  "EndIf"]
+        for name, f in files.items():
+            lines += [f'If (FileSize(th & "\\{name}") <> {_length(f["old"])})',
+                      *_stop("stale.txt", f"{name} is not the one the Mac planned against; nothing changed",
+                             "  "),
+                      "EndIf",
+                      f'If (FileSize(jd & "\\new-{name}") <> {_length(f["new"])})',
+                      *_stop("payload-bad.txt", "the job's theme files are incomplete; nothing changed", "  "),
+                      "EndIf"]
+        lines += ['MkDir("\\SyncExtendedPack\\_s2am")',
+                  f"MkDir({_quote(BACKUP_DIR)})",
+                  f"bk = {_quote(BACKUP_DIR + chr(92) + job.id)}",
+                  "If (DirExists(bk))",  # a run that was cut short: its backup may hold a mixed theme
+                  *_stop("stale.txt", "this job started once before; use its restore stick; nothing changed", "  "),
+                  "EndIf",
+                  "MkDir(bk)",
+                  'MkDir(out & "\\backup")']
+        for name in files:  # the stick gets the car's backup, so the Mac checks what a restore would use
+            lines += [f'Copy(th & "\\{name}", bk & "\\{name}", TRUE)',
+                      f'Copy(bk & "\\{name}", out & "\\backup\\{name}", TRUE)']
+        for name, f in files.items():
+            lines += [f'If (FileSize(bk & "\\{name}") <> {f["old"]})',
+                      *_stop("backup-failed.txt", "could not back up the theme; nothing changed", "  "),
+                      "EndIf"]
+        lines += [f'Copy(jd & "\\new-{name}", th & "\\{name}", TRUE)' for name in files]
+        lines.append("ok = 1")
+        for name, f in files.items():
+            lines += [f'If (FileSize(th & "\\{name}") <> {f["new"]})', "  ok = 0", "EndIf"]
+        lines += ["If (ok = 0)",
+                  *[f'  Copy(bk & "\\{name}", th & "\\{name}", TRUE)' for name in files],
+                  *_stop("copy-failed.txt", "a new theme file did not copy whole; the backup was copied back, "
+                         "but run the restore stick to be sure",
+                         "  "),
+                  "EndIf"]
+        done = "theme-applied.txt"
+    lines += ['MkDir(out & "\\applied")',
+              *[f'Copy(th & "\\{name}", out & "\\applied\\{name}", TRUE)' for name in files],
+              f'WriteFile(out & "\\{done}", {_quote(job.id)})']
+    return _script(lines + _fetch(job) + _inventory() + _footer(job))
+
+
 def hello_script(job: Job) -> str:
     """Prove compiled code runs on this SYNC 2: hello.exe writes the CE version and exits."""
     lines = _header(job) + [
@@ -656,8 +760,10 @@ SCRIPTS = {
     "log": logger_script,
     "hello": hello_script,
     "guard": guard_script,
+    "theme": theme_script,
 }
 MENU_CHANGING = ("rm", "undo", "inst")  # SYNC reads SyncApps.xml at start, so these restart it
+RESTARTING = MENU_CHANGING + ("theme",)  # and its theme
 
 
 def meta(job: Job) -> bytes:
@@ -667,7 +773,7 @@ def meta(job: Job) -> bytes:
         "VERSION": f"s2am {job.id} for: {job.serial}",
         "POST_APP": f"{job.job_dir}/{RUNNER_NAME}.exe",
     }
-    if job.kind in MENU_CHANGING:
+    if job.kind in RESTARTING:
         entries["NEED_REBOOT"] = "True"
     return "".join(f"{k}={v}\n" for k, v in entries.items()).encode("utf-16-le")
 
