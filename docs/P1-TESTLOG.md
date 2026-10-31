@@ -223,3 +223,24 @@ plus a read-only fetch of the Bluetooth files); the 2 GB stick its undo,
   the import now copies contents only.
 - `AudioConfig.cfg` is about navigation voice prompts, not calls, so the call-sound question
   is still open.
+
+# 2026-10-31: jobs prepared for the next car test
+
+Built and rehearsed on a simulated SYNC that holds the car's own files (drive log) in the state
+after the Apps menu test. Nothing has gone to the car. Order and checklist (Swedish):
+[sync-redesign's BILTEST.md](https://github.com/Theralley/sync-redesign/blob/main/docs/BILTEST.md).
+
+| # | Job | install.bin | Rehearsal |
+|---|---|---|---|
+| 1 | `theme-fd69`: the Night colours | 1,708,256 bytes | verified, 5 files byte for byte |
+| 2 | `appmenu-83d5`: SyncExtPack's own Apps menu back | 183,120 bytes | verified, the original is back |
+| 3 | `appmenu-1e46`: our Apps menu with Swedish tiles | 275,480 bytes | verified, 11 files byte for byte |
+| 4 | `clean-0831`: s2am's old job folders | 161,536 bytes | only its own folder left; every backup kept |
+| undo 3 | `appmenu-1742` | 183,120 bytes | after the cleanup: verified, the original is back |
+| undo 1 | `theme-78ed` | 1,703,040 bytes | after the cleanup: verified, Ford's theme back |
+
+- Steps 2 and 3 belong together: an Apps menu job is checked against SyncExtPack's own menu (by
+  size), so the Swedish tiles go on in two steps. Run without step 2, step 3 stops itself.
+- One job per stick, so each step is one visit. There is no healthy second stick for the undo
+  jobs; they go on the same stick after a visit to the Mac.
+- Tests: 230 pass (one skipped, as before).
