@@ -306,3 +306,18 @@ review found no leaks between parts, and five things now fixed: a part may only 
 inside its own job folder; a part built on this Mac must match what the store recorded; a
 part that ran from another stick keeps its applied record; a part cut short reports
 `interrupted`, not `not-run`; a bundle run again marks its parts as run before. Tests: 245 pass.
+
+## Same day: two read-only loggers for the call sound
+
+Rasmus: calls sound boxy, with no bass (narrowband Bluetooth calls?). See
+[CALL-SOUND.md](CALL-SOUND.md).
+
+- `tools/hfp_codec.py`: reads an iPhone's Bluetooth log (Apple's logging profile, sysdiagnose)
+  and says narrowband (CVSD) or wideband (mSBC), from the car's hands-free features, the codecs
+  offered and chosen, and the audio links made. Prints no addresses, numbers or names.
+- `s2am job registry` (`reg-72b4` built): `s2amreg.exe`, our own read-only CE program (10 KB,
+  COREDLL only), copies SYNC's settings to the stick; secrets are not copied (by name, by the
+  key's path, and every binary value over 8 bytes). The job waits at most 90 s.
+- A Codex review found seven things, all fixed with tests: secrets under ordinary names, a stale
+  completion file after a cut-short run, the Accept command's coding field, failed links counted,
+  both size caps, write failures, and a CVSD-only choice. Tests pass.

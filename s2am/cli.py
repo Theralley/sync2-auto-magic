@@ -34,8 +34,8 @@ from pathlib import Path
 
 from . import apps, autokit, bootstrap, diskcheck, native, pack, stick, theme, window
 from .container import REPO, ContainerError
-from .job import (AUTOKIT_CE, AUTOKIT_LANGS, AUTOKIT_MODULES, DRIVE_SECONDS, SCREENS, SERIAL, SWAP_KINDS, Job,
-                  autokit_lang_file, bundle_parts, stage)
+from .job import (AUTOKIT_CE, AUTOKIT_LANGS, AUTOKIT_MODULES, DRIVE_SECONDS, REGISTRY_ROOTS, REGISTRY_WAIT_S,
+                  SCREENS, SERIAL, SWAP_KINDS, Job, autokit_lang_file, bundle_parts, stage)
 from .state import Store, diff, parse_inventory
 
 UPSTREAM = REPO.parent / "syncextpack"
@@ -69,7 +69,7 @@ JOB_KINDS = {"inventory": "inv", "autokit-stock": "akstock", "autokit-patched": 
              "remove": "rm", "install": "inst", "undo": "undo", "autokit-config": "akcfg",
              "snapshot": "snap", "logger": "log", "native-hello": "hello", "runner-guard": "guard",
              "theme": "theme", "apps-menu": "appmenu", "cleanup": "clean", "screen": "screen",
-             "bundle": "bundle"}
+             "bundle": "bundle", "registry": "reg"}
 MARK = {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
 
 
@@ -342,6 +342,12 @@ def cmd_job(args) -> int:
             print(f"apps-menu: replaces SyncApps.swf and adds {len(params['added'])} tile pictures, backing up "
                   "the menu first; SYNC restarts. Build the restore stick now as well: "
                   "s2am job apps-menu --restore <this job>")
+    elif args.kind == "registry":
+        params = {"roots": args.root or list(REGISTRY_ROOTS), "depth": args.depth}
+        extra = {"s2amreg.exe": native.binary("s2amreg.exe")}
+        print(f"registry: read-only; copies {', '.join(params['roots'])} ({args.depth} levels) to the stick in "
+              f"under {REGISTRY_WAIT_S} s. A paired phone's link key and PINs are not copied. Insert, wait for "
+              "'Install successfully completed', pull it, import it")
     elif args.kind == "bundle":
         params, payload = _plan_bundle(Store(), args.serial, args.part)
         print(f"bundle: {len(params['parts'])} jobs in one run, in this order, each verified on its own "
@@ -430,6 +436,10 @@ def cmd_stick_import(args) -> int:
                 if (report / "cleanup.txt").is_file() else []
             gone, stuck = sum(x.startswith("D|") for x in listed), [x[2:] for x in listed if x.startswith("S|")]
             print(f"  removed {gone} old job folders" + (f"; still there: {stuck}" if stuck else ""))
+        if record.get("kind") == "reg" and record["status"] == "applied" and report:
+            done = report / "registry-done.txt"
+            print("  " + (done.read_text(errors="replace").strip().replace("|", ", ") if done.is_file() else
+                          "NOT complete: s2amreg.exe did not finish in time; registry.txt may be partial"))
         if record.get("kind") in SWAP_KINDS and record["status"] == "applied" and report \
                 and not record.get("replayed"):
             print(f"  {theme.verify(report, record['params'], record['kind'])}")
@@ -820,6 +830,13 @@ def parser() -> argparse.ArgumentParser:
     screen.add_argument("--fetch", action="append", default=[], metavar="PATTERN",
                         help="also copy matching car files to the stick, read-only")
     screen.set_defaults(func=cmd_job)
+    registry = job_sub.add_parser("registry", parents=[common],
+                                  help="read-only: copy SYNC's Bluetooth, call, audio and other settings from "
+                                       "the registry to the stick (link keys and PINs are not copied)")
+    registry.add_argument("--root", action="append", metavar="HKLM\\PATH",
+                          help=f"a registry root to copy (default: {', '.join(REGISTRY_ROOTS)})")
+    registry.add_argument("--depth", type=int, default=6, help="levels below each root (0-8, default 6)")
+    registry.set_defaults(func=cmd_job)
     bundle = job_sub.add_parser("bundle", parents=[common],
                                 help="several jobs already built, in one run (theme, apps-menu, screen "
                                      "and a cleanup last); each is verified on its own after import")

@@ -36,6 +36,12 @@ class FakeCar:
                                        "12:00:10.000|load|cpu 41%|memory 60%, 51200 KB free|Desktop.exe 30%",
                                        "12:00:11.000|screen|screens\\0001-120011.bmp|first", "12:05:00.000|end"]
         self.watch_copies: dict[str, bytes] = {}  # numbered log copies the watcher leaves on the stick
+        self.registry_lines: list[str] = [  # what s2amreg.exe would write for the Bluetooth key
+            "K|HKLM\\Software\\Microsoft\\Bluetooth",
+            "V|HKLM\\Software\\Microsoft\\Bluetooth|Version|dword|2 (0x00000002)",
+            "K|HKLM\\Software\\Microsoft\\Bluetooth\\Device\\001122334455",
+            "V|HKLM\\Software\\Microsoft\\Bluetooth\\Device\\001122334455|key|binary|<not copied, 16 bytes>",
+            "T|complete|2 keys|3 values|1 not copied"]
         self.power_cut_after_phase = False
         self.native_runs = True  # does a CeGCC program start on this car? (test knob)
         root.mkdir(parents=True, exist_ok=True)
@@ -136,6 +142,9 @@ class FakeCar:
                 (out / "skins" / "8inchSkins" / "a.swf").write_bytes(b"FWS")
                 (out / "screens").mkdir()
                 (out / "screens" / "0001-120000.bmp").write_bytes(b"BM")
+        if job.kind == "reg":  # what s2amreg.exe writes; a paired phone's key is never copied
+            (out / "registry.txt").write_text("".join(f"{line}\r\n" for line in self.registry_lines))
+            (out / "registry-done.txt").write_text("T|complete|2 keys|3 values|1 not copied")
         if job.kind == "hello":
             (out / "native-hello.txt").write_text("s2am native hello ok|wince 7.0 build 3500|uptime_ms 1\r\n")
         lines = []

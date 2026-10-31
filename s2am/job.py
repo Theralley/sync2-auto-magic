@@ -881,6 +881,42 @@ def bundle_script(job: Job) -> str:
     return _script(lines + ["out = bout"] + _inventory() + _footer(job))
 
 
+# Where SYNC keeps its Bluetooth, call and audio settings (and the rest of the system's)
+REGISTRY_ROOTS = ("HKLM\\Software", "HKLM\\Comm", "HKLM\\Drivers", "HKLM\\Audio", "HKLM\\System", "HKCU\\")
+REGISTRY_ROOT = re.compile(r"HK(LM|CU)\\([A-Za-z0-9_][A-Za-z0-9_.-]*(\\[A-Za-z0-9_][A-Za-z0-9_.-]*)*)?")
+REGISTRY_WAIT_S = 90
+
+
+def registry_script(job: Job) -> str:
+    """Read-only: s2amreg.exe copies parts of SYNC's registry to the stick (registry.txt), every
+    key and value under each root down to ``depth`` levels; secrets (a paired phone's link key,
+    PINs) are not copied. The job waits for it at most REGISTRY_WAIT_S seconds, so a stuck read
+    cannot hold up the car, then reports as usual."""
+    roots, depth = job.params.get("roots") or [], job.params.get("depth")
+    if not 1 <= len(roots) <= 12 or any(not isinstance(r, str) or not REGISTRY_ROOT.fullmatch(r) for r in roots):
+        raise ValueError(f"invalid registry roots {roots!r}")
+    if not isinstance(depth, int) or isinstance(depth, bool) or not 0 <= depth <= 8:
+        raise ValueError(f"invalid registry depth {depth!r}")
+    folder = _quote(ce_path(job.job_dir))
+    lines = _header(job) + [
+        "n = 0",
+        'If (FileExists(out & "\\registry-done.txt"))',  # a run cut short after the copy: keep it
+        f"  n = {REGISTRY_WAIT_S}",
+        "Else",
+        f'  Run({folder} & "\\s2amreg.exe", "{depth} {",".join(roots)} " & out)',
+        "EndIf",
+        f"While (n < {REGISTRY_WAIT_S})",
+        '  If (FileExists(out & "\\registry-done.txt"))',
+        f"    n = {REGISTRY_WAIT_S}",
+        "  Else",
+        "    Sleep(1000)",
+        "    n = n + 1",
+        "  EndIf",
+        "EndWhile",
+    ]
+    return _script(lines + _inventory() + _footer(job))
+
+
 def hello_script(job: Job) -> str:
     """Prove compiled code runs on this SYNC 2: hello.exe writes the CE version and exits."""
     lines = _header(job) + [
@@ -906,6 +942,7 @@ SCRIPTS = {
     "screen": swap_script,
     "clean": cleanup_script,
     "bundle": bundle_script,
+    "reg": registry_script,
 }
 MENU_CHANGING = ("rm", "undo", "inst")  # SYNC reads SyncApps.xml at start, so these restart it
 RESTARTING = MENU_CHANGING + SWAP_KINDS + ("bundle",)  # and its theme, Apps menu and screens
