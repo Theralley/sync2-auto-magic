@@ -150,7 +150,9 @@ hundred bytes to 258 KB, and AutoKit was briefly slow to answer (1.5–2.3 s, se
 window appeared or disappeared in that time: AutoKit stayed on top and visible, so the guard
 did nothing. The camera picture is drawn without a window of its own, and AutoKit's full-screen
 window seems to cover it. The 258 KB log was overwritten by the next opening's copy, so what
-AutoKit logged is not known yet.
+AutoKit logged is not known yet. The watcher now numbers its copies
+(`autokit-hwlog-live-01.log`, `-02.log`, ...): each time AutoKit starts its log over, the next
+copy begins, so every run of the log is kept, and `s2am report` shows them all.
 
 The freeze and the workaround are reported upstream as
 [chr0m1ng/syncextpack#4](https://github.com/chr0m1ng/syncextpack/issues/4), since the launcher
@@ -158,4 +160,28 @@ comes with SyncExtPack's app pack.
 
 **Open:** CarPlay (T1–T7) and the sound fix wait for the adapter. The reverse camera while
 AutoKit is open needs its own investigation.
+
+# Video Player test (reported 2026-10-31)
+
+One stick (32 GB, FAT32) carried an install job for SyncExtPack's Video Player
+(`s2am job install "Video Player"`, 11.7 MB) and six test videos from
+`tools/make_test_videos.py` in `/TestVideos`. Parked.
+
+| Step | Result |
+|---|---|
+| Install job (single app) | Applied; Video Player in the Apps menu and opening. The stick has not been imported yet |
+| 800x480 H.264 (files 01–03) | **Play fine** |
+| 720p and 1080p (files 04, 05) | Glitch ("bugged") |
+| Sound through the car's speakers | **Yes**, in every file |
+| Colours | Correct |
+| Beep against the white flash | Slightly out of step |
+
+- The files themselves are in step: measured on the Mac, every beep in files 01 and 02 starts
+  on the same frame as its flash (0 ms apart). So the offset comes from the player on the car.
+- **What it means for AutoKit:** the Video Player sends its sound through `WaveOutHooks.dll`,
+  the same route AutoKit's sound fix uses, and starts through the same launcher with the runner
+  guard in front. Sound through the speakers is good evidence that this route works on this
+  car; it does not prove AutoKit's patched modules work. 800x480 is also the picture size
+  `autokit-config` sets, though AutoKit decodes with its own decoder.
+- Not noted: left/right, the volume knob, and whether SYNC came back after the player.
 

@@ -7,7 +7,8 @@
  * still answers messages, and the driver list (USB devices). It writes only what
  * changed, to <folder>\watch.log, and a heartbeat every 10 s so the log shows when
  * it stopped. It copies the runner guard's log and AutoKit's own log into the folder
- * whenever they change. It changes nothing on the car and exits after <seconds>.
+ * whenever they change, numbered, so no run's log is lost. It changes nothing on the
+ * car and exits after <seconds>.
  *
  * It never asks another program for its window title: that is a message, and a hung
  * program would hang the watcher too. The answer check runs in a thread of its own.
@@ -24,6 +25,7 @@
 #define LOG_LIMIT (2 * 1024 * 1024)
 #define MAX_PROCS 160
 #define MAX_WINDOWS 128
+#define MAX_COPIES 99
 #define APP_NAME L"AutoKit.exe"
 #define TH32CS_SNAPPROCESS 0x00000002
 #define TH32CS_SNAPNOHEAPS 0x40000000
@@ -55,12 +57,15 @@ typedef struct {
     WCHAR cls[40];
 } Win;
 
-/* Files copied into the output folder whenever they change: {car path, copy name}. */
-static const WCHAR *copies[][2] = {
-    {L"\\SyncExtendedPack\\_s2am\\guard.log", L"guard-live.log"},
-    {L"\\SyncExtendedPack\\Apps\\Media\\AutoKit\\hwlog.log", L"autokit-hwlog-live.log"},
-    {L"\\SyncExtendedPack\\Apps\\Media\\AutoKit\\hwlog.txt", L"autokit-hwlog-live.txt"},
-    {L"\\Temp\\NAV_SHOW.TXT", L"nav-show-live.txt"},
+/* Files copied into the output folder whenever they change: {car path, copy name, extension}.
+ * The copies are numbered, <name>-01<extension> and on. A file that shrank has started over
+ * (AutoKit starts its log anew each time it opens), so it goes to the next number and the
+ * copy of the run before is kept. */
+static const WCHAR *copies[][3] = {
+    {L"\\SyncExtendedPack\\_s2am\\guard.log", L"guard-live", L".log"},
+    {L"\\SyncExtendedPack\\Apps\\Media\\AutoKit\\hwlog.log", L"autokit-hwlog-live", L".log"},
+    {L"\\SyncExtendedPack\\Apps\\Media\\AutoKit\\hwlog.txt", L"autokit-hwlog-live", L".txt"},
+    {L"\\Temp\\NAV_SHOW.TXT", L"nav-show-live", L".txt"},
 };
 #define COPY_COUNT (sizeof(copies) / sizeof(copies[0]))
 
@@ -79,6 +84,7 @@ static int proc_count, fresh_count;
 static Win windows[MAX_WINDOWS];
 static int window_count;
 static DWORD copied_size[COPY_COUNT], copied_time[COPY_COUNT];
+static int copy_count[COPY_COUNT];  /* number of the newest copy; 0 before the first */
 
 static HANDLE probe_thread;
 static DWORD probe_started;
@@ -499,28 +505,55 @@ static void diff_drivers(void)
     }
 }
 
+/* The number a changed file is copied to: the next one for the first copy and for a file
+ * that shrank (it started over), else the same one, which it has outgrown. Past MAX_COPIES
+ * the last copy is overwritten. */
+static int copy_number(int newest, DWORD size, DWORD copied)
+{
+    int number = (newest == 0 || size < copied) ? newest + 1 : newest;
+    return number > MAX_COPIES ? MAX_COPIES : number;
+}
+
+/* <folder>\<name>-<NN><extension>; FALSE if that would not fit. */
+static BOOL copy_path(WCHAR *target, const WCHAR *name, int number, const WCHAR *extension)
+{
+    WCHAR digits[4];
+    if (wcslen(folder) + wcslen(name) + wcslen(extension) + 5 >= MAX_PATH)
+        return FALSE;
+    digits[0] = L'-';
+    digits[1] = (WCHAR)(L'0' + number / 10);
+    digits[2] = (WCHAR)(L'0' + number % 10);
+    digits[3] = L'\0';
+    wcscpy(target, folder);
+    wcscat(target, L"\\");
+    wcscat(target, name);
+    wcscat(target, digits);
+    wcscat(target, extension);
+    return TRUE;
+}
+
 static void copy_changed(void)
 {
     unsigned i;
     for (i = 0; i < COPY_COUNT; i++) {
         WIN32_FIND_DATAW found;
         WCHAR target[MAX_PATH];
+        int number;
         HANDLE search = FindFirstFileW(copies[i][0], &found);
         if (search == INVALID_HANDLE_VALUE)
             continue;
         FindClose(search);
         if (found.nFileSizeLow == copied_size[i] && found.ftLastWriteTime.dwLowDateTime == copied_time[i])
             continue;
-        if (wcslen(folder) + wcslen(copies[i][1]) + 2 >= MAX_PATH)
+        number = copy_number(copy_count[i], found.nFileSizeLow, copied_size[i]);
+        if (!copy_path(target, copies[i][1], number, copies[i][2]))
             continue;
-        wcscpy(target, folder);
-        wcscat(target, L"\\");
-        wcscat(target, copies[i][1]);
         if (CopyFileW(copies[i][0], target, FALSE)) {  /* busy: try again next tick */
+            copy_count[i] = number;
             copied_size[i] = found.nFileSizeLow;
             copied_time[i] = found.ftLastWriteTime.dwLowDateTime;
             begin("copied|");
-            put_wide(copies[i][1], 40);
+            put_wide(target + wcslen(folder) + 1, 40);
             put("|");
             put_uint(found.nFileSizeLow);
             put(" bytes");

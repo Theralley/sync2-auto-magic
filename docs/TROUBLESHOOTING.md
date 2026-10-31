@@ -65,6 +65,8 @@ That brought SYNC back every time. Last resort: engine off, lock the car, wait 1
 - **Cause:** not known yet. The camera picture has no window of its own; AutoKit's full-screen
   window probably covers it.
 - **For now:** leave AutoKit (Exit) before reversing. Not tested with the adapter connected.
+- **To find out more:** run a logger job, open AutoKit and reverse. The watcher keeps every
+  run of AutoKit's log as a numbered copy (`autokit-hwlog-live-01.log`, ...).
 
 ### AutoKit is in Chinese
 - **Seen:** 2026-10-30. The waiting screen reads 请使用车机USB接口 连接 AutoPlay 盒 ("connect the
@@ -75,6 +77,16 @@ That brought SYNC back every time. Last resort: engine off, lock the car, wait 1
 - **Fix:** installs made with s2am since 30 October 2026 start in English (the stock file is
   kept as `lang.orig`). For an older install, run `s2am job autokit-config --lang english
   --serial S` (0x0409). It keeps a backup, and `--restore <job>` undoes it. Verified in the car.
+
+### Video Player: a video glitches, or the sound runs off the picture
+- **Seen:** reported 2026-10-31, with the test videos from `tools/make_test_videos.py`. The
+  800x480 H.264 files played fine; the 720p and 1080p files glitched. In the sync test the beep
+  came slightly off the white flash.
+- **Cause:** larger videos are more than the player manages on SYNC 2. The sync offset is the
+  player's: in the files every beep starts on the same frame as its flash (measured on the Mac).
+- **Fix:** convert videos to 800 pixels wide, H.264, before copying them, for example
+  `ffmpeg -i in.mp4 -vf scale=800:-2 -c:v libx264 -profile:v baseline -c:a aac out.mp4`
+  (`-2` keeps the proportions).
 
 ### An app in the Apps menu does nothing when tapped
 - **Seen:** 2026-10-30. A previous owner's MirrorLink, Video Player, Navitel and Reboot showed

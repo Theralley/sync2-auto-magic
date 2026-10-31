@@ -39,6 +39,9 @@ AUTOKIT_CE = "\\SyncExtendedPack\\Apps\\Media\\AutoKit"
 TOOLS_CE = "\\SyncExtendedPack\\Apps\\Tools"
 GUARD_LOG = "\\SyncExtendedPack\\_s2am\\guard.log"
 AUTOKIT_LOGS = ("hwlog.log", "hwlog.txt")  # AutoKit writes hwlog.log into its folder
+# Litter that Macs and local tools leave in folders; never copied to the car. Real hidden files
+# (Navitel keeps an empty Userdata\.tmp) still go.
+LOCAL_JUNK = (".omc", ".DS_Store", "._*")
 # The modules tools/patch_waveout.py patches (tools/make_pack.py PATCH_TARGETS).
 AUTOKIT_MODULES = ("AutoKit.exe", "libgstwaveoutsink.dll", "libgstwaveform.dll")
 
@@ -691,7 +694,8 @@ def stage(job: Job, upstream: Path, workdir: Path, extra: dict[str, bytes] | Non
             raise ValueError(f"invalid car path {car_path!r}")
         destination = workdir / "payload" / car_path.strip("/")
         if source.is_dir():
-            shutil.copytree(source, destination, dirs_exist_ok=True)
+            shutil.copytree(source, destination, dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns(*LOCAL_JUNK))
         else:
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)

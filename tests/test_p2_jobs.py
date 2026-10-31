@@ -176,6 +176,30 @@ class Loop(unittest.TestCase):
                      "[autokit-hwlog.log", "box_plugout"):
             self.assertIn(text, report)
 
+    def test_logger_report_shows_every_numbered_copy_of_autokits_log(self):
+        self.car.watch_copies = {
+            "autokit-hwlog-live-01.log": "first run SW_HIDE\r\n".encode("utf-16-le"),
+            "autokit-hwlog-live-02.log": "\ufeffsecond run\r\n".encode("utf-16-le"),
+            "guard-live-01.log": b"1|start|AutoKit.exe\r\n"}
+        job, _, imported = self.run_job("logger", "--seconds", "60")
+        self.assertIn("applied", imported)
+        report = self.cli("report", "--serial", SERIAL, job.id)[1]
+        for text in ("[guard-live-01.log: runner guard log, copy 1 the watcher made]", "1|start|AutoKit.exe",
+                     "[autokit-hwlog-live-01.log: AutoKit's own log, copy 1", "first run SW_HIDE",
+                     "[autokit-hwlog-live-02.log: AutoKit's own log, copy 2", "second run"):
+            self.assertIn(text, report)
+        self.assertLess(report.index("first run"), report.index("second run"))
+        self.assertNotIn("\x00", report)
+
+    def test_a_long_copied_log_shows_its_start_and_end(self):
+        path = self.tmp / "autokit-hwlog-live-01.log"
+        path.write_bytes("".join(f"line {n}\r\n" for n in range(1, 501)).encode("utf-16-le"))
+        lines = cli._log_text(path).splitlines()
+        self.assertEqual(len(lines), 201)
+        self.assertEqual((lines[0], lines[19], lines[-1]), ("line 1", "line 20", "line 500"))
+        self.assertIn("300 lines left out", lines[20])
+        self.assertEqual(lines[21], "line 321")
+
     def test_logger_ships_the_watcher_and_starts_it_in_the_background(self):
         job, work, _ = self.run_job("logger")
         folder = work / "payload" / job.job_dir.lstrip("/")

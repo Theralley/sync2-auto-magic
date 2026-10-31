@@ -4,6 +4,7 @@ import io
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -84,6 +85,46 @@ class Scripts(unittest.TestCase):
             self.assertNotIn(call, code, call)
         self.assertEqual(re.findall(r"SendMessageW\(([^,]+),\s*(\w+)", code), [("(HWND)window", "WM_NULL")])
         self.assertIn("CopyFileW(copies[i][0], target", code)  # copies only to the stick
+
+    @unittest.skipUnless(shutil.which("cc"), "needs a C compiler")
+    def test_watcher_keeps_every_run_of_a_log(self):
+        """copy_number and copy_path from s2amwatch.c, built for the Mac, fed the sizes of
+        AutoKit's hwlog.log as the watcher saw them in the car on 2026-10-30."""
+        source = (native.SOURCES / "s2amwatch.c").read_text()
+
+        def function(name):
+            start = source.rindex("\n", 0, source.index(f" {name}(")) + 1
+            return source[start:source.index("\n}\n", start) + 3]
+        sizes = [348, 474, 122, 226, 348, 120, 224, 346, 122, 19002, 146914, 258768, 122, 226, 348, 474, 122]
+        program = "\n".join([
+            "#include <stdio.h>", "#include <wchar.h>", "typedef wchar_t WCHAR;", "typedef int BOOL;",
+            "typedef unsigned long DWORD;", "#define TRUE 1", "#define FALSE 0", "#define MAX_PATH 260",
+            re.search(r"#define MAX_COPIES .*", source).group(), "static WCHAR folder[MAX_PATH] = L\"\\\\out\";",
+            function("copy_number"), function("copy_path"),
+            "int main(void) {",
+            f"    DWORD sizes[] = {{{', '.join(map(str, sizes))}}};",
+            "    DWORD copied = 0; int newest = 0; unsigned i; WCHAR target[MAX_PATH];",
+            "    for (i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {",
+            "        newest = copy_number(newest, sizes[i], copied); copied = sizes[i];",
+            "        printf(\"%d \", newest);",
+            "    }",
+            "    copy_path(target, L\"autokit-hwlog-live\", newest, L\".log\"); printf(\"\\n%ls\\n\", target);",
+            "    printf(\"%d %d %d\\n\", copy_number(98, 1, 2), copy_number(99, 1, 2), copy_number(99, 5, 2));",
+            "    wmemset(folder, L'x', 250); folder[250] = 0;",
+            "    printf(\"%d\\n\", copy_path(target, L\"autokit-hwlog-live\", 1, L\".log\"));",
+            "    return 0;", "}"])
+        work = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, work)
+        (work / "copies.c").write_text(program)
+        subprocess.run(["cc", "-Wall", "-Werror", "-o", str(work / "copies"), str(work / "copies.c")],
+                       check=True, capture_output=True)
+        out = subprocess.run([str(work / "copies")], check=True, capture_output=True, text=True).stdout
+        numbers, name, cap, fits = out.splitlines()
+        # each time the log starts over (it shrank) the next copy begins; the 258 KB run is copy 4
+        self.assertEqual(numbers.split(), "1 1 2 2 2 3 3 3 4 4 4 4 5 5 5 5 6".split())
+        self.assertEqual(name, "\\out\\autokit-hwlog-live-06.log")
+        self.assertEqual(cap, "99 99 99")  # past 99 the last copy is overwritten
+        self.assertEqual(fits, "0")
 
 
 @unittest.skipUnless(HAVE_UPSTREAM, "syncextpack fixtures not present")

@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 from s2am import apps, cli, stick  # noqa: E402
 from s2am.fakecar import FakeCar  # noqa: E402
-from s2am.job import MENU_XML, Job  # noqa: E402
+from s2am.job import MENU_XML, MORTRUNNER_SOURCE, MORTSCRIPT_SOURCE, Job, stage  # noqa: E402
 import patch_waveout  # noqa: E402
 
 UPSTREAM = ROOT.parent / "syncextpack"
@@ -24,6 +24,25 @@ SERIAL = "XV31M13H"
 ICON = "Apps/Info/SyncApps/Icons/"
 MENU = [("AutoKit", "AutoKitPlugin", ICON + "AutoKit.png"), ("", "", ""), ("", "", ""),
         ("Reboot", "RebootPlugin", ICON + "Reboot.png")]
+
+
+class Stage(unittest.TestCase):
+    def test_mac_and_tool_litter_never_reaches_the_car(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        for name in (MORTSCRIPT_SOURCE, MORTRUNNER_SOURCE):
+            (tmp / "up" / name).parent.mkdir(parents=True, exist_ok=True)
+            (tmp / "up" / name).write_bytes(b"MZ")
+        app = tmp / "app"
+        for name in ("Player.exe", "Userdata/.tmp", ".DS_Store", "._Player.exe",
+                     ".omc/state/sessions/x/throttle.json", "Skin/.DS_Store"):
+            (app / name).parent.mkdir(parents=True, exist_ok=True)
+            (app / name).write_bytes(b"x")
+        work = stage(Job(SERIAL, "inv"), tmp / "up", tmp / "work",  # any kind stages a payload alike
+                     payload=[(app, "/SyncExtendedPack/Apps/Media/App")])
+        landed = work / "payload" / "SyncExtendedPack" / "Apps" / "Media" / "App"
+        copied = sorted(str(p.relative_to(landed)) for p in landed.rglob("*") if p.is_file())
+        self.assertEqual(copied, ["Player.exe", "Userdata/.tmp"])
 
 
 @unittest.skipUnless(HAVE_UPSTREAM, "syncextpack fixtures not present")

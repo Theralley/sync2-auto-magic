@@ -67,13 +67,14 @@ run the same system, but nothing is guaranteed.
 | AutoKit installed and opening on SYNC 2 | **Works in the car** (waits for the adapter) |
 | AutoKit in English | **Works in the car**; new installs start in English (the stock app is Chinese; `autokit-config --lang` changes it) |
 | Apple CarPlay over a cable | Waiting for the adapter |
-| Sound through the car's speakers | Fix installed (all three modules patched), waiting for the adapter |
+| Sound through the car's speakers | Fix installed (all three modules patched), waiting for the adapter. The Video Player, which gets its sound through the same `WaveOutHooks.dll`, plays through the speakers in the car |
 | Leaving AutoKit returns to SYNC | **Works in the car with the runner guard** (`s2am job runner-guard`, undo with `--off`). Without it, Exit only hides AutoKit and the screen freezes. Reported upstream: [syncextpack#4](https://github.com/chr0m1ng/syncextpack/issues/4) |
 | Reverse camera while AutoKit is open | **Does not show** (seen in the car); leave AutoKit before reversing |
+| Play MP4 videos from a USB stick (SyncExtPack's Video Player) | **Works in the car** at 800x480 (H.264), with sound and correct colours; 720p and 1080p glitch, and the sound runs slightly off the picture. Install with `s2am job install "Video Player"`; test videos from `tools/make_test_videos.py`. Parked only |
 | Android Auto with the same dongle | Waiting for the adapter (`autokit-config` sets the picture; [plan](docs/P2-AA-AUTOSTART-PLAN.md)) |
 | See what is installed on SYNC 2 from your Mac | **Works in the car** |
 | Remove apps from your Mac (one or several per stick, menu only or with their files) | **Works in the car** |
-| Install apps from your Mac (SyncExtPack apps, AutoKit with the sound fix) | **Works in the car** (full app pack); single-app install is tested on the computer only |
+| Install apps from your Mac (SyncExtPack apps, AutoKit with the sound fix) | **Works in the car**: the full app pack, and single apps (Video Player) |
 | CarPlay starts by itself when you plug in the phone | Being investigated: diagnostic jobs ready (`snapshot`, `logger`), the auto-start itself not built yet ([plan](docs/P2-AA-AUTOSTART-PLAN.md)) |
 
 ## What you need
@@ -195,6 +196,7 @@ python3 -m s2am job native-hello --serial YOURSERIAL                 # prove com
 python3 -m s2am job runner-guard --serial YOURSERIAL                 # fix: no frozen screen after leaving an app
 python3 -m s2am job runner-guard --off --serial YOURSERIAL           # put SyncExtPack's original launcher back
 python3 -m s2am job logger --native --serial YOURSERIAL              # also record AutoKit's window messages
+python3 tools/make_test_videos.py OUTFOLDER                          # test videos for the Video Player (needs ffmpeg, Pillow)
 ```
 
 See [docs/P2-AA-AUTOSTART-PLAN.md](docs/P2-AA-AUTOSTART-PLAN.md). `autokit-config` also removes any

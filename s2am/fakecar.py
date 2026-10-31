@@ -31,6 +31,7 @@ class FakeCar:
         self.watch_lines: list[str] = ["12:00:00.000|start|s2am watch|seconds 180|toolhelp 1",
                                        "12:00:00.010|proc+|57|AutoKit.exe|threads 9", "12:03:00.000|end"]
         self.notify_lines: list[str] = ["0|start|180", "5|REG|_UIGEAR_BOX_NOTIFY_|0x0000c0de", "9|end|"]
+        self.watch_copies: dict[str, bytes] = {}  # numbered log copies the watcher leaves on the stick
         self.power_cut_after_phase = False
         self.native_runs = True  # does a CeGCC program start on this car? (test knob)
         root.mkdir(parents=True, exist_ok=True)
@@ -109,6 +110,8 @@ class FakeCar:
         if job.kind == "log":
             (out / "logger-started.txt").write_text("started")
             (out / "watch.log").write_text("".join(f"{line}\r\n" for line in self.watch_lines))
+            for name, data in self.watch_copies.items():
+                (out / name).write_bytes(data)
             if job.params.get("native"):
                 (out / "notify.txt").write_text("".join(f"{line}\r\n" for line in self.notify_lines))
         if job.kind == "hello":
@@ -294,12 +297,12 @@ class FakeCar:
                                                     "processes 40|desktop 1|desktop_visible 1\r\n")
             if original.exists() and size(original) != stock:
                 if size(runner) != stock:
-                    (out / "backup-bad.txt").write_text("neither is Ford's")
+                    (out / "backup-bad.txt").write_text("neither is the stock runner")
                     return False
                 original.unlink()
             if not original.exists():
                 if size(runner) != stock:
-                    (out / "unknown-runner.txt").write_text("not Ford's")
+                    (out / "unknown-runner.txt").write_text("not the stock runner")
                     return False
                 shutil.copyfile(runner, original)
             shutil.copyfile(self._resolve(ce_path(job.job_dir)) / "s2amrun.exe", runner)

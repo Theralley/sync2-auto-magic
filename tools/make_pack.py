@@ -23,7 +23,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 from s2am import apps as apps_menu, autokit, container  # noqa: E402
-from s2am.job import AUTOKIT_MODULES  # noqa: E402
+from s2am.job import AUTOKIT_MODULES, LOCAL_JUNK  # noqa: E402
 from s2am.window import valid_thru  # noqa: E402
 
 UPSTREAM = REPO.parent / "syncextpack"
@@ -32,7 +32,7 @@ DEFAULT_APPS = ("AutoKit", "Explorer", "Reboot")
 AUTOKIT_DIR = Path("FullPack/SyncExtendedPack/Apps/Media/AutoKit")
 HOOK_SOURCE = autokit.HOOK_SOURCE
 PATCH_TARGETS = AUTOKIT_MODULES
-STAGE_IGNORE = shutil.ignore_patterns(".git", "*.rar", "SyncExtPack_*.zip", "builder.log")
+STAGE_IGNORE = shutil.ignore_patterns(".git", "*.rar", "SyncExtPack_*.zip", "builder.log", *LOCAL_JUNK)
 
 # Upstream validateSerial: 8 characters, no letter O. The serial also lands in
 # a shell command inside crypto_pack_docker.sh upstream, so keep it strict.

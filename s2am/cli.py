@@ -499,6 +499,25 @@ def cmd_native(args) -> int:
     return 0
 
 
+WATCH_COPIES = (("guard-live", ".log", "runner guard log"),
+                ("autokit-hwlog-live", ".log", "AutoKit's own log"),
+                ("autokit-hwlog-live", ".txt", "AutoKit's own log"),
+                ("nav-show-live", ".txt", "SYNC's NAV_SHOW.TXT"))
+
+
+def _log_text(path: Path, keep: int = 200) -> str:
+    """A copied log as text (AutoKit writes UTF-16LE); a long one shows its start and its end."""
+    data = path.read_bytes()
+    utf16 = data[:2] == b"\xff\xfe" or (len(data) >= 4 and data[1] == 0 and data[3] == 0)
+    text = data.decode("utf-16-le" if utf16 else "utf-8", errors="replace").lstrip("\ufeff")
+    lines = text.replace("\r\n", "\n").rstrip().split("\n")
+    if len(lines) > keep:
+        head = keep // 10
+        lines = [*lines[:head], f"... {len(lines) - keep} lines left out; the whole log: {path}",
+                 *lines[len(lines) - (keep - head):]]
+    return "\n".join(lines)
+
+
 def cmd_report(args) -> int:
     store = Store()
     job_id = args.job_id or next((r["id"] for r in reversed(store.jobs(args.serial))
@@ -531,7 +550,11 @@ def cmd_report(args) -> int:
                         ("autokit-hwlog-live.log", "AutoKit's own log, last copy the watcher made")):
         if (report / name).is_file():
             print(f"[{name}: {title}]")
-            print((report / name).read_text(errors="replace").rstrip())
+            print(_log_text(report / name))
+    for name, extension, title in WATCH_COPIES:  # the watcher numbers them, one per run of the log
+        for path in sorted(report.glob(f"{name}-[0-9][0-9]{extension}")):
+            print(f"[{path.name}: {title}, copy {int(path.stem[-2:])} the watcher made]")
+            print(_log_text(path))
     return 0
 
 
@@ -647,7 +670,7 @@ def parser() -> argparse.ArgumentParser:
     job_sub.add_parser("native-hello", parents=[common],
                        help="prove compiled code runs on this SYNC 2").set_defaults(func=cmd_job)
     guard = job_sub.add_parser("runner-guard", parents=[common],
-                               help="stop the frozen screen after leaving an app (keeps Ford's "
+                               help="stop the frozen screen after leaving an app (keeps the stock "
                                     "runner for --off)")
     guard.add_argument("--off", action="store_true", help="put the original runner back")
     guard.set_defaults(func=cmd_job)
