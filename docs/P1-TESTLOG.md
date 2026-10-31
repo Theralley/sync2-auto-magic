@@ -244,3 +244,11 @@ after the Apps menu test. Nothing has gone to the car. Order and checklist (Swed
 - One job per stick, so each step is one visit. There is no healthy second stick for the undo
   jobs; they go on the same stick after a visit to the Mac.
 - Tests: 230 pass (one skipped, as before).
+
+## Same day, 16:00: the Apps menu test imported; sticks for step 1
+
+- The 32 GB stick back from the Apps menu test (`appmenu-a215`): **verified, the new Apps menu
+  is on the car (11 files match byte for byte)**, matching the photo of the tiles at 11:43.
+- 32 GB stick: step 1, `theme-fd69` (the Night colours); `install.bin` read back identical.
+- 2 GB stick, reformatted by Rasmus: the read-only check passes. It now carries the undo,
+  `theme-78ed`; `install.bin` identical after writing and again after a remount.
