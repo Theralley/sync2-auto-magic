@@ -75,11 +75,24 @@ class Store:
                       key=lambda record: (record.get("created_utc", ""), record["id"]))
 
     def save_report(self, serial: str, job_id: str, source: Path) -> Path:
-        """Copy a report's regular files (callers reject symlinked reports first)."""
+        """Copy a report's regular files (callers reject symlinked reports first).
+
+        Contents only: files fetched from the car keep CE's read-only and hidden attributes on
+        the FAT stick, which macOS shows as flags (uchg, arch) and refuses to copy.
+        """
         target = self._inside(serial, "reports", job_id)
         if target.exists():
             shutil.rmtree(target)
-        shutil.copytree(source, target, symlinks=True)
+        target.mkdir(parents=True)
+        for path in sorted(source.rglob("*")):
+            destination = target / path.relative_to(source)
+            if path.is_symlink():
+                continue
+            if path.is_dir():
+                destination.mkdir(parents=True, exist_ok=True)
+            elif path.is_file():
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(path, destination)
         return target
 
     def save_log(self, serial: str, job_id: str, log: Path) -> None:

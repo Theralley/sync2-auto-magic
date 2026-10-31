@@ -204,3 +204,22 @@ for up to four hours. Inserted at 10:12, the car driven, the stick pulled at abo
   the screen once a second. A later version should do that far less often.
 - What the files show is written up in
   [sync-redesign's FINDINGS.md](https://github.com/Theralley/sync-redesign/blob/main/docs/FINDINGS.md).
+
+# 2026-10-31: first theme change, and its undo
+
+The 32 GB stick carried `s2am job theme --preset lincoln` (Lincoln's colours on Ford's theme,
+plus a read-only fetch of the Bluetooth files); the 2 GB stick its undo,
+`theme --restore`. Both were rehearsed first on a simulated SYNC with the car's own files.
+
+| Step | Result |
+|---|---|
+| Change stick | Applied; SYNC restarted with the new colours. Import: **verified, 5 files byte for byte** |
+| How it looked | It worked, but the change is small: Lincoln's colours are muted, and the theme only colours the glow and the area buttons |
+| Undo stick | Applied; Ford's colours back. Import: **verified, the original theme is back** |
+| Fetched files | 2 of 28: `BTMonitorService.dll` and `AudioConfig.cfg`. The other 26 are most likely built into SYNC's read-only system image, which CE cannot copy as files |
+
+- The first import of the change stick stopped: files fetched from the car keep CE's read-only
+  and hidden attributes, which macOS shows as flags and refused to copy into the store. Fixed:
+  the import now copies contents only.
+- `AudioConfig.cfg` is about navigation voice prompts, not calls, so the call-sound question
+  is still open.

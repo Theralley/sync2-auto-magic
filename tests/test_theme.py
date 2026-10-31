@@ -208,6 +208,15 @@ class Loop(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("not what", out)
 
+    def test_import_copies_contents_not_the_cars_file_flags(self):
+        import errno
+        job, work, _ = self.run_job("theme", "--preset", "lincoln", "--fetch", "\\Windows\\bt*.dll")
+        refuse = OSError(errno.EPERM, "Operation not permitted")  # macOS on a read-only CE file's flags
+        with mock.patch("os.chflags", side_effect=refuse):
+            Store().save_report(SERIAL, job.id, self.stick / "s2am" / "reports" / job.id)
+        report = Store().report(SERIAL, job.id)
+        self.assertEqual((report / "fetched" / "Windows_bthcsr.dll").read_bytes(), b"MZ bluetooth")
+
     def test_no_drive_log_no_theme(self):
         shutil.rmtree(self.tmp / "home")
         code, out = self.cli("job", "theme", "--preset", "lincoln", "--serial", SERIAL, "--no-pack")
