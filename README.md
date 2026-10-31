@@ -72,6 +72,7 @@ run the same system, but nothing is guaranteed.
 | New colours for SYNC's menus (`s2am job theme`; Lincoln's colours now, your own next) | **Works in the car**: the change and its undo stick both verified byte for byte (2026-10-31). How to undo: [sync-redesign RECOVERY.md](https://github.com/Theralley/sync-redesign/blob/main/docs/RECOVERY.md) |
 | A new Apps menu with big tiles, CarPlay first (`s2am job apps-menu`) | Built and rehearsed on the computer with the car's files; **first car test 2026-10-31**. Built by [sync-redesign](https://github.com/Theralley/sync-redesign)'s `tools/build_apps_menu.py` from your own copy of SyncExtPack's menu |
 | One of Ford's own screens, rebuilt (`s2am job screen`; first the call history with new icons) | Built and rehearsed on the computer with the car's files (2026-10-31). Only screens SYNC loads when opened; built by [sync-redesign](https://github.com/Theralley/sync-redesign) from your own copy |
+| Several jobs in one visit to the car (`s2am job bundle`) | Built and rehearsed (2026-10-31): jobs already built run in one go, in order, each verified on its own after import; the first that stops ends the run. An undo bundle puts everything back in one go |
 | Reverse camera while AutoKit is open | **Does not show** (seen in the car); leave AutoKit before reversing |
 | Play MP4 videos from a USB stick (SyncExtPack's Video Player) | **Works in the car** at 800x480 (H.264), with sound and correct colours; 720p and 1080p glitch, and the sound runs slightly off the picture. Install with `s2am job install "Video Player"`; test videos from `tools/make_test_videos.py`. Parked only |
 | Android Auto with the same dongle | Waiting for the adapter (`autokit-config` sets the picture; [plan](docs/P2-AA-AUTOSTART-PLAN.md)) |
@@ -198,6 +199,7 @@ python3 -m s2am job apps-menu --restore JOB_ID --serial YOURSERIAL   # the undo 
 python3 -m s2am job cleanup --serial YOURSERIAL                      # remove s2am's old job folders (backups stay)
 python3 -m s2am job screen --screen Phone/PhoneHistory/PhoneHistory.swf --swf NEW.swf --serial YOURSERIAL
 python3 -m s2am job screen --restore JOB_ID --serial YOURSERIAL      # the undo stick for it
+python3 -m s2am job bundle --part build/jobs/ID1 --part build/jobs/ID2 --serial YOURSERIAL  # several, one run
 python3 -m s2am job autokit-config --serial YOURSERIAL --restore <id> # put the old settings back
 python3 -m s2am job snapshot --serial YOURSERIAL                     # read-only: services, startup, USB devices
 python3 -m s2am job logger --serial YOURSERIAL                       # 3 minutes: every program and window on the screen

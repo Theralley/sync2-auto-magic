@@ -35,7 +35,7 @@ from pathlib import Path
 from . import apps, autokit, bootstrap, diskcheck, native, pack, stick, theme, window
 from .container import REPO, ContainerError
 from .job import (AUTOKIT_CE, AUTOKIT_LANGS, AUTOKIT_MODULES, DRIVE_SECONDS, SCREENS, SERIAL, SWAP_KINDS, Job,
-                  autokit_lang_file, stage)
+                  autokit_lang_file, bundle_parts, stage)
 from .state import Store, diff, parse_inventory
 
 UPSTREAM = REPO.parent / "syncextpack"
@@ -68,7 +68,8 @@ def cmd_window(args) -> int:
 JOB_KINDS = {"inventory": "inv", "autokit-stock": "akstock", "autokit-patched": "akpatch",
              "remove": "rm", "install": "inst", "undo": "undo", "autokit-config": "akcfg",
              "snapshot": "snap", "logger": "log", "native-hello": "hello", "runner-guard": "guard",
-             "theme": "theme", "apps-menu": "appmenu", "cleanup": "clean", "screen": "screen"}
+             "theme": "theme", "apps-menu": "appmenu", "cleanup": "clean", "screen": "screen",
+             "bundle": "bundle"}
 MARK = {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
 
 
@@ -245,6 +246,42 @@ def _plan_undo(args) -> tuple[dict, dict]:
             {"SyncApps.xml.expected": expected})
 
 
+RUNNER_FILES = ("MortScript.exe", "s2amjob.exe", "s2amjob.mscr")  # each part's own; the bundle has its
+
+
+def _plan_bundle(store: Store, serial: str, folders: list[Path]) -> tuple[dict, list[tuple[Path, str]]]:
+    """(params, payload) for a bundle of jobs already built, read from their job folders: each
+    part's plan, and its files (checked against the hashes it was built with) at its own car path."""
+    parts, payload = [], []
+    for folder in folders:
+        job = Job.from_json((folder / "job.json").read_text())
+        if job.serial != serial or job.kind == "bundle":
+            raise ValueError(f"{folder} is not a job for {serial} that a bundle can hold")
+        try:
+            status = store.job(serial, job.id).get("status")
+        except (OSError, ValueError, KeyError):
+            status = None
+        if status in ("applied", "already-applied"):
+            raise ValueError(f"{job.id} has run on the car already")
+        if status is not None:  # built on this Mac: the folder must hold exactly what was recorded
+            record = store.job(serial, job.id)
+            if (record.get("params"), record.get("files")) != (job.params, job.files):
+                raise ValueError(f"{folder}/job.json is not what {job.id} was built as")
+        for car_path, digest in job.files.items():
+            name = car_path[len(job.job_dir) + 1:] if car_path.startswith(job.job_dir + "/") else ""
+            if not name or "/" in name or "\\" in name or name.startswith("."):
+                raise ValueError(f"{job.id} lists a file outside its own folder: {car_path}")
+            source = folder / "payload" / car_path.lstrip("/")
+            if not source.is_file() or pack.sha256(source) != digest:
+                raise ValueError(f"{source} is not the file {job.id} was built with")
+            if Path(car_path).name not in RUNNER_FILES:
+                payload.append((source, car_path))
+        parts.append({"kind": job.kind, "id": job.id, "created_utc": job.created_utc, "params": job.params})
+    params = {"parts": parts}
+    bundle_parts(Job(serial, "bundle", params=params))  # kinds, order, no repeats
+    return params, payload
+
+
 def cmd_job(args) -> int:
     params, extra, payload = {}, None, None
     if args.kind == "remove":
@@ -305,6 +342,13 @@ def cmd_job(args) -> int:
             print(f"apps-menu: replaces SyncApps.swf and adds {len(params['added'])} tile pictures, backing up "
                   "the menu first; SYNC restarts. Build the restore stick now as well: "
                   "s2am job apps-menu --restore <this job>")
+    elif args.kind == "bundle":
+        params, payload = _plan_bundle(Store(), args.serial, args.part)
+        print(f"bundle: {len(params['parts'])} jobs in one run, in this order, each verified on its own "
+              "after import; the first that stops ends the run:")
+        for part in params["parts"]:
+            print(f"  {part['id']}")
+        print("SYNC restarts after it")
     elif args.kind == "screen":
         params, extra = theme.plan_screen(Store(), args.serial, args.screen, args.swf, args.restore, args.fetch)
         if params.get("restore"):
@@ -354,7 +398,7 @@ def cmd_stick_prepare(args) -> int:
               f"even if you have to restart SYNC; pull it afterwards")
     else:
         print("in the car: insert the stick, wait for 'Install successfully completed', pull it")
-    if job.kind in apps.MENU_KINDS or job.kind in SWAP_KINDS:
+    if job.kind in apps.MENU_KINDS or job.kind in (*SWAP_KINDS, "bundle"):
         print("SYNC restarts after this job")
     _eject(Path(args.stick), args)
     return 0
@@ -399,6 +443,10 @@ def cmd_stick_import(args) -> int:
 
 
 STOP_HINTS = {
+    "stopped": ": one of its parts stopped before changing anything more; the lines below say "
+               "which and why. Parts before it are on the car",
+    "not-run": ": an earlier part of its bundle stopped, so this one did not run",
+    "interrupted": ": it started but did not finish (power cut or stick pulled). Run the undo stick",
     "stale": ": the car's files changed since the job was planned. Nothing changed; run an "
              "inventory (or a drive log, for a theme), then plan again",
     "busy": ": the app was running and nothing changed. UpdateService used up the stick anyway: "
@@ -772,6 +820,12 @@ def parser() -> argparse.ArgumentParser:
     screen.add_argument("--fetch", action="append", default=[], metavar="PATTERN",
                         help="also copy matching car files to the stick, read-only")
     screen.set_defaults(func=cmd_job)
+    bundle = job_sub.add_parser("bundle", parents=[common],
+                                help="several jobs already built, in one run (theme, apps-menu, screen "
+                                     "and a cleanup last); each is verified on its own after import")
+    bundle.add_argument("--part", action="append", type=Path, required=True, metavar="JOB_FOLDER",
+                        help="a built job's folder (build/jobs/<id>), in the order to run")
+    bundle.set_defaults(func=cmd_job)
     install = job_sub.add_parser("install", parents=[common],
                                  help="copy a SyncExtPack app to the car and add it to the menu")
     install.add_argument("app", help="the app name (see s2am apps)")

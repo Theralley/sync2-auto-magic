@@ -100,6 +100,14 @@ That brought SYNC back every time. Last resort: engine off, lock the car, wait 1
   `Tiles\` and do nothing. The rest of SYNC is not affected: the Apps menu loads only when
   you open Apps.
 
+### A bundle stopped half-way
+- **What the import says:** the bundle `stopped`; one part says why (`stale`, `failed`), the
+  parts after it `not-run`, the parts before it `applied` and verified.
+- **Fix:** the parts before it are on the car, each with its backup. Keep them, or insert the
+  undo bundle (or a part's own undo stick). Plan the stopped part again after a drive log.
+- **`interrupted`:** a part started and did not finish (power cut, stick pulled). Insert the
+  undo bundle: each undo carries the originals itself.
+
 ### A rebuilt Ford screen does not open or looks wrong
 - **Fix:** insert its undo stick (`s2am job screen --restore <job>`). It carries Ford's original
   screen itself; SYNC restarts with it. Only screens SYNC loads when they are opened are ever

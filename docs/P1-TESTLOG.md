@@ -289,3 +289,20 @@ nothing recompiled; every other tag byte for byte and every value read back.
 | `screen-4dca`: undo | 271,144 bytes | after the cleanup: verified, Ford's screen back |
 
 In the car: R3a, then its undo (which also proves a screen undo in the car), then R3b.
+
+## Same day: everything in one visit (bundle)
+
+Rasmus asked for one visit instead of one per job. `s2am job bundle` runs jobs already built in
+one script, in order, each with its own report folder and done marker, so the import verifies
+each as if it had run alone; the first part that stops ends the run.
+
+| Job | Parts, in order | install.bin | Rehearsal |
+|---|---|---|---|
+| `bundle-1c35` | Night (`theme-fd69`), SyncExtPack's menu back (`appmenu-83d5`), our menu with Swedish tiles (`appmenu-1e46`), R3b (`screen-6ffe`), cleanup (`clean-0831`) | 1,963,648 bytes | every part verified byte for byte; 26 old job folders removed, every backup kept |
+| `bundle-8737` | undo all: Ford's call history (`screen-4dca`), SyncExtPack's menu (`appmenu-1742`), Ford's theme (`theme-78ed`) | 1,838,360 bytes | after the bundle: every part verified, the car as before |
+
+The scripts of single jobs are byte for byte as before (checked for all 31 built jobs). A Codex
+review found no leaks between parts, and five things now fixed: a part may only stage files
+inside its own job folder; a part built on this Mac must match what the store recorded; a
+part that ran from another stick keeps its applied record; a part cut short reports
+`interrupted`, not `not-run`; a bundle run again marks its parts as run before. Tests: 245 pass.

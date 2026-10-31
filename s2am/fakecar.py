@@ -12,8 +12,8 @@ import shutil
 from pathlib import Path
 
 from .job import (AUTOKIT_CE, AUTOKIT_LOGS, AUTOKIT_MODULES, BACKUP_DIR, GUARD_LOG, INVENTORY_ROOT, MENU_XML,
-                  PHASE_DIR, PLUGINS_MASK, REPORTS_DIR, SWAP_KINDS, TOOLS_CE, Job, ce_path,
-                  swap_target)
+                  PHASE_DIR, PLUGINS_MASK, REPORTS_DIR, SWAP_KINDS, TOOLS_CE, Job, bundle_parts,
+                  ce_path, swap_target)
 
 
 class PowerCut(Exception):
@@ -93,6 +93,9 @@ class FakeCar:
         out.mkdir(parents=True, exist_ok=True)
         if self.exists(job.done_marker):
             (out / "replayed.txt").write_text(job.id)
+            for part in bundle_parts(job) if job.kind == "bundle" else []:
+                (out.parent / part.id).mkdir(exist_ok=True)
+                (out.parent / part.id / "replayed.txt").write_text(part.id)
             return
         variant = {"akstock": "orig", "akpatch": "patched"}.get(job.kind)
         if variant:
@@ -112,16 +115,9 @@ class FakeCar:
         if job.kind in SWAP_KINDS and not self._swap(out, job):
             return
         if job.kind == "clean":
-            jobs = self._resolve(ce_path(job.job_dir)).parent
-            lines = []
-            for folder in sorted(p for p in jobs.iterdir() if p.is_dir()):
-                if (folder / f"keep-{job.id}").exists() or folder.name == job.id:
-                    (folder / f"keep-{job.id}").write_text(job.id)
-                    lines.append(f"K|{self._ce(folder)}")
-                else:
-                    shutil.rmtree(folder)
-                    lines.append(f"D|{self._ce(folder)}")
-            (out / "cleanup.txt").write_text("".join(f"{line}\r\n" for line in lines))
+            self._clean(out, job, job.job_dir)
+        if job.kind == "bundle" and not self._bundle(out, job):
+            return
         if job.kind == "snap":
             self._snapshot(out)
         if job.kind == "log":
@@ -247,6 +243,42 @@ class FakeCar:
             if self.exists(path):
                 (out / "fetched").mkdir(exist_ok=True)
                 shutil.copyfile(self._resolve(path), out / "fetched" / path.strip("\\").replace("\\", "_"))
+        return True
+
+    def _clean(self, out: Path, job: Job, home: str) -> None:
+        """The cleanup's effect: every job folder goes except the one marked to stay (``home``)."""
+        keep = self._resolve(ce_path(home))
+        keep.mkdir(parents=True, exist_ok=True)
+        (keep / f"keep-{job.id}").write_text(job.id)
+        lines = []
+        for folder in sorted(p for p in keep.parent.iterdir() if p.is_dir()):
+            if (folder / f"keep-{job.id}").exists():
+                lines.append(f"K|{self._ce(folder)}")
+            else:
+                shutil.rmtree(folder)
+                lines.append(f"D|{self._ce(folder)}")
+        (out / "cleanup.txt").write_text("".join(f"{line}\r\n" for line in lines))
+
+    def _bundle(self, out: Path, job: Job) -> bool:
+        """A bundle's effect: its parts in order, each reporting on its own; the first that
+        stops ends the run, and the parts after it stay queued."""
+        parts = bundle_parts(job)
+        for part in parts:
+            (out.parent / part.id).mkdir(exist_ok=True)
+            (out.parent / part.id / "queued.txt").write_text(job.id)
+        for part in parts:
+            (out / "part.txt").write_text(part.id)
+            part_out = out.parent / part.id
+            if self.exists(part.done_marker):
+                (part_out / "replayed.txt").write_text(part.id)
+                continue
+            (part_out / "started.txt").write_text(job.id)
+            if part.kind == "clean":
+                self._clean(part_out, part, job.job_dir)
+            elif not self._swap(part_out, part):
+                return False
+            self.put(part.done_marker, part.id.encode())
+            (part_out / "done.txt").write_text(f"{part.id} applied")
         return True
 
     def _change_menu(self, out: Path, job: Job) -> bool:

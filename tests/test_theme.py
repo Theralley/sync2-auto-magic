@@ -18,7 +18,8 @@ sys.path.insert(0, str(ROOT))
 
 from s2am import cli, native, stick, theme  # noqa: E402
 from s2am.fakecar import FakeCar  # noqa: E402
-from s2am.job import APPS_MENU_CE, THEMES_CE, Job, meta, swap_script, theme_script  # noqa: E402
+from s2am.job import (APPS_MENU_CE, THEMES_CE, Job, bundle_parts, bundle_script, meta, swap_script,  # noqa: E402
+                      theme_script)
 from s2am.state import Store  # noqa: E402
 
 HAVE_UPSTREAM = (ROOT.parent / "syncextpack" / "SyncExtPack").exists()
@@ -100,6 +101,36 @@ class Checks(unittest.TestCase):
                 swap_script(Job(SERIAL, "appmenu", params={"files": menu, "added": added}))
         with self.assertRaises(ValueError):  # a theme job cannot touch the menu, nor the other way round
             swap_script(Job(SERIAL, "theme", params={"files": menu}))
+
+    def test_bundle_script_queues_every_part_and_keeps_its_own_folder(self):
+        files = {"PhoneHistory.swf": {"old": 9, "new": 10, "old_sha256": "a", "new_sha256": "b"}}
+        screen = Job(SERIAL, "screen", params={"screen": SCREEN, "files": files})
+        clean = Job(SERIAL, "clean")
+        parts = [{"kind": j.kind, "id": j.id, "created_utc": j.created_utc, "params": j.params}
+                 for j in (screen, clean)]
+        bundle = Job(SERIAL, "bundle", params={"parts": parts})
+        script = bundle_script(bundle)
+        for part in (screen, clean):
+            self.assertIn(f'WriteFile(stick & "\\s2am\\reports\\{part.id}\\queued.txt"', script)
+        self.assertLess(script.index(screen.id + "\\queued.txt"), script.index('Copy(jd & "\\new-PhoneHistory.swf"'))
+        self.assertIn(f'jd = "\\SyncExtendedPack\\_s2am\\jobs\\{bundle.id}"', script)  # the cleanup keeps it
+        self.assertEqual(script.count("DelTree("), 1)
+        self.assertIn("NEED_REBOOT=True", meta(bundle).decode("utf-16-le"))
+        for wrong in ([{**parts[1]}, {**parts[0]}], [parts[0], parts[0]],
+                      [{"kind": "rm", "id": parts[0]["id"].replace("screen", "rm"), "created_utc": screen.created_utc,
+                        "params": {}}], []):
+            with self.subTest(wrong), self.assertRaises(ValueError):
+                bundle_parts(Job(SERIAL, "bundle", params={"parts": wrong}))
+
+    def test_a_bundle_part_cut_short_reads_as_interrupted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            report, updater = Path(temp) / "report", Path(temp) / "SyncExtPack"
+            report.mkdir()
+            updater.mkdir()
+            for marker, status in (("queued.txt", "not-run"), ("started.txt", "interrupted"),
+                                   ("stale.txt", "stale"), ("done.txt", "applied")):
+                (report / marker).write_text("x")  # each marker on top of the ones before
+                self.assertEqual(stick._status(report, updater)[0], status, marker)
 
     def test_screen_script_writes_only_that_screens_folder(self):
         files = {"PhoneHistory.swf": {"old": 9, "new": 10, "old_sha256": "a", "new_sha256": "b"}}
@@ -394,6 +425,123 @@ class Loop(unittest.TestCase):
         code, out = self.cli("job", "screen", "--restore", theme_job.id, "--serial", SERIAL, "--no-pack")
         self.assertNotEqual(code, 0)
         self.assertIn("is not a screen job", out)
+
+    def build(self, *args) -> Path:
+        """Build a job without running it; returns its folder."""
+        work = self.tmp / f"built{len(list(self.tmp.glob('built*')))}"
+        code, out = self.cli("job", *args, "--serial", SERIAL, "--no-pack", "--work", str(work))
+        self.assertEqual(code, 0, out)
+        return work
+
+    def run_built(self, work: Path, on=None) -> str:
+        """Prepare, insert and import a built job, on the usual stick or another one (``on``)."""
+        job, usb = Job.from_json((work / "job.json").read_text()), on or self.stick
+        usb.mkdir(exist_ok=True)
+        (work / "install.bin").write_bytes(b"pack")
+        stick.prepare(usb, work / "install.bin", job, require_volume=False)
+        self.car.insert(usb, work, job)
+        return self.cli("stick", "import", str(usb), "--any-path")[1]
+
+    def test_bundle_runs_its_parts_in_order_and_each_is_verified(self):
+        swf = self.tmp / "PhoneHistory.swf"
+        swf.write_bytes(flash(10, b"our icons" * 1000, compressed=True))
+        menu = self.tmp / "SyncApps-tiles.swf"
+        menu.write_bytes(flash(8, b"tiles" * 4000))
+        parts = [self.build("theme", "--preset", "lincoln"),
+                 self.build("apps-menu", "--swf", str(menu), "--tiles", str(self.tiles())),
+                 self.build("screen", "--screen", SCREEN, "--swf", str(swf)),
+                 self.build("cleanup")]
+        bundle = self.build("bundle", *[a for w in parts for a in ("--part", str(w))])
+        imported = self.run_built(bundle)
+        self.assertIn("verified: the new theme is on the car (5 files match byte for byte)", imported)
+        self.assertIn("verified: the new Apps menu is on the car (4 files match byte for byte)", imported)
+        self.assertIn("verified: the new screen is on the car (1 files match byte for byte)", imported)
+        self.assertRegex(imported, r"bundle-[0-9a-f]{4}: applied")
+        self.assertEqual(self.car._resolve(HISTORY_CE).read_bytes(), swf.read_bytes())
+        self.assertEqual(self.car._resolve(f"{APPS_MENU_CE}\\SyncApps.swf").read_bytes(), menu.read_bytes())
+        jobs = self.car._resolve("\\SyncExtendedPack\\_s2am\\jobs")
+        self.assertEqual([p.name for p in jobs.iterdir()], [Job.from_json((bundle / "job.json").read_text()).id])
+        theme_id = Job.from_json((parts[0] / "job.json").read_text()).id
+        self.assertTrue(self.car.exists(f"\\SyncExtendedPack\\_s2am\\backup\\{theme_id}\\red.bmp"))
+        undo = self.build("bundle", "--part", str(self.build("theme", "--restore", theme_id)),
+                          "--part", str(self.build("screen", "--restore",
+                                                    Job.from_json((parts[2] / "job.json").read_text()).id)))
+        imported = self.run_built(undo)
+        self.assertIn("verified: the original theme is back", imported)
+        self.assertIn("verified: the original screen is back", imported)
+        self.assertEqual(self.car_theme(), self.ford)
+        self.assertEqual(self.car._resolve(HISTORY_CE).read_bytes(), HISTORY)
+
+    def test_a_part_that_stops_ends_the_bundle(self):
+        swf = self.tmp / "PhoneHistory.swf"
+        swf.write_bytes(flash(10, b"our icons" * 1000, compressed=True))
+        parts = [self.build("theme", "--preset", "lincoln"),
+                 self.build("screen", "--screen", SCREEN, "--swf", str(swf))]
+        bundle = self.build("bundle", *[a for w in parts for a in ("--part", str(w))])
+        self.car.put(f"{THEMES_CE}\\Theme.XML", theme_xml("Ford").replace(b"0x966716", b"0x111111"))
+        imported = self.run_built(bundle)
+        self.assertRegex(imported, r"theme-[0-9a-f]{4}: stale")
+        self.assertRegex(imported, r"screen-[0-9a-f]{4}: not-run")
+        self.assertRegex(imported, r"bundle-[0-9a-f]{4}: stopped")
+        self.assertEqual(self.car._resolve(HISTORY_CE).read_bytes(), HISTORY)  # never reached
+
+    def test_bundle_refuses_parts_it_should_not_hold(self):
+        theme_part = self.build("theme", "--preset", "lincoln")
+        clean = self.build("cleanup")
+        for parts, why in (([clean, theme_part], "only be the last part"), ([theme_part, theme_part], "twice")):
+            code, out = self.cli("job", "bundle", *[a for w in parts for a in ("--part", str(w))], "--serial", SERIAL,
+                                 "--no-pack")
+            with self.subTest(why):
+                self.assertNotEqual(code, 0)
+                self.assertIn(why, out)
+        new = next(theme_part.rglob("new-red.bmp"))
+        new.write_bytes(new.read_bytes()[:-1] + b"x")  # changed after it was built
+        code, out = self.cli("job", "bundle", "--part", str(theme_part), "--serial", SERIAL, "--no-pack")
+        self.assertIn("not the file", out)
+        ran, _, _ = self.run_job("theme", "--preset", "lincoln")
+        code, out = self.cli("job", "bundle", "--part", str(self.tmp / "job0"), "--serial", SERIAL, "--no-pack")
+        self.assertIn("has run on the car already", out)
+
+    def test_bundle_refuses_a_part_that_names_a_file_outside_its_folder(self):
+        part = self.build("theme", "--preset", "lincoln")
+        job = Job.from_json((part / "job.json").read_text())
+        job.files["/8inchSkins/Ford/Sync/Apps/Info/SyncApps/SyncApps.xml"] = "0" * 64
+        (part / "job.json").write_text(job.to_json())
+        code, out = self.cli("job", "bundle", "--part", str(part), "--serial", SERIAL, "--no-pack")
+        self.assertNotEqual(code, 0)
+        self.assertIn("outside its own folder", out)
+
+    def test_bundle_refuses_a_part_that_differs_from_what_was_built(self):
+        part = self.build("theme", "--preset", "lincoln")
+        job = Job.from_json((part / "job.json").read_text())
+        Store().save_job(SERIAL, job.id, {**__import__("json").loads(job.to_json()), "status": "built"})
+        job.params["files"]["red.bmp"]["old_sha256"] = "0" * 64
+        (part / "job.json").write_text(job.to_json())
+        code, out = self.cli("job", "bundle", "--part", str(part), "--serial", SERIAL, "--no-pack")
+        self.assertIn("is not what", out)
+
+    def test_a_part_applied_from_another_stick_stays_applied(self):
+        swf = self.tmp / "PhoneHistory.swf"
+        swf.write_bytes(flash(10, b"our icons" * 1000, compressed=True))
+        first, screen = self.build("theme", "--preset", "lincoln"), self.build("screen", "--screen", SCREEN,
+                                                                                "--swf", str(swf))
+        bundle = self.build("bundle", "--part", str(first), "--part", str(screen))
+        self.run_built(screen, on=self.tmp / "other")  # the screen alone, from another stick first
+        self.car.put(f"{THEMES_CE}\\Theme.XML", theme_xml("Ford").replace(b"0x966716", b"0x111111"))
+        imported = self.run_built(bundle)  # the theme stops, so the bundle never reaches the screen
+        self.assertIn("it is applied already, from another run", imported)
+        screen_id = Job.from_json((screen / "job.json").read_text()).id
+        self.assertEqual(Store().job(SERIAL, screen_id)["status"], "applied")
+        self.assertTrue((Store().report(SERIAL, screen_id) / "backup" / "PhoneHistory.swf").is_file())
+
+    def test_a_bundle_run_again_marks_its_parts_as_run_before(self):
+        part = self.build("theme", "--preset", "lincoln")
+        bundle = self.build("bundle", "--part", str(part))
+        self.run_built(bundle)
+        self.assertIn("inserted again", self.run_built(bundle))  # the same stick: its first reports
+        imported = self.run_built(bundle, on=self.tmp / "fresh")  # a fresh stick: no reports yet
+        self.assertRegex(imported, r"theme-[0-9a-f]{4}: already-applied")
+        self.assertRegex(imported, r"bundle-[0-9a-f]{4}: already-applied")
 
     def test_no_drive_log_no_theme(self):
         shutil.rmtree(self.tmp / "home")

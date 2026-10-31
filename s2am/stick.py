@@ -15,7 +15,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .job import Job
+from .job import Job, bundle_parts
 from .state import Store
 
 UPDATER_DIR = "SyncExtPack"
@@ -26,7 +26,9 @@ UPDATER_FILES = ("install.bin", "installed.bin", "install_log.txt", "pack_instal
 STOPPED = {"stale.txt": "stale", "busy.txt": "busy", "backup-failed.txt": "failed",
            "backup-missing.txt": "failed", "copy-failed.txt": "failed", "payload-bad.txt": "failed",
            "missing.txt": "failed", "selftest-failed.txt": "failed", "backup-bad.txt": "failed",
-           "unknown-runner.txt": "failed"}
+           "unknown-runner.txt": "failed",
+           # a bundle: its part that stopped says why; parts after it never ran (checked last)
+           "part.txt": "stopped", "started.txt": "interrupted", "queued.txt": "not-run"}
 
 
 class StickError(Exception):
@@ -69,6 +71,9 @@ def prepare(stick: Path, install_bin: Path, job: Job, require_volume: bool = Tru
         (archive / "superseded").mkdir(parents=True, exist_ok=True)
         shutil.move(str(old), str(archive / "superseded" / old.name))
     (pending / f"{job.id}.json").write_text(job.to_json())
+    if job.kind == "bundle":  # each part reports on its own, so the Mac verifies each one
+        for part in bundle_parts(job):
+            (pending / f"{part.id}.json").write_text(part.to_json())
     return archive
 
 
@@ -124,6 +129,16 @@ def import_reports(stick: Path, store: Store, require_volume: bool = True) -> li
         # place in time instead of looking like fresh evidence.
         record = {**json.loads(job.to_json()), "status": status, "replayed": replayed,
                   "imported_utc": earlier or now}
+        try:
+            known = store.job(job.serial, job.id).get("status")
+        except (OSError, ValueError, KeyError):
+            known = None
+        if known == "applied" and status not in ("applied", "already-applied"):
+            # it ran from another stick; this one (a bundle that stopped before it) did not run it
+            results.append({**record, "status": status, "reason": "it is applied already, from another run"})
+            imported.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(path), str(imported / path.name))
+            continue
         if report.exists() and _has_symlink(report):
             record["status"] = "rejected"
             record["reason"] = "report contains a symlink"

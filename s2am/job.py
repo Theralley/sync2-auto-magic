@@ -146,7 +146,7 @@ def _find_stick(job: Job) -> list[str]:
     ]
 
 
-def _header(job: Job) -> list[str]:
+def _header(job: Job, on_replay: list[str] = ()) -> list[str]:
     """Silence error dialogs, create the report folder, and stop if this job already ran.
 
     UpdateService waits for the script without a timeout, so an error dialog
@@ -167,6 +167,7 @@ def _header(job: Job) -> list[str]:
         "EndIf",
         f"If (FileExists({_quote(ce_path(job.done_marker))}))",
         f'  WriteFile(out & "\\replayed.txt", {_quote(job.id)})',
+        *on_replay,
         "  Exit",
         "EndIf",
     ]
@@ -685,6 +686,12 @@ def _flat(relative: str) -> str:
 
 def swap_script(job: Job) -> str:
     """Replace a few of SYNC's files (or put a swap job's originals back); SYNC restarts.
+    The steps are swap_lines; a bundle runs the same steps for each of its parts."""
+    return _script(_header(job) + swap_lines(job) + _fetch(job) + _inventory() + _footer(job))
+
+
+def swap_lines(job: Job) -> list[str]:
+    """A swap job's own steps, between the script's header and the inventory.
 
     Theme jobs swap the five files in THEMES_CE, Apps menu jobs SyncApps.swf in APPS_MENU_CE and
     add tile pictures under it, screen jobs one of Ford's screens listed in SCREENS. The job
@@ -701,7 +708,7 @@ def swap_script(job: Job) -> str:
         raise ValueError(f"invalid {what} files {sorted(files)!r}")
     if any(not ADDED.fullmatch(name) for name in added) or (added and job.kind != "appmenu"):
         raise ValueError(f"invalid added files {sorted(added)!r}")
-    lines = _header(job) + [
+    lines = [
         f"th = {_quote(folder)}",
         f"jd = {_quote(ce_path(job.job_dir))}",
         "If (NOT DirExists(th))",
@@ -779,13 +786,17 @@ def swap_script(job: Job) -> str:
               *[f'Copy(th & "\\{name}", out & "\\applied\\{name}", TRUE)' for name in files],
               *[f'Copy(th & "\\{name}", out & "\\applied\\{_flat(name)}", TRUE)' for name in added],
               f'WriteFile(out & "\\{done}", {_quote(job.id)})']
-    return _script(lines + _fetch(job) + _inventory() + _footer(job))
+    return lines
 
 
 theme_script = swap_script
 
 
 def cleanup_script(job: Job) -> str:
+    return _script(_header(job) + cleanup_lines(job) + _inventory() + _footer(job))
+
+
+def cleanup_lines(job: Job, home: str | None = None) -> list[str]:
     """Remove s2am's own finished job folders (\\SyncExtendedPack\\_s2am\\jobs\\<id>).
 
     Every job leaves its folder behind (MortScript and the runner, about 0.17 MB). This job
@@ -795,8 +806,8 @@ def cleanup_script(job: Job) -> str:
     """
     jobs = ce_path(JOBS_DIR)
     keep = f"keep-{job.id}"
-    lines = _header(job) + [
-        f"jd = {_quote(ce_path(job.job_dir))}",
+    lines = [
+        f"jd = {_quote(ce_path(home or job.job_dir))}",  # in a bundle: the bundle's folder, where it runs
         f'WriteFile(jd & "\\{keep}", {_quote(job.id)})',
         'cl = out & "\\cleanup.txt"',
         'WriteFile(cl, "")',
@@ -814,7 +825,60 @@ def cleanup_script(job: Job) -> str:
         "  EndIf",
         "EndForEach",
     ]
-    return _script(lines + _inventory() + _footer(job))
+    return lines
+
+
+BUNDLE_PARTS = (*SWAP_KINDS, "clean")  # jobs a bundle may run; a cleanup only last
+BUNDLE_LIMIT = 8
+
+
+def bundle_parts(job: Job) -> list[Job]:
+    """A bundle's parts as jobs of their own, checked like any job read back from a stick."""
+    parts = job.params.get("parts")
+    if not isinstance(parts, list) or not 1 <= len(parts) <= BUNDLE_LIMIT:
+        raise ValueError("a bundle holds 1 to 8 parts")
+    jobs = [validate(Job(job.serial, p["kind"], id=p["id"], created_utc=p["created_utc"], params=p["params"]))
+            for p in parts]
+    if any(part.kind not in BUNDLE_PARTS for part in jobs):
+        raise ValueError(f"a bundle runs only {', '.join(BUNDLE_PARTS)} jobs")
+    if len({part.id for part in jobs}) != len(jobs):
+        raise ValueError("a part appears twice")
+    if any(part.kind == "clean" for part in jobs[:-1]):
+        raise ValueError("a cleanup can only be the last part")
+    return jobs
+
+
+def bundle_script(job: Job) -> str:
+    """Several prepared jobs in one run, in order, each with its own steps, report folder and
+    done marker, as if it had run alone, so the Mac verifies each part on import. Each part
+    is first marked queued; the first part that stops ends the run (its own Exit), so a later
+    part never meets a car it was not planned against, and parts that did not run say so."""
+    parts = bundle_parts(job)
+    reports = 'stick & "\\s2am\\reports\\'
+    replayed = []  # the whole bundle ran before: so did each part
+    for part in parts:
+        replayed += [f'  MkDir({reports}{part.id}")',
+                     f'  WriteFile({reports}{part.id}\\replayed.txt", {_quote(part.id)})']
+    lines = _header(job, replayed) + ["bout = out"]
+    for part in parts:
+        lines += [f'MkDir({reports}{part.id}")',
+                  f'WriteFile({reports}{part.id}\\queued.txt", {_quote(job.id)})']
+    for part in parts:
+        steps = (swap_lines(part) + _fetch(part)) if part.kind in SWAP_KINDS \
+            else cleanup_lines(part, home=job.job_dir)
+        lines += [f'WriteFile(bout & "\\part.txt", {_quote(part.id)})',
+                  f'out = {reports}{part.id}"',
+                  f"If (FileExists({_quote(ce_path(part.done_marker))}))",
+                  f'  WriteFile(out & "\\replayed.txt", {_quote(part.id)})',
+                  "Else",
+                  f'  WriteFile(out & "\\started.txt", {_quote(job.id)})',  # a cut from here on: interrupted
+                  *[f"  {line}" for line in steps],
+                  '  MkDir("\\SyncExtendedPack\\_s2am")',
+                  f"  MkDir({_quote(ce_path(DONE_DIR))})",
+                  f"  WriteFile({_quote(ce_path(part.done_marker))}, {_quote(part.id)})",
+                  f'  WriteFile(out & "\\done.txt", {_quote(part.id + " applied")})',
+                  "EndIf"]
+    return _script(lines + ["out = bout"] + _inventory() + _footer(job))
 
 
 def hello_script(job: Job) -> str:
@@ -841,9 +905,10 @@ SCRIPTS = {
     "appmenu": swap_script,
     "screen": swap_script,
     "clean": cleanup_script,
+    "bundle": bundle_script,
 }
 MENU_CHANGING = ("rm", "undo", "inst")  # SYNC reads SyncApps.xml at start, so these restart it
-RESTARTING = MENU_CHANGING + SWAP_KINDS  # and its theme, Apps menu and screens
+RESTARTING = MENU_CHANGING + SWAP_KINDS + ("bundle",)  # and its theme, Apps menu and screens
 
 
 def meta(job: Job) -> bytes:
