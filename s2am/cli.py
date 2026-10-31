@@ -68,7 +68,7 @@ def cmd_window(args) -> int:
 JOB_KINDS = {"inventory": "inv", "autokit-stock": "akstock", "autokit-patched": "akpatch",
              "remove": "rm", "install": "inst", "undo": "undo", "autokit-config": "akcfg",
              "snapshot": "snap", "logger": "log", "native-hello": "hello", "runner-guard": "guard",
-             "theme": "theme"}
+             "theme": "theme", "apps-menu": "appmenu", "cleanup": "clean"}
 MARK = {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
 
 
@@ -296,6 +296,15 @@ def cmd_job(args) -> int:
                   "SYNC restarts. Build the restore stick now as well: s2am job theme --restore <this job>")
         if params.get("fetch"):
             print(f"  and copies {len(params['fetch'])} car files to the stick for study (read-only)")
+    elif args.kind == "apps-menu":
+        params, extra = theme.plan_menu(Store(), args.serial, args.swf, args.tiles, args.restore, args.fetch)
+        if params.get("restore"):
+            print(f"apps-menu: puts SyncExtPack's own Apps menu back (what {args.restore} replaced); "
+                  "the tile pictures stay, unused; SYNC restarts")
+        else:
+            print(f"apps-menu: replaces SyncApps.swf and adds {len(params['added'])} tile pictures, backing up "
+                  "the menu first; SYNC restarts. Build the restore stick now as well: "
+                  "s2am job apps-menu --restore <this job>")
     if getattr(args, "dry_run", False):
         return 0
     job = Job(serial=args.serial, kind=JOB_KINDS[args.kind], params=params)
@@ -338,7 +347,7 @@ def cmd_stick_prepare(args) -> int:
               f"even if you have to restart SYNC; pull it afterwards")
     else:
         print("in the car: insert the stick, wait for 'Install successfully completed', pull it")
-    if job.kind in apps.MENU_KINDS or job.kind == "theme":
+    if job.kind in apps.MENU_KINDS or job.kind in ("theme", "appmenu"):
         print("SYNC restarts after this job")
     _eject(Path(args.stick), args)
     return 0
@@ -365,8 +374,14 @@ def cmd_stick_import(args) -> int:
                   "  NOT verified: hello.exe wrote nothing; native code may not run here")
         if record.get("kind") == "guard" and record["status"] == "applied":
             print(f"  {_verify_guard(store, record)}")
-        if record.get("kind") == "theme" and record["status"] == "applied" and report and not record.get("replayed"):
-            print(f"  {theme.verify(report, record['params'])}")
+        if record.get("kind") == "clean" and record["status"] == "applied" and report and not record.get("replayed"):
+            listed = (report / "cleanup.txt").read_text(errors="replace").splitlines() \
+                if (report / "cleanup.txt").is_file() else []
+            gone, stuck = sum(x.startswith("D|") for x in listed), [x[2:] for x in listed if x.startswith("S|")]
+            print(f"  removed {gone} old job folders" + (f"; still there: {stuck}" if stuck else ""))
+        if record.get("kind") in ("theme", "appmenu") and record["status"] == "applied" and report \
+                and not record.get("replayed"):
+            print(f"  {theme.verify(report, record['params'], record['kind'])}")
         if record.get("kind") in apps.MENU_KINDS and record["status"] == "applied":
             verdict = _verify_menu(store, record)
             print(f"  {verdict}")
@@ -729,6 +744,18 @@ def parser() -> argparse.ArgumentParser:
                          help="also copy matching car files to the stick, read-only "
                               "(e.g. '\\Windows\\bt*.dll'); matched against the last drive log")
     colours.set_defaults(func=cmd_job)
+    job_sub.add_parser("cleanup", parents=[common],
+                       help="remove s2am's own finished job folders from the car (backups stay)"
+                       ).set_defaults(func=cmd_job)
+    menu = job_sub.add_parser("apps-menu", parents=[common],
+                              help="a new Apps menu: SyncApps.swf plus tile pictures, backed up first; "
+                                   "undo with --restore JOB")
+    menu.add_argument("--swf", type=Path, help="the new SyncApps.swf (built on this Mac from the car's own)")
+    menu.add_argument("--tiles", type=Path, help="a folder of tile pictures (sync-redesign tools/make_tiles.py)")
+    menu.add_argument("--restore", metavar="JOB_ID", help="put back what that Apps menu job replaced")
+    menu.add_argument("--fetch", action="append", default=[], metavar="PATTERN",
+                      help="also copy matching car files to the stick, read-only")
+    menu.set_defaults(func=cmd_job)
     install = job_sub.add_parser("install", parents=[common],
                                  help="copy a SyncExtPack app to the car and add it to the menu")
     install.add_argument("app", help="the app name (see s2am apps)")

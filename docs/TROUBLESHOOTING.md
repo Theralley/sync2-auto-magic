@@ -94,6 +94,12 @@ That brought SYNC back every time. Last resort: engine off, lock the car, wait 1
 - The full ladder, down to reinstalling SYNC 3.10, is in
   [sync-redesign's RECOVERY.md](https://github.com/Theralley/sync-redesign/blob/main/docs/RECOVERY.md).
 
+### The new Apps menu shows nothing, or a tile starts the wrong app
+- **Fix:** insert its undo stick (`s2am job apps-menu --restore <job>`). It carries SyncExtPack's
+  original `SyncApps.swf` itself; SYNC restarts with the old list. The tile pictures stay in
+  `Tiles\` and do nothing. The rest of SYNC is not affected: the Apps menu loads only when
+  you open Apps.
+
 ### An app in the Apps menu does nothing when tapped
 - **Seen:** 2026-10-30. A previous owner's MirrorLink, Video Player, Navitel and Reboot showed
   in the menu, but nothing happened on tap: no error, no freeze.

@@ -171,15 +171,68 @@ def plan(store: Store, serial: str, preset: str | None, source: Path | None, res
     return params, extra
 
 
-def verify(report: Path, params: dict) -> str:
+MENU_FOLDER = "skins/8inchSkins/Ford/Sync/Apps/Info/SyncApps"
+TILE = re.compile(r"[A-Za-z0-9_-]{1,40}\.png")
+TILE_LIMIT = (40, 300 * 1024)  # pictures, bytes each
+
+
+def menu_original(store: Store, serial: str) -> bytes:
+    """The car's own Apps menu (SyncExtPack's SyncApps.swf), from the newest drive log."""
+    report = latest_report_with(store, serial, f"{MENU_FOLDER}/SyncApps.swf")
+    if report is None:
+        raise ThemeError("no copy of the car's Apps menu yet: run `s2am job logger --drive` first")
+    return (report / MENU_FOLDER / "SyncApps.swf").read_bytes()
+
+
+def plan_menu(store: Store, serial: str, swf: Path | None, tiles: Path | None, restore: str | None,
+              fetch: list[str]) -> tuple[dict, dict[str, bytes]]:
+    """(job params, job folder files) for an Apps menu job: a new SyncApps.swf plus tile pictures
+    in Tiles\\, or (``restore``) the car's original SyncApps.swf back. The tiles stay."""
+    old = menu_original(store, serial)
+    if restore:
+        target = store.job(serial, restore)
+        if target.get("kind") != "appmenu" or target["params"].get("restore"):
+            raise ThemeError(f"{restore} is not an Apps menu job")
+        if sha256(old) != target["params"]["files"]["SyncApps.swf"]["old_sha256"]:
+            raise ThemeError(f"the Mac's copy of SyncApps.swf is not what {restore} replaced; not restoring it")
+        return ({"restore": restore, "files": {"SyncApps.swf": len(old)},
+                 "sha256": {"SyncApps.swf": sha256(old)}, "fetch": fetch_list(store, serial, fetch)},
+                {"orig-SyncApps.swf": old})
+    if swf is None or tiles is None:
+        raise ThemeError("give --swf and --tiles (or --restore JOB)")
+    new = swf.read_bytes()
+    if new[:3] not in (b"FWS", b"CWS") or new[3] < 6 or len(new) > 2 * 1024 * 1024:
+        raise ThemeError(f"{swf} is not a Flash file SYNC's player can load")
+    if new == old:
+        raise ThemeError("the new Apps menu is the same as the car's; nothing to do")
+    pictures = sorted(p for p in tiles.iterdir() if p.is_file() and not p.name.startswith("."))
+    bad = [p.name for p in pictures if not TILE.fullmatch(p.name) or p.stat().st_size > TILE_LIMIT[1]
+           or p.read_bytes()[:8] != b"\x89PNG\r\n\x1a\n"]
+    if not pictures or bad or len(pictures) > TILE_LIMIT[0]:
+        raise ThemeError(f"tiles must be up to {TILE_LIMIT[0]} PNG files named like AutoKitPlugin.png; bad: {bad}")
+    params = {
+        "fetch": fetch_list(store, serial, fetch),
+        "files": {"SyncApps.swf": {"old": len(old), "new": len(new), "old_sha256": sha256(old),
+                                   "new_sha256": sha256(new)}},
+        "added": {f"Tiles\\{p.name}": {"new": p.stat().st_size, "new_sha256": sha256(p.read_bytes())}
+                  for p in pictures},
+    }
+    extra = {"new-SyncApps.swf": new}
+    extra.update({f"add-Tiles_{p.name}": p.read_bytes() for p in pictures})
+    return params, extra
+
+
+def verify(report: Path, params: dict, kind: str = "theme") -> str:
     """After import: did the car end up with exactly the planned files (and a whole backup)?"""
     applied = report / "applied"
+    name = "theme" if kind == "theme" else "Apps menu"
     if params.get("restore"):
         expected = params["sha256"]
-        what = "the original theme is back"
+        what = f"the original {name} is back"
     else:
-        expected = {name: f["new_sha256"] for name, f in params["files"].items()}
-        what = "the new theme is on the car"
+        expected = {n: f["new_sha256"] for n, f in params["files"].items()}
+        expected.update({n.replace("\\", "_"): f["new_sha256"] for n, f in (params.get("added") or {}).items()})
+        what = f"the new {name} is on the car"
         backup = report / "backup"
         bad = [n for n, f in params["files"].items()
                if not (backup / n).is_file() or sha256((backup / n).read_bytes()) != f["old_sha256"]]

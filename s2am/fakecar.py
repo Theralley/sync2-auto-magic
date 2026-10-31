@@ -12,7 +12,7 @@ import shutil
 from pathlib import Path
 
 from .job import (AUTOKIT_CE, AUTOKIT_LOGS, AUTOKIT_MODULES, BACKUP_DIR, GUARD_LOG, INVENTORY_ROOT, MENU_XML,
-                  PHASE_DIR, PLUGINS_MASK, REPORTS_DIR, THEMES_CE, TOOLS_CE, Job, ce_path)
+                  PHASE_DIR, PLUGINS_MASK, REPORTS_DIR, SWAPS, TOOLS_CE, Job, ce_path)
 
 
 class PowerCut(Exception):
@@ -108,8 +108,19 @@ class FakeCar:
             return
         if job.kind == "guard" and not self._runner_guard(out, job):
             return
-        if job.kind == "theme" and not self._theme(out, job):
+        if job.kind in SWAPS and not self._swap(out, job):
             return
+        if job.kind == "clean":
+            jobs = self._resolve(ce_path(job.job_dir)).parent
+            lines = []
+            for folder in sorted(p for p in jobs.iterdir() if p.is_dir()):
+                if (folder / f"keep-{job.id}").exists() or folder.name == job.id:
+                    (folder / f"keep-{job.id}").write_text(job.id)
+                    lines.append(f"K|{self._ce(folder)}")
+                else:
+                    shutil.rmtree(folder)
+                    lines.append(f"D|{self._ce(folder)}")
+            (out / "cleanup.txt").write_text("".join(f"{line}\r\n" for line in lines))
         if job.kind == "snap":
             self._snapshot(out)
         if job.kind == "log":
@@ -182,10 +193,10 @@ class FakeCar:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
 
-    def _theme(self, out: Path, job: Job) -> bool:
-        p, th = job.params, self._resolve(THEMES_CE)
+    def _swap(self, out: Path, job: Job) -> bool:
+        p, th = job.params, self._resolve(SWAPS[job.kind][0])
         jd = self._resolve(ce_path(job.job_dir))
-        files = p["files"]
+        files, added = p["files"], p.get("added") or {}
 
         def stop(marker: str) -> bool:
             (out / marker).write_text(marker)
@@ -199,9 +210,9 @@ class FakeCar:
                 self._copy(jd / f"orig-{name}", th / name)
             if any((th / n).stat().st_size != size for n, size in files.items()):
                 return stop("copy-failed.txt")
-            done = "theme-restored.txt"
+            done = f"{job.kind}-restored.txt"
         else:
-            if (th / "Theme.XML").read_bytes() != (jd / "old-Theme.XML").read_bytes():
+            if "Theme.XML" in files and (th / "Theme.XML").read_bytes() != (jd / "old-Theme.XML").read_bytes():
                 return stop("stale.txt")
             if any((th / n).stat().st_size != f["old"] for n, f in files.items()):
                 return stop("stale.txt")
@@ -216,16 +227,20 @@ class FakeCar:
                 shutil.copyfile(backup / name, out / "backup" / name)  # the car's backup, onto the stick
             if any((backup / n).stat().st_size != f["old"] for n, f in files.items()):
                 return stop("backup-failed.txt")
+            for name in added:
+                self._copy(jd / ("add-" + name.replace("\\", "_")), th / name.replace("\\", "/"))
             for name in files:
                 self._copy(jd / f"new-{name}", th / name)
-            if any((th / n).stat().st_size != f["new"] for n, f in files.items()):
+            if any((th / n.replace("\\", "/")).stat().st_size != f["new"] for n, f in [*files.items(), *added.items()]):
                 for name in files:
                     self._copy(backup / name, th / name)
                 return stop("copy-failed.txt")
-            done = "theme-applied.txt"
+            done = f"{job.kind}-applied.txt"
         (out / "applied").mkdir()
         for name in files:
             shutil.copyfile(th / name, out / "applied" / name)
+        for name in added if not p.get("restore") else []:
+            shutil.copyfile(th / name.replace("\\", "/"), out / "applied" / name.replace("\\", "_"))
         (out / done).write_text(job.id)
         for path in p.get("fetch") or []:
             if self.exists(path):

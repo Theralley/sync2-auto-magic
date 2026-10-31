@@ -17,11 +17,12 @@ sys.path.insert(0, str(ROOT))
 
 from s2am import cli, native, stick, theme  # noqa: E402
 from s2am.fakecar import FakeCar  # noqa: E402
-from s2am.job import THEMES_CE, Job, meta, theme_script  # noqa: E402
+from s2am.job import APPS_MENU_CE, THEMES_CE, Job, meta, swap_script, theme_script  # noqa: E402
 from s2am.state import Store  # noqa: E402
 
 HAVE_UPSTREAM = (ROOT.parent / "syncextpack" / "SyncExtPack").exists()
 SERIAL = "XV31M13H"
+MENU = b"FWS\x08" + bytes(range(256)) * 80  # SyncExtPack's SyncApps.swf, as far as the job can tell
 COLORS = {"Ford": ("0x966716", "0x45a180", "0xb3252a", "0x008cff"),
           "Lincoln": ("0x774732", "0x135D52", "0x78243E", "0x3B59A6")}
 
@@ -75,6 +76,17 @@ class Checks(unittest.TestCase):
             theme_script(Job(SERIAL, "theme", params={"files": {"Other.swf": files["Theme.XML"]}}))
         with self.assertRaises(ValueError):
             theme_script(Job(SERIAL, "theme", params={"files": files, "fetch": ["\\USB Disk\\x"]}))
+        menu = {"SyncApps.swf": {"old": 9, "new": 9, "old_sha256": "a", "new_sha256": "b"}}
+        script = swap_script(Job(SERIAL, "appmenu", params={"files": menu,
+                                                              "added": {"Tiles\\AutoKitPlugin.png": {"new": 5}}}))
+        self.assertIn('MkDir(th & "\\Tiles")', script)
+        self.assertIn('Copy(jd & "\\add-Tiles_AutoKitPlugin.png", th & "\\Tiles\\AutoKitPlugin.png", TRUE)', script)
+        self.assertNotRegex(script, r"\b(Delete|DelTree|RmDir|RegWrite\w*|Run)\(")
+        for added in ({"..\\Windows\\x.png": {"new": 5}}, {"Tiles\\a.exe": {"new": 5}}):
+            with self.assertRaises(ValueError):
+                swap_script(Job(SERIAL, "appmenu", params={"files": menu, "added": added}))
+        with self.assertRaises(ValueError):  # a theme job cannot touch the menu, nor the other way round
+            swap_script(Job(SERIAL, "theme", params={"files": menu}))
 
 
 @unittest.skipUnless(HAVE_UPSTREAM, "syncextpack fixtures not present")
@@ -92,6 +104,7 @@ class Loop(unittest.TestCase):
             self.car.put(f"{THEMES_CE}\\{name}", self.ford[name])
             self.car.put(f"\\8inchSkins\\Lincoln\\Sync\\Themes\\{name}", self.lincoln[name])
         self.car.put("\\Windows\\bthcsr.dll", b"MZ bluetooth")
+        self.car.put(f"{APPS_MENU_CE}\\SyncApps.swf", MENU)
         self.stick = self.tmp / "stick"
         self.stick.mkdir()
         self.drive_log()
@@ -105,6 +118,9 @@ class Loop(unittest.TestCase):
             for name, data in files.items():
                 (folder / name).write_bytes(data)
         (report / "files.txt").write_text("F|\\Windows\\bthcsr.dll|12\r\nF|\\Windows\\coredll.dll|9\r\n")
+        menu = report / "skins" / "8inchSkins" / "Ford" / "Sync" / "Apps" / "Info" / "SyncApps"
+        menu.mkdir(parents=True)
+        (menu / "SyncApps.swf").write_bytes(MENU)
         store = Store()
         job = Job(SERIAL, "log", params={"seconds": 600, "drive": True})
         store.save_job(SERIAL, job.id, {**__import__("json").loads(job.to_json()), "status": "applied"})
@@ -147,6 +163,19 @@ class Loop(unittest.TestCase):
 
         _, _, imported = self.run_job("theme", "--restore", job.id)
         self.assertIn("verified: the original theme is back (5 files match byte for byte)", imported)
+        self.assertEqual(self.car_theme(), self.ford)
+
+    def test_own_theme_from_a_folder_changes_only_what_differs(self):
+        folder = self.tmp / "night"
+        folder.mkdir()
+        (folder / "Theme.XML").write_bytes(theme_xml("Ford").replace(b"0x966716", b"0xD6A048"))
+        (folder / "red.bmp").write_bytes(gradient((220, 76, 84)))
+        (folder / "blue.bmp").write_bytes(self.ford["blue.bmp"])  # the same as the car's: left alone
+        job, _, imported = self.run_job("theme", "--from", str(folder))
+        self.assertIn("verified: the new theme is on the car (2 files match byte for byte)", imported)
+        self.assertEqual(sorted(job.params["files"]), ["Theme.XML", "red.bmp"])
+        self.assertEqual(self.car_theme()["green.bmp"], self.ford["green.bmp"])
+        self.run_job("theme", "--restore", job.id)
         self.assertEqual(self.car_theme(), self.ford)
 
     def test_a_changed_car_theme_stops_the_job(self):
@@ -216,6 +245,57 @@ class Loop(unittest.TestCase):
             Store().save_report(SERIAL, job.id, self.stick / "s2am" / "reports" / job.id)
         report = Store().report(SERIAL, job.id)
         self.assertEqual((report / "fetched" / "Windows_bthcsr.dll").read_bytes(), b"MZ bluetooth")
+
+    def tiles(self) -> Path:
+        folder = self.tmp / "tiles"
+        folder.mkdir(exist_ok=True)
+        for name in ("AutoKitPlugin.png", "AutoKitPlugin-big.png", "AllApps.png"):
+            out = io.BytesIO()
+            Image.new("RGB", (155, 145), (30, 33, 40)).save(out, "PNG")
+            (folder / name).write_bytes(out.getvalue())
+        return folder
+
+    def test_new_apps_menu_then_restore(self):
+        swf = self.tmp / "SyncApps-tiles.swf"
+        swf.write_bytes(b"FWS\x08" + b"tiles" * 4000)
+        job, work, imported = self.run_job("apps-menu", "--swf", str(swf), "--tiles", str(self.tiles()))
+        self.assertIn("verified: the new Apps menu is on the car (4 files match byte for byte)", imported)
+        self.assertEqual(self.car._resolve(f"{APPS_MENU_CE}\\SyncApps.swf").read_bytes(), swf.read_bytes())
+        self.assertTrue(self.car.exists(f"{APPS_MENU_CE}\\Tiles\\AutoKitPlugin-big.png"))
+        self.assertIn("NEED_REBOOT=True", (work / "meta.txt").read_bytes().decode("utf-16-le"))
+        _, _, imported = self.run_job("apps-menu", "--restore", job.id)
+        self.assertIn("verified: the original Apps menu is back (1 files match byte for byte)", imported)
+        self.assertEqual(self.car._resolve(f"{APPS_MENU_CE}\\SyncApps.swf").read_bytes(), MENU)
+        self.assertTrue(self.car.exists(f"{APPS_MENU_CE}\\Tiles\\AllApps.png"))  # left, unused
+
+    def test_apps_menu_refuses_what_the_player_cannot_load(self):
+        tiles = self.tiles()
+        bad = self.tmp / "bad.swf"
+        bad.write_bytes(b"<html>")
+        code, out = self.cli("job", "apps-menu", "--swf", str(bad), "--tiles", str(tiles), "--serial", SERIAL,
+                             "--no-pack")
+        self.assertNotEqual(code, 0)
+        self.assertIn("not a Flash file", out)
+        good = self.tmp / "good.swf"
+        good.write_bytes(b"FWS\x08" + b"x" * 100)
+        (tiles / "evil name.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+        code, out = self.cli("job", "apps-menu", "--swf", str(good), "--tiles", str(tiles), "--serial", SERIAL,
+                             "--no-pack")
+        self.assertNotEqual(code, 0)
+        self.assertIn("evil name.png", out)
+
+    def test_cleanup_removes_old_job_folders_and_keeps_its_own_and_the_backups(self):
+        job, _, _ = self.run_job("theme", "--preset", "lincoln")
+        jobs = self.car._resolve(f"\\SyncExtendedPack\\_s2am\\jobs")
+        self.assertTrue((jobs / job.id).is_dir())
+        cleanup, _, imported = self.run_job("cleanup")
+        self.assertIn("removed 1 old job folders", imported)
+        self.assertEqual([p.name for p in jobs.iterdir()], [cleanup.id])
+        self.assertTrue(self.car.exists(f"\\SyncExtendedPack\\_s2am\\backup\\{job.id}\\red.bmp"))
+        script = (self.tmp / "job1" / "payload" / cleanup.job_dir.lstrip("/") / "s2amjob.mscr").read_text()
+        self.assertIn(f'WriteFile(jd & "\\keep-{cleanup.id}"', script)
+        self.assertIn('ForEach d in directories("\\SyncExtendedPack\\_s2am\\jobs\\*")', script)
+        self.assertEqual(script.count("DelTree("), 1)
 
     def test_no_drive_log_no_theme(self):
         shutil.rmtree(self.tmp / "home")
