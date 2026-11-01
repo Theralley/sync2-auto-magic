@@ -381,3 +381,21 @@ glow and can't be judged from a photo).
 
 The sticks are not imported yet. The import will confirm that `bundle-5dbf` ran and that
 SYNC restarted.
+
+# 2026-11-01, afternoon: the frame, the first start-up file (built, not in the car)
+
+Rasmus: "redesign it to modern and cool ... start building everything". Ford's look is pictures
+in the frame, `AppConsole.swf`, which SYNC loads at start-up (sync-redesign R4a). s2am now allows
+that one start-up screen (`STARTUP_SCREENS`); Home and the four main areas stay refused.
+
+- A job for it needs `--startup`. The plan records it in the job, and every script writer checks
+  it again (also when a bundle writes its parts' scripts). Putting the frame back never needs it.
+- A new screen exactly as long as Ford's is refused: the car tells a failed copy (a locked file)
+  only by its size.
+- Built: `screen-8393` (the restyled frame, 1,027,498 bytes against Ford's 1,088,777) and its
+  undo `screen-e9a7`. Rehearsed on a simulated SYNC with the car's own frame: on and off byte for
+  byte, the call history untouched, a different frame on the car left alone.
+- Codex review (gpt-6-astra, xhigh): the blocker (the flag only in the planner) and two smaller
+  points are fixed. **Follow-up:** after a failed copy the script copies the backup back without
+  checking that copy; for the frame, the undo stick is the remedy either way.
+- `screen-1ef7` and `screen-b5bb` were built before the fix: not to be used.

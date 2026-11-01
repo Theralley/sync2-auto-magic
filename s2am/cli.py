@@ -35,7 +35,7 @@ from pathlib import Path
 from . import apps, autokit, bootstrap, diskcheck, native, pack, stick, theme, window
 from .container import REPO, ContainerError
 from .job import (AUTOKIT_CE, AUTOKIT_LANGS, AUTOKIT_MODULES, DRIVE_SECONDS, REGISTRY_ROOTS, REGISTRY_WAIT_S,
-                  SCREENS, SERIAL, SWAP_KINDS, Job, autokit_lang_file, bundle_parts, stage)
+                  SCREENS, SERIAL, STARTUP_SCREENS, SWAP_KINDS, Job, autokit_lang_file, bundle_parts, stage)
 from .state import Store, diff, parse_inventory
 
 UPSTREAM = REPO.parent / "syncextpack"
@@ -356,12 +356,16 @@ def cmd_job(args) -> int:
             print(f"  {part['id']}")
         print("SYNC restarts after it")
     elif args.kind == "screen":
-        params, extra = theme.plan_screen(Store(), args.serial, args.screen, args.swf, args.restore, args.fetch)
+        params, extra = theme.plan_screen(Store(), args.serial, args.screen, args.swf, args.restore, args.fetch,
+                                          args.startup)
         if params.get("restore"):
             print(f"screen: puts Ford's own {params['screen']} back (what {args.restore} replaced); SYNC restarts")
         else:
             print(f"screen: replaces Ford's {params['screen']}, backing it up first; SYNC restarts. "
                   "Build the restore stick now as well: s2am job screen --restore <this job>")
+            if params["screen"] in STARTUP_SCREENS:
+                print("  this screen loads when SYNC starts: if the screen stays dark afterwards, insert the "
+                      "undo stick anyway and wait two minutes (RECOVERY.md)")
     if getattr(args, "dry_run", False):
         return 0
     job = Job(serial=args.serial, kind=JOB_KINDS[args.kind], params=params)
@@ -824,7 +828,9 @@ def parser() -> argparse.ArgumentParser:
     screen = job_sub.add_parser("screen", parents=[common],
                                 help="one of Ford's screens, rebuilt on this Mac from the car's own "
                                      "(sync-redesign), backed up first; undo with --restore JOB")
-    screen.add_argument("--screen", choices=SCREENS, help="which of Ford's screens")
+    screen.add_argument("--screen", choices=SCREENS + STARTUP_SCREENS, help="which of Ford's screens")
+    screen.add_argument("--startup", action="store_true",
+                        help="allow a screen SYNC loads at start-up (the frame); build its undo stick with it")
     screen.add_argument("--swf", type=Path, help="the new screen (built on this Mac from the car's own)")
     screen.add_argument("--restore", metavar="JOB_ID", help="put back what that screen job replaced")
     screen.add_argument("--fetch", action="append", default=[], metavar="PATTERN",

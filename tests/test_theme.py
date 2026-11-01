@@ -37,6 +37,9 @@ def flash(version: int, body: bytes, compressed: bool = False) -> bytes:
 MENU = flash(8, bytes(range(256)) * 80)  # SyncExtPack's SyncApps.swf, as far as the job can tell
 HISTORY = flash(10, bytes(range(255, -1, -1)) * 60, compressed=True)  # Ford's call history screen
 HISTORY_CE = "\\8inchSkins\\Ford\\Sync\\Apps\\Phone\\PhoneHistory\\PhoneHistory.swf"
+FRAME = flash(10, bytes(range(256)) * 90, compressed=True)  # Ford's frame, which loads at start-up
+FRAME_SCREEN = "AppConsole/AppConsole.swf"
+FRAME_CE = "\\8inchSkins\\Ford\\Sync\\Apps\\AppConsole\\AppConsole.swf"
 COLORS = {"Ford": ("0x966716", "0x45a180", "0xb3252a", "0x008cff"),
           "Lincoln": ("0x774732", "0x135D52", "0x78243E", "0x3B59A6")}
 
@@ -143,7 +146,16 @@ class Checks(unittest.TestCase):
         # the stick's copy of the backup is checked too, before the screen is touched
         self.assertLess(script.index('If (FileSize(out & "\\backup\\PhoneHistory.swf") <> 9)'),
                         script.index('Copy(jd & "\\new-PhoneHistory.swf"'))
-        for params in ({"screen": "AppConsole/AppConsole.swf", "files": {"AppConsole.swf": files["PhoneHistory.swf"]}},
+        frame = {"AppConsole.swf": files["PhoneHistory.swf"]}
+        self.assertIn('th = "\\8inchSkins\\Ford\\Sync\\Apps\\AppConsole"', swap_script(
+            Job(SERIAL, "screen", params={"screen": "AppConsole/AppConsole.swf", "files": frame, "startup": True})))
+        self.assertIn('orig-AppConsole.swf', swap_script(Job(SERIAL, "screen", params={
+            "screen": "AppConsole/AppConsole.swf", "files": {"AppConsole.swf": 9}, "restore": "20261101-160854-screen-1ef7"})))
+        for params in ({"screen": "AppConsole/AppConsole.swf", "files": frame},  # not planned with --startup
+                       {"screen": "AppConsole/AppConsole.swf", "files": frame, "startup": "yes"},
+                       {"screen": "Home/Home.swf", "files": {"Home.swf": files["PhoneHistory.swf"]}},
+                       {"screen": "Phone/Phone.swf", "files": {"Phone.swf": files["PhoneHistory.swf"]}},
+                       {"screen": "AppConsole/AppConsole.swf", "files": files},
                        {"screen": "../Phone/PhoneHistory/PhoneHistory.swf", "files": files},
                        {"screen": SCREEN, "files": {"Phone.swf": files["PhoneHistory.swf"]}},
                        {"screen": SCREEN, "files": files, "added": {"Tiles\\a.png": {"new": 5}}}):
@@ -168,6 +180,7 @@ class Loop(unittest.TestCase):
         self.car.put("\\Windows\\bthcsr.dll", b"MZ bluetooth")
         self.car.put(f"{APPS_MENU_CE}\\SyncApps.swf", MENU)
         self.car.put(HISTORY_CE, HISTORY)
+        self.car.put(FRAME_CE, FRAME)
         self.stick = self.tmp / "stick"
         self.stick.mkdir()
         self.drive_log()
@@ -187,6 +200,9 @@ class Loop(unittest.TestCase):
         screen = report / "skins" / "8inchSkins" / "Ford" / "Sync" / "Apps" / SCREEN
         screen.parent.mkdir(parents=True)
         screen.write_bytes(HISTORY)
+        frame = report / "skins" / "8inchSkins" / "Ford" / "Sync" / "Apps" / FRAME_SCREEN
+        frame.parent.mkdir(parents=True)
+        frame.write_bytes(FRAME)
         store = Store()
         job = Job(SERIAL, "log", params={"seconds": 600, "drive": True})
         store.save_job(SERIAL, job.id, {**__import__("json").loads(job.to_json()), "status": "applied"})
@@ -375,6 +391,49 @@ class Loop(unittest.TestCase):
         self.assertIn("verified: the original screen is back (1 files match byte for byte)", imported)
         self.assertEqual(self.car._resolve(HISTORY_CE).read_bytes(), HISTORY)
 
+    def test_the_frame_needs_startup_and_its_undo_does_not(self):
+        swf = self.tmp / "AppConsole.swf"
+        swf.write_bytes(flash(10, b"flat buttons" * 2000, compressed=True))
+        code, out = self.cli("job", "screen", "--screen", FRAME_SCREEN, "--swf", str(swf), "--serial", SERIAL,
+                             "--no-pack")
+        self.assertNotEqual(code, 0)
+        self.assertIn("loads when SYNC starts", out)
+        self.assertEqual(self.car._resolve(FRAME_CE).read_bytes(), FRAME)
+        job, work, imported = self.run_job("screen", "--screen", FRAME_SCREEN, "--swf", str(swf), "--startup")
+        self.assertIs(job.params["startup"], True)
+        self.assertIn("verified: the new screen is on the car (1 files match byte for byte)", imported)
+        self.assertEqual(self.car._resolve(FRAME_CE).read_bytes(), swf.read_bytes())
+        self.assertEqual(self.car._resolve(HISTORY_CE).read_bytes(), HISTORY)  # only the frame
+        script = (work / "payload" / job.job_dir.lstrip("/") / "s2amjob.mscr").read_text()
+        self.assertIn('th = "\\8inchSkins\\Ford\\Sync\\Apps\\AppConsole"', script)
+        _, _, imported = self.run_job("screen", "--restore", job.id)
+        self.assertIn("verified: the original screen is back (1 files match byte for byte)", imported)
+        self.assertEqual(self.car._resolve(FRAME_CE).read_bytes(), FRAME)
+
+    def test_a_bundle_cannot_carry_the_frame_without_startup(self):
+        swf = self.tmp / "AppConsole.swf"
+        swf.write_bytes(flash(10, b"flat buttons" * 2000, compressed=True))
+        work = self.build("screen", "--screen", FRAME_SCREEN, "--swf", str(swf), "--startup")
+        job = Job.from_json((work / "job.json").read_text())
+        forged = Job(SERIAL, "screen", params={k: v for k, v in job.params.items() if k != "startup"})
+        with self.assertRaisesRegex(ValueError, "--startup"):
+            bundle_script(Job(SERIAL, "bundle", params={"parts": [
+                {"kind": "screen", "id": forged.id, "created_utc": forged.created_utc, "params": forged.params}]}))
+
+    def test_a_new_screen_as_long_as_fords_is_refused(self):
+        body = bytearray(bytes(range(255, -1, -1)) * 60)
+        for k in range(len(body)):  # a valid screen, not Ford's, exactly as long
+            body[k] ^= 1
+            same_length = flash(10, bytes(body), compressed=True)
+            if len(same_length) == len(HISTORY) and same_length != HISTORY:
+                break
+            body[k] ^= 1
+        swf = self.tmp / "PhoneHistory.swf"
+        swf.write_bytes(same_length)
+        code, out = self.cli("job", "screen", "--screen", SCREEN, "--swf", str(swf), "--serial", SERIAL, "--no-pack")
+        self.assertNotEqual(code, 0)
+        self.assertIn("exactly as long as Ford's", out)
+
     def test_screen_undo_still_builds_after_a_newer_drive_log(self):
         swf = self.tmp / "PhoneHistory.swf"
         swf.write_bytes(flash(10, b"our icons" * 1000, compressed=True))
@@ -420,7 +479,7 @@ class Loop(unittest.TestCase):
                 self.assertNotEqual(code, 0)
                 self.assertIn(why, out)
         with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):  # not on the list
-            cli.main(["job", "screen", "--screen", "AppConsole/AppConsole.swf", "--swf", str(swf), "--serial", SERIAL])
+            cli.main(["job", "screen", "--screen", "Home/Home.swf", "--swf", str(swf), "--serial", SERIAL])
         theme_job, _, _ = self.run_job("theme", "--preset", "lincoln")
         code, out = self.cli("job", "screen", "--restore", theme_job.id, "--serial", SERIAL, "--no-pack")
         self.assertNotEqual(code, 0)

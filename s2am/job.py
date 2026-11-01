@@ -663,9 +663,12 @@ SWAPS = {"theme": (THEMES_CE, THEME_FILES, "theme"),
          "appmenu": (APPS_MENU_CE, ("SyncApps.swf",), "Apps menu")}
 ADDED = re.compile(r"Tiles\\[A-Za-z0-9_-]{1,40}\.png")  # files an Apps menu job may add
 FORD_APPS_CE = "\\8inchSkins\\Ford\\Sync\\Apps"
-# Ford's own screens a screen job may replace, one file each. Only screens SYNC loads when they
-# are opened (never the start-up ones: the four main areas, Home and the frame).
+# Ford's own screens a screen job may replace, one file each. SCREENS load when they are opened.
+# STARTUP_SCREENS load when SYNC starts, so a fault in one can leave the screen dark: planning a
+# job for one needs --startup, and its undo stick runs in SyncExtPack's install service, which
+# runs apart from SYNC's screens (RECOVERY.md). Home and the four main areas are not here.
 SCREENS = ("Phone/PhoneHistory/PhoneHistory.swf",)
+STARTUP_SCREENS = ("AppConsole/AppConsole.swf",)
 SWAP_KINDS = (*SWAPS, "screen")
 
 
@@ -673,7 +676,7 @@ def swap_target(kind: str, params: dict) -> tuple[str, tuple[str, ...], str]:
     """(the one folder a swap job writes to, the files it may replace there, what it is called)."""
     if kind == "screen":
         screen = params.get("screen")
-        if screen not in SCREENS:
+        if screen not in SCREENS + STARTUP_SCREENS:
             raise ValueError(f"not a screen s2am may change: {screen!r}")
         folder, name = screen.rsplit("/", 1)
         return f"{FORD_APPS_CE}\\{folder.replace('/', chr(92))}", (name,), "screen"
@@ -694,7 +697,7 @@ def swap_lines(job: Job) -> list[str]:
     """A swap job's own steps, between the script's header and the inventory.
 
     Theme jobs swap the five files in THEMES_CE, Apps menu jobs SyncApps.swf in APPS_MENU_CE and
-    add tile pictures under it, screen jobs one of Ford's screens listed in SCREENS. The job
+    add tile pictures under it, screen jobs one of Ford's screens in SCREENS or STARTUP_SCREENS. The job
     first checks that the car still has the files the Mac planned against (Theme.XML by content,
     the rest by size), backs them up on the car and copies that backup onto the stick, copies
     the new ones in and checks their sizes, copying the backup back if one did not copy whole.
@@ -708,6 +711,11 @@ def swap_lines(job: Job) -> list[str]:
         raise ValueError(f"invalid {what} files {sorted(files)!r}")
     if any(not ADDED.fullmatch(name) for name in added) or (added and job.kind != "appmenu"):
         raise ValueError(f"invalid added files {sorted(added)!r}")
+    # checked here, where every script is written (a bundle writes its parts' scripts again):
+    # a start-up screen changes only if the plan recorded --startup; putting it back always may
+    if job.kind == "screen" and p.get("screen") in STARTUP_SCREENS and not p.get("restore") \
+            and p.get("startup") is not True:
+        raise ValueError(f"{p['screen']} loads when SYNC starts; the job was not planned with --startup")
     lines = [
         f"th = {_quote(folder)}",
         f"jd = {_quote(ce_path(job.job_dir))}",

@@ -22,7 +22,7 @@ import xml.etree.ElementTree as ElementTree
 import zlib
 from pathlib import Path
 
-from .job import SCREENS
+from .job import SCREENS, STARTUP_SCREENS
 from .state import Store
 
 THEMES_CE = "\\8inchSkins\\Ford\\Sync\\Themes"
@@ -242,8 +242,8 @@ APPS_FOLDER = "skins/8inchSkins/Ford/Sync/Apps"
 
 def screen_original(store: Store, serial: str, screen: str) -> bytes:
     """The car's own copy of one of Ford's screens, from the newest drive log."""
-    if screen not in SCREENS:
-        raise ThemeError(f"s2am does not change {screen}; it may change {', '.join(SCREENS)}")
+    if screen not in SCREENS + STARTUP_SCREENS:
+        raise ThemeError(f"s2am does not change {screen}; it may change {', '.join(SCREENS + STARTUP_SCREENS)}")
     report = latest_report_with(store, serial, f"{APPS_FOLDER}/{screen}")
     if report is None:
         raise ThemeError("no copy of that screen yet: run `s2am job logger --drive` first")
@@ -270,9 +270,11 @@ def replaced_screen(store: Store, serial: str, target: dict) -> bytes:
 
 
 def plan_screen(store: Store, serial: str, screen: str | None, swf: Path | None, restore: str | None,
-                fetch: list[str]) -> tuple[dict, dict[str, bytes]]:
+                fetch: list[str], startup: bool = False) -> tuple[dict, dict[str, bytes]]:
     """(job params, job folder files) for a screen job: one of Ford's screens replaced by a
-    version built on this Mac from the car's own (sync-redesign), or (``restore``) Ford's back."""
+    version built on this Mac from the car's own (sync-redesign), or (``restore``) Ford's back.
+    A screen SYNC loads at start-up is changed only with ``startup``; putting one back never
+    needs it."""
     if restore:
         target = store.job(serial, restore)
         if target.get("kind") != "screen" or target["params"].get("restore"):
@@ -284,14 +286,22 @@ def plan_screen(store: Store, serial: str, screen: str | None, swf: Path | None,
                 {f"orig-{name}": old})
     if screen is None or swf is None:
         raise ThemeError("give --screen and --swf (or --restore JOB)")
+    if screen in STARTUP_SCREENS and not startup:
+        raise ThemeError(f"{screen} loads when SYNC starts: a fault in it can leave the screen dark until the "
+                         "undo stick runs. Build the undo stick with it, and give --startup to go ahead")
     old, new, name = screen_original(store, serial, screen), swf.read_bytes(), screen.rsplit("/", 1)[1]
     if not whole_flash(new) or new[3] != old[3] or len(new) > 2 * 1024 * 1024:
         raise ThemeError(f"{swf} is not a Flash file of the same version as Ford's {name}")
     if new == old:
         raise ThemeError("the new screen is the same as the car's; nothing to do")
+    if len(new) == len(old):  # the car tells a copy that failed (a locked file) only by its size
+        raise ThemeError(f"the new {name} is exactly as long as Ford's, so the car could not tell a failed "
+                         "copy from a good one: rebuild it")
     params = {"screen": screen, "fetch": fetch_list(store, serial, fetch),
               "files": {name: {"old": len(old), "new": len(new), "old_sha256": sha256(old),
                                "new_sha256": sha256(new)}}}
+    if screen in STARTUP_SCREENS:
+        params["startup"] = True  # recorded, and checked again wherever its script is written
     return params, {f"new-{name}": new}
 
 
