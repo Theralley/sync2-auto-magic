@@ -211,6 +211,7 @@ timeline. The native log ends with an `|end|` line when it finished.
 
 | Situation | Action |
 |---|---|
+| Import says `rollback-failed` | The car may have a damaged file. Use the job's **undo (restore) stick now**. If the screen stays dark, insert it anyway and wait two minutes. |
 | Touchscreen does not respond (also: after AutoKit's Exit, seen 2026-10-30) | **Hold the power/volume knob + Seek-Up (next track) for 10 s**, car in Park, until the screen goes black. Worked on the developer's Mondeo; nothing is uninstalled |
 | That does not help | Engine off, lock the car for 10 minutes, start again |
 | AutoKit misbehaves | Run the `autokit-stock` job stick, or in Total Commander copy the `*.orig` files over the live ones |

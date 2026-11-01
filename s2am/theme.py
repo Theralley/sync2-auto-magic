@@ -294,7 +294,10 @@ def plan_screen(store: Store, serial: str, screen: str | None, swf: Path | None,
         raise ThemeError(f"{swf} is not a Flash file of the same version as Ford's {name}")
     if new == old:
         raise ThemeError("the new screen is the same as the car's; nothing to do")
-    if len(new) == len(old):  # the car tells a copy that failed (a locked file) only by its size
+    if len(new) == len(old) and screen in STARTUP_SCREENS:
+        # the car tells a copy that failed (a locked file) only by its size; for a screen that is
+        # not loaded at start-up the import's byte-for-byte check is enough (Ford's screens are
+        # stored uncompressed, so a number changed in place keeps the length)
         raise ThemeError(f"the new {name} is exactly as long as Ford's, so the car could not tell a failed "
                          "copy from a good one: rebuild it")
     params = {"screen": screen, "fetch": fetch_list(store, serial, fetch),

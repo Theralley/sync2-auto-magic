@@ -94,6 +94,12 @@ That brought SYNC back every time. Last resort: engine off, lock the car, wait 1
 - The full ladder, down to reinstalling SYNC 3.10, is in
   [sync-redesign's RECOVERY.md](https://github.com/Theralley/sync-redesign/blob/main/docs/RECOVERY.md).
 
+### The import says `rollback-failed`
+- **Cause:** a new file did not copy whole, and copying the originals back failed too. The car
+  may have a damaged file.
+- **Fix:** use the job's undo (restore) stick now. If the screen stays dark, insert it anyway
+  and wait two minutes.
+
 ### The new Apps menu shows nothing, or a tile starts the wrong app
 - **Fix:** insert its undo stick (`s2am job apps-menu --restore <job>`). It carries SyncExtPack's
   original `SyncApps.swf` itself; SYNC restarts with the old list. The tile pictures stay in
@@ -101,7 +107,7 @@ That brought SYNC back every time. Last resort: engine off, lock the car, wait 1
   you open Apps.
 
 ### A bundle stopped half-way
-- **What the import says:** the bundle `stopped`; one part says why (`stale`, `failed`), the
+- **What the import says:** the bundle `stopped`; one part says why (`stale`, `failed`, `rollback-failed`), the
   parts after it `not-run`, the parts before it `applied` and verified.
 - **Fix:** the parts before it are on the car, each with its backup. Keep them, or insert the
   undo bundle (or a part's own undo stick). Plan the stopped part again after a drive log.

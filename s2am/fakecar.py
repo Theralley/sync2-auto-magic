@@ -240,6 +240,8 @@ class FakeCar:
             if any((th / n.replace("\\", "/")).stat().st_size != f["new"] for n, f in [*files.items(), *added.items()]):
                 for name in files:
                     self._copy(backup / name, th / name)
+                if any((th / n).stat().st_size != f["old"] for n, f in files.items()):
+                    return stop("rollback-failed.txt")
                 return stop("copy-failed.txt")
             done = f"{job.kind}-applied.txt"
         (out / "applied").mkdir()

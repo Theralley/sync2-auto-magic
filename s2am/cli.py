@@ -495,8 +495,10 @@ STOP_HINTS = {
              "inventory (or a drive log, for a theme), then plan again",
     "busy": ": the app was running and nothing changed. UpdateService used up the stick anyway: "
             "restart SYNC, run `s2am stick prepare` with the same job again, then insert it",
-    "failed": ": the job stopped before deleting anything; its report says why "
-              "(copy-failed: the old files were copied back; for a theme, run its restore stick to be sure)",
+    "rollback-failed": ": the car may have a damaged file; use the undo (restore) stick now; "
+                       "if the screen stays dark, insert it anyway and wait two minutes",
+    "failed": ": the job stopped; its report says why "
+              "(if a restore did not complete, run the restore stick again)",
 }
 
 

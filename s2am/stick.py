@@ -24,6 +24,7 @@ UPDATER_DIR = "SyncExtPack"
 UPDATER_FILES = ("install.bin", "installed.bin", "install_log.txt", "pack_install.bin",
                  "Installer.jpg", "UpdateInstaller.dll", "update.bin")
 STOPPED = {"stale.txt": "stale", "busy.txt": "busy", "backup-failed.txt": "failed",
+           "rollback-failed.txt": "rollback-failed",
            "backup-missing.txt": "failed", "copy-failed.txt": "failed", "payload-bad.txt": "failed",
            "missing.txt": "failed", "selftest-failed.txt": "failed", "backup-bad.txt": "failed",
            "unknown-runner.txt": "failed",
@@ -99,7 +100,7 @@ def _status(report: Path, updater: Path) -> tuple[str, bool]:
         return "applied", replayed
     if replayed:
         return "already-applied", True  # its first run reported somewhere else
-    # The script stopped on purpose before changing anything.
+    # The script stopped on purpose; its marker says what state it left behind.
     for marker, status in STOPPED.items():
         if (report / marker).is_file():
             return status, False

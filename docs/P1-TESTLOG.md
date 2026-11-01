@@ -417,3 +417,22 @@ Third visit, built and rehearsed on a simulated SYNC in exactly this state:
 `stick prepare` ejected both sticks without reading them back. Read back by hand after
 replugging and again after a remount: identical. `stick prepare` now reads every stick back
 itself (after a remount) before it ejects it, and refuses to eject one that differs.
+
+# 2026-11-01, evening: the third visit, the restyled frame in the car
+
+`bundle-8fc9` imported: every part applied and verified byte for byte (`theme-4128` Ford's theme
+back, `theme-9481` Night with borderless buttons, `screen-8393` the restyled frame). **SYNC
+started with a changed start-up file**; every screen in Rasmus's eight photos works (Home,
+Settings, Navigation, the call history, the Apps menu, Climate). The undo stick (`bundle-f6bd`)
+was not needed and is unused.
+
+Rasmus: "home good". Not as intended: the clock piece, the bottom tabs and the left-hand menu
+buttons come out light, and on Climate a band across the bottom is bright blue (details in
+sync-redesign's FINDINGS.md); being traced in Ford's frame code.
+
+Same evening, with Codex: after a failed copy the job now checks the originals it copied back
+and stops with `rollback-failed` (use the undo stick now) if they did not go back whole. And
+Settings > Display (`Menu/Display/Display.swf`, not at start-up) may now be changed by a screen
+job, for a lower Auto dim floor. A new screen exactly as long as Ford's is refused only for a
+start-up screen: Ford's screens are stored uncompressed, so a number changed in place keeps the
+length, and the import's byte-for-byte check proves the copy.

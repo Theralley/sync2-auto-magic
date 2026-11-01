@@ -125,6 +125,38 @@ class Checks(unittest.TestCase):
             with self.subTest(wrong), self.assertRaises(ValueError):
                 bundle_parts(Job(SERIAL, "bundle", params={"parts": wrong}))
 
+    def test_script_checks_every_rollback_before_reporting_failure_or_done(self):
+        files = {name: {"old": 10 + i, "new": 20 + i} for i, name in enumerate(theme.FILES)}
+        script = theme_script(Job(SERIAL, "theme", params={"files": files}))
+        copies = [script.index(f'  Copy(bk & "\\{name}", th & "\\{name}", TRUE)') for name in files]
+        reset = script.index("  ok = 1", max(copies))
+        checks = [script.index(f'  If (FileSize(th & "\\{name}") <> {f["old"]})', reset)
+                  for name, f in files.items()]
+        stop = script.index('WriteFile(out & "\\rollback-failed.txt"')
+        self.assertLess(max(copies), reset)
+        self.assertLess(reset, min(checks))
+        self.assertLess(max(checks), script.index("  If (ok = 0)", reset))
+        self.assertLess(max(checks), stop)
+        for name, f in files.items():
+            self.assertIn(f'  If (FileSize(th & "\\{name}") <> {f["old"]})\r\n'
+                          '    ok = 0\r\n  EndIf()', script[reset:stop])
+        self.assertEqual(script[stop:].splitlines()[1].strip(), "Exit()")
+        self.assertLess(stop, script.index('WriteFile(out & "\\copy-failed.txt"'))
+        self.assertLess(stop, script.index('WriteFile(out & "\\theme-applied.txt"'))
+        self.assertLess(stop, script.index('WriteFile(out & "\\done.txt"'))
+        for message in ("car may have a damaged file", "use the undo (restore) stick now",
+                        "screen stays dark", "insert it anyway and wait two minutes",
+                        "nothing changed; the originals are back"):
+            self.assertIn(message, script)
+
+    def test_restore_script_says_an_incomplete_restore_must_run_again(self):
+        script = theme_script(Job(SERIAL, "theme", params={
+            "files": {"red.bmp": 10}, "restore": "20261101-120000-theme-abcd"}))
+        self.assertIn('WriteFile(out & "\\copy-failed.txt"', script)
+        self.assertIn("restore did not complete", script)
+        self.assertIn("run the restore stick again", script)
+        self.assertNotIn("rollback-failed.txt", script)
+
     def test_a_bundle_part_cut_short_reads_as_interrupted(self):
         with tempfile.TemporaryDirectory() as temp:
             report, updater = Path(temp) / "report", Path(temp) / "SyncExtPack"
@@ -161,6 +193,93 @@ class Checks(unittest.TestCase):
                        {"screen": SCREEN, "files": files, "added": {"Tiles\\a.png": {"new": 5}}}):
             with self.subTest(params), self.assertRaises(ValueError):
                 swap_script(Job(SERIAL, "screen", params=params))
+
+
+class SwapFailures(unittest.TestCase):
+    """Exercise copy failures through a stick import without upstream binaries."""
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        patcher = mock.patch.dict(os.environ, {"S2AM_HOME": str(self.tmp / "home")})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.car = FakeCar(self.tmp / "car", SERIAL)
+        self.originals = {"red.bmp": b"original red", "blue.bmp": b"original blue"}
+        self.files = {name: {"old": len(data), "new": len(data) + 4}
+                      for name, data in self.originals.items()}
+        for name, data in self.originals.items():
+            self.car.put(f"{THEMES_CE}\\{name}", data)
+        self.stick = self.tmp / "stick"
+        self.stick.mkdir()
+
+    def run_job(self, job):
+        work = self.tmp / job.id
+        payload = work / "payload" / job.job_dir.lstrip("/")
+        payload.mkdir(parents=True)
+        for name, data in self.originals.items():
+            prefix = "orig" if job.params.get("restore") else "new"
+            (payload / f"{prefix}-{name}").write_bytes(data if prefix == "orig" else data + b" new")
+        (work / "install.bin").write_bytes(b"pack")
+        stick.prepare(self.stick, work / "install.bin", job, require_volume=False)
+        self.car.insert(self.stick, work, job)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            self.assertEqual(cli.main(["stick", "import", str(self.stick), "--any-path"]), 1)
+        self.assertFalse(self.car.exists(job.done_marker))
+        report = Store().report(SERIAL, job.id)
+        self.assertFalse((report / "done.txt").exists())
+        self.assertFalse((report / "theme-applied.txt").exists())
+        self.assertFalse((report / "theme-restored.txt").exists())
+        return Store().job(SERIAL, job.id)["status"], report, out.getvalue()
+
+    def test_short_copy_and_short_rollback_import_as_rollback_failed(self):
+        # Either the first or the last file can fail; the others still go back whole.
+        for broken in self.originals:
+            with self.subTest(broken=broken):
+                for name, data in self.originals.items():
+                    self.car.put(f"{THEMES_CE}\\{name}", data)
+                self.car.broken_copies = {f"{THEMES_CE}\\{broken}".lower()}
+                job = Job(SERIAL, "theme", params={"files": self.files})
+                status, report, imported = self.run_job(job)
+                self.assertEqual(status, "rollback-failed")
+                self.assertTrue((report / "rollback-failed.txt").is_file())
+                self.assertFalse((report / "copy-failed.txt").exists())
+                for name, data in self.originals.items():
+                    expected = data[:len(data) // 2] if name == broken else data
+                    self.assertEqual(self.car._resolve(f"{THEMES_CE}\\{name}").read_bytes(), expected)
+                    self.assertEqual((report / "backup" / name).read_bytes(), data)
+                for message in ("rollback-failed", "car may have a damaged file", "undo (restore) stick now",
+                                "screen stays dark", "insert it anyway and wait two minutes"):
+                    self.assertIn(message, imported)
+                self.assertNotIn("verified:", imported)
+
+    def test_short_copy_with_complete_rollback_keeps_copy_failed(self):
+        self.car.broken_copies.add(f"{THEMES_CE}\\red.bmp".lower())
+        copy = self.car._copy
+
+        def fail_once(source, target):
+            copy(source, target)
+            if source.name == "new-red.bmp":
+                self.car.broken_copies.clear()
+
+        with mock.patch.object(self.car, "_copy", side_effect=fail_once):
+            status, report, _ = self.run_job(Job(SERIAL, "theme", params={"files": self.files}))
+        self.assertEqual(status, "failed")
+        self.assertTrue((report / "copy-failed.txt").is_file())
+        self.assertFalse((report / "rollback-failed.txt").exists())
+        for name, data in self.originals.items():
+            self.assertEqual(self.car._resolve(f"{THEMES_CE}\\{name}").read_bytes(), data)
+
+    def test_short_restore_stays_copy_failed(self):
+        self.car.broken_copies.add(f"{THEMES_CE}\\red.bmp".lower())
+        job = Job(SERIAL, "theme", params={"files": {n: len(d) for n, d in self.originals.items()},
+                                          "restore": "20261101-120000-theme-abcd"})
+        status, report, imported = self.run_job(job)
+        self.assertEqual(status, "failed")
+        self.assertTrue((report / "copy-failed.txt").is_file())
+        self.assertFalse((report / "rollback-failed.txt").exists())
+        self.assertNotIn("old files were copied back", imported)
+        self.assertIn("run the restore stick again", imported)
 
 
 @unittest.skipUnless(HAVE_UPSTREAM, "syncextpack fixtures not present")
@@ -270,7 +389,7 @@ class Loop(unittest.TestCase):
     def test_a_copy_that_breaks_puts_the_backup_back_and_the_restore_stick_finishes(self):
         self.car.broken_copies.add(f"{THEMES_CE}\\red.bmp".lower())
         job, _, imported = self.run_job("theme", "--preset", "lincoln")
-        self.assertIn("failed", imported)
+        self.assertIn("rollback-failed", imported)
         now = self.car_theme()
         for name in ("Theme.XML", "yellow.bmp", "green.bmp", "blue.bmp"):
             self.assertEqual(now[name], self.ford[name])  # put back at once
@@ -437,19 +556,30 @@ class Loop(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("Do not use this stick", out)
 
-    def test_a_new_screen_as_long_as_fords_is_refused(self):
-        body = bytearray(bytes(range(255, -1, -1)) * 60)
-        for k in range(len(body)):  # a valid screen, not Ford's, exactly as long
+    @staticmethod
+    def same_length(original: bytes, pattern: bytes, repeat: int) -> bytes:
+        """A valid screen, not the original, exactly as long (one number changed in place does that)."""
+        body = bytearray(pattern * repeat)
+        for k in range(len(body)):
             body[k] ^= 1
-            same_length = flash(10, bytes(body), compressed=True)
-            if len(same_length) == len(HISTORY) and same_length != HISTORY:
-                break
+            candidate = flash(10, bytes(body), compressed=True)
+            if len(candidate) == len(original) and candidate != original:
+                return candidate
             body[k] ^= 1
-        swf = self.tmp / "PhoneHistory.swf"
-        swf.write_bytes(same_length)
-        code, out = self.cli("job", "screen", "--screen", SCREEN, "--swf", str(swf), "--serial", SERIAL, "--no-pack")
+        raise AssertionError("no same-length screen found")
+
+    def test_a_new_frame_as_long_as_fords_is_refused_another_screen_is_not(self):
+        swf = self.tmp / "AppConsole.swf"
+        swf.write_bytes(self.same_length(FRAME, bytes(range(256)), 90))
+        code, out = self.cli("job", "screen", "--screen", FRAME_SCREEN, "--swf", str(swf), "--startup",
+                             "--serial", SERIAL, "--no-pack")
         self.assertNotEqual(code, 0)
         self.assertIn("exactly as long as Ford's", out)
+        history = self.tmp / "PhoneHistory.swf"  # not at start-up: the import's byte check is enough
+        history.write_bytes(self.same_length(HISTORY, bytes(range(255, -1, -1)), 60))
+        _, _, imported = self.run_job("screen", "--screen", SCREEN, "--swf", str(history))
+        self.assertIn("verified: the new screen is on the car (1 files match byte for byte)", imported)
+        self.assertEqual(self.car._resolve(HISTORY_CE).read_bytes(), history.read_bytes())
 
     def test_screen_undo_still_builds_after_a_newer_drive_log(self):
         swf = self.tmp / "PhoneHistory.swf"

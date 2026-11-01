@@ -667,7 +667,7 @@ FORD_APPS_CE = "\\8inchSkins\\Ford\\Sync\\Apps"
 # STARTUP_SCREENS load when SYNC starts, so a fault in one can leave the screen dark: planning a
 # job for one needs --startup, and its undo stick runs in SyncExtPack's install service, which
 # runs apart from SYNC's screens (RECOVERY.md). Home and the four main areas are not here.
-SCREENS = ("Phone/PhoneHistory/PhoneHistory.swf",)
+SCREENS = ("Phone/PhoneHistory/PhoneHistory.swf", "Menu/Display/Display.swf")
 STARTUP_SCREENS = ("AppConsole/AppConsole.swf",)
 SWAP_KINDS = (*SWAPS, "screen")
 
@@ -738,7 +738,8 @@ def swap_lines(job: Job) -> list[str]:
         for name, size in files.items():
             lines += [f'If (FileSize(th & "\\{name}") <> {size})', "  ok = 0", "EndIf"]
         lines += ["If (ok = 0)",
-                  *_stop("copy-failed.txt", "a file did not copy back whole; run the restore stick again",
+                  *_stop("copy-failed.txt", "the restore did not complete; a file did not copy back whole; "
+                         "run the restore stick again",
                          "  "),
                   "EndIf"]
         done = f"{job.kind}-restored.txt"
@@ -785,8 +786,16 @@ def swap_lines(job: Job) -> list[str]:
             lines += [f'If (FileSize(th & "\\{name}") <> {f["new"]})', "  ok = 0", "EndIf"]
         lines += ["If (ok = 0)",
                   *[f'  Copy(bk & "\\{name}", th & "\\{name}", TRUE)' for name in files],
-                  *_stop("copy-failed.txt", f"a new {what} file did not copy whole; the backup was copied back, "
-                         "but run the restore stick to be sure",
+                  "  ok = 1"]
+        for name, f in files.items():  # copying the originals back can fail too
+            lines += [f'  If (FileSize(th & "\\{name}") <> {f["old"]})', "    ok = 0", "  EndIf"]
+        lines += ["  If (ok = 0)",
+                  *_stop("rollback-failed.txt", "the originals could not be restored; the car may have a "
+                         "damaged file; use the undo (restore) stick now; if the screen stays dark, "
+                         "insert it anyway and wait two minutes", "    "),
+                  "  EndIf",
+                  *_stop("copy-failed.txt", f"a new {what} file did not copy whole; "
+                         "nothing changed; the originals are back",
                          "  "),
                   "EndIf"]
         done = f"{job.kind}-applied.txt"
