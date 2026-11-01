@@ -81,6 +81,34 @@ def _eject(stick_path: Path, args) -> None:
           f"eject failed, eject it in Finder before pulling it: {result.stderr.strip()}")
 
 
+def _remount(stick_path: Path) -> bool:
+    """Unmount and mount the stick again, so it is read from the stick, not from the Mac's cache."""
+    info = subprocess.run(["diskutil", "info", str(stick_path)], capture_output=True, text=True).stdout
+    device = next((line.split(":", 1)[1].strip() for line in info.splitlines()
+                   if line.strip().startswith("Device Identifier:")), None)
+    if not device:
+        return False
+    for _ in range(5):  # Spotlight may hold it for a moment
+        if subprocess.run(["diskutil", "unmount", str(stick_path)], capture_output=True).returncode == 0:
+            break
+        subprocess.run(["sleep", "2"])
+    else:
+        return False
+    return subprocess.run(["diskutil", "mount", device], capture_output=True).returncode == 0 and stick_path.is_dir()
+
+
+def _read_back(stick_path: Path, install: Path, job: Job, args) -> bool:
+    """Read the stick back (after a remount, unless --any-path or --no-eject) before it is ejected."""
+    remounted = False if args.no_eject or args.any_path else _remount(stick_path)
+    wrong = stick.differences(stick_path, install, job)
+    if wrong:
+        print(f"FAIL: {', '.join(wrong)} did not read back as written. Do not use this stick: prepare it again, "
+              "or use another")
+        return False
+    print("read back: identical" + (" after a remount" if remounted else ""))
+    return True
+
+
 def _stick_findings(stick_path: Path, args) -> bool:
     """Print the stick check; True when the stick passes."""
     findings = diskcheck.check(stick_path, info=None if args.any_path else diskcheck.diskutil_info)
@@ -410,6 +438,8 @@ def cmd_stick_prepare(args) -> int:
         print("in the car: insert the stick, wait for 'Install successfully completed', pull it")
     if job.kind in apps.MENU_KINDS or job.kind in (*SWAP_KINDS, "bundle"):
         print("SYNC restarts after this job")
+    if not _read_back(Path(args.stick), install, job, args):
+        return 1
     _eject(Path(args.stick), args)
     return 0
 

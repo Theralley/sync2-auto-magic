@@ -420,6 +420,23 @@ class Loop(unittest.TestCase):
             bundle_script(Job(SERIAL, "bundle", params={"parts": [
                 {"kind": "screen", "id": forged.id, "created_utc": forged.created_utc, "params": forged.params}]}))
 
+    def test_a_prepared_stick_is_read_back_before_it_is_ejected(self):
+        work = self.build("theme", "--preset", "lincoln")
+        (work / "install.bin").write_bytes(b"pack")
+        code, out = self.cli("stick", "prepare", str(self.stick), "--job", str(work), "--any-path")
+        self.assertEqual(code, 0, out)
+        self.assertIn("read back: identical", out)
+        job = Job.from_json((work / "job.json").read_text())
+        self.assertEqual(stick.differences(self.stick, work / "install.bin", job), [])
+        (self.stick / "SyncExtPack" / "install.bin").write_bytes(b"pac!")  # a stick that lost a bit
+        (self.stick / "s2am" / "pending" / f"{job.id}.json").write_text("{}")
+        self.assertEqual(stick.differences(self.stick, work / "install.bin", job),
+                         ["install.bin", f"s2am/pending/{job.id}.json"])
+        with mock.patch.object(stick, "prepare", return_value=self.tmp / "none"):  # writes nothing new
+            code, out = self.cli("stick", "prepare", str(self.stick), "--job", str(work), "--any-path")
+        self.assertEqual(code, 1)
+        self.assertIn("Do not use this stick", out)
+
     def test_a_new_screen_as_long_as_fords_is_refused(self):
         body = bytearray(bytes(range(255, -1, -1)) * 60)
         for k in range(len(body)):  # a valid screen, not Ford's, exactly as long

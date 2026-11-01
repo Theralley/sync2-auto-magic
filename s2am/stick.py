@@ -77,6 +77,20 @@ def prepare(stick: Path, install_bin: Path, job: Job, require_volume: bool = Tru
     return archive
 
 
+def differences(stick: Path, install_bin: Path, job: Job) -> list[str]:
+    """What on the stick does not read back as prepare wrote it: install.bin and the job records."""
+    wrong = []
+    if not (stick / UPDATER_DIR / "install.bin").is_file() or \
+            (stick / UPDATER_DIR / "install.bin").read_bytes() != install_bin.read_bytes():
+        wrong.append("install.bin")
+    jobs = [job, *(bundle_parts(job) if job.kind == "bundle" else [])]
+    for one in jobs:
+        record = stick / "s2am" / "pending" / f"{one.id}.json"
+        if not record.is_file() or record.read_text() != one.to_json():
+            wrong.append(f"s2am/pending/{one.id}.json")
+    return wrong
+
+
 def _status(report: Path, updater: Path) -> tuple[str, bool]:
     """(status, replayed) for one job from what is on the stick."""
     done = report / "done.txt"

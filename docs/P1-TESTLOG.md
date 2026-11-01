@@ -399,3 +399,21 @@ that one start-up screen (`STARTUP_SCREENS`); Home and the four main areas stay 
   points are fixed. **Follow-up:** after a failed copy the script copies the backup back without
   checking that copy; for the frame, the undo stick is the remedy either way.
 - `screen-1ef7` and `screen-b5bb` were built before the fix: not to be used.
+
+## Same day, evening: the second visit imported; sticks for the third
+
+| Stick | Import |
+|---|---|
+| 32 GB, `bundle-5dbf` (run 09:27) | every part applied and verified byte for byte: Night (`theme-ff1b`, 5 files), our menu with Swedish tiles (`appmenu-fc33`, 11 files), R3b (`screen-b0eb`, 1 file) |
+| 2 GB, `bundle-9ea6` | not used |
+
+Third visit, built and rehearsed on a simulated SYNC in exactly this state:
+
+| Stick | Job | Parts, in order |
+|---|---|---|
+| 32 GB | `bundle-8fc9` (4,284,040 bytes) | `theme-4128` (Ford's theme back), `theme-9481` (Night with borderless buttons: System's outline colour set to the button's), `screen-8393` (the restyled frame), last, so an earlier stop leaves the frame alone |
+| 2 GB | `bundle-f6bd` (2,795,240 bytes) | `screen-e9a7` (Ford's frame back), `theme-78ec` (Ford's theme back); the menu and R3b stay |
+
+`stick prepare` ejected both sticks without reading them back. Read back by hand after
+replugging and again after a remount: identical. `stick prepare` now reads every stick back
+itself (after a remount) before it ejects it, and refuses to eject one that differs.
