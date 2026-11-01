@@ -357,3 +357,27 @@ Ford's call history, our Swedish tiles left in `Tiles`):
 | `bundle-9ea6` | undo all: `screen-da40`, `appmenu-93e9`, `theme-9156` | 1,838,360 bytes | after the bundle: the car as before |
 
 Both sticks read back identical after writing and after a remount.
+
+# 2026-11-01, morning: the second visit, with photos
+
+Rasmus sent six photos (9:30 to 9:31 on the car's clock): the call history twice, the Apps menu,
+the display settings twice. He saw "no change on call history". The photos stay private: they
+show names from his phone.
+
+**The call history on the screen is ours (R3b), not Ford's:**
+- three tall rows fill the list, where Ford's screen has five rows of 50 px; measured against
+  the screen's height in the photo, each row is about 75 px (ours: 76);
+- the scroll buttons show thin chevrons, where Ford's show solid white triangles;
+- the call marks are our thinner line icons.
+
+So **SYNC draws a changed Ford screen**: eight pictures, two numbers in a class and one sprite's
+layout changed, and it loads and runs. That answers the question R3 was there for. Rasmus did
+not see a change because the change is small: the frame around the list (left menu, tabs, top
+and bottom bars, the gloss on the buttons) is all Ford's.
+
+Also seen: the Apps menu with our Swedish tiles; Settings, Display, with Ford's own day/night
+mode set to Auto (that is the screen's brightness, not our Night colours, which only dim the
+glow and can't be judged from a photo).
+
+The sticks are not imported yet. The import will confirm that `bundle-5dbf` ran and that
+SYNC restarted.
