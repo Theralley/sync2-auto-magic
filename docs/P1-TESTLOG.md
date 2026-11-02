@@ -436,3 +436,27 @@ Settings > Display (`Menu/Display/Display.swf`, not at start-up) may now be chan
 job, for a lower Auto dim floor. A new screen exactly as long as Ford's is refused only for a
 start-up screen: Ford's screens are stored uncompressed, so a number changed in place keeps the
 length, and the import's byte-for-byte check proves the copy.
+
+# 2026-11-02, morning: the fourth visit, the fixed frame and the lower dim floor
+
+The third visit's cause was ours, not Ford's: `swf_bitmaps` wrote 0 into the first byte of
+every pixel of a picture without alpha. The format calls that byte reserved; Ford's files hold
+0xFF there and the car's player reads it as opacity, so the restyled button strips and corner
+bars drew transparent. Fixed in sync-redesign (47ad11d) and the frame rebuilt.
+
+`bundle-8d9d` ran at 07:39 and was imported the same day: every part applied and verified byte
+for byte (`screen-0371` Settings > Display with the Auto dim offset from -10, `screen-c492`
+Ford's frame back, `screen-f566` the fixed frame). SyncExtPack restarted SYNC after the
+install, so Rasmus's eight photos from 07:42 to 07:43 show the fixed frame: buttons and bars
+are solid now. The undo stick (`bundle-724f`) was not needed and is unused.
+
+Two findings from the photos:
+- **The car's screen shows dark greys far lighter than their numbers.** In the daylight photos
+  black reads about 42 of 255, our bars (23,26,32) about 150 and our buttons (38,42,51) about
+  210, as light as Ford's own grey frame, which is drawn from the same dark greys (Ford's clock
+  piece is (36,36,36), photographed silver on 2026-10-30). Some of it is the phone camera; how
+  dark it looks by eye is asked.
+- The dimming floor is not tried yet: the offset stood at 0.
+
+Rasmus: "it still feels old/like the old system BUT with some new skins". Next: a near-black
+palette (`restyle_frame.py --palette deep`) and the new layouts (Home, then the frame).
