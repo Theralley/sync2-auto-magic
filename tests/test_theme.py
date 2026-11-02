@@ -40,6 +40,8 @@ HISTORY_CE = "\\8inchSkins\\Ford\\Sync\\Apps\\Phone\\PhoneHistory\\PhoneHistory.
 FRAME = flash(10, bytes(range(256)) * 90, compressed=True)  # Ford's frame, which loads at start-up
 FRAME_SCREEN = "AppConsole/AppConsole.swf"
 FRAME_CE = "\\8inchSkins\\Ford\\Sync\\Apps\\AppConsole\\AppConsole.swf"
+HOME = flash(10, bytes(range(0, 256, 3)) * 200, compressed=True)  # Ford's Home, also loaded at start-up
+HOME_CE = "\\8inchSkins\\Ford\\Sync\\Apps\\Home\\Home.swf"
 COLORS = {"Ford": ("0x966716", "0x45a180", "0xb3252a", "0x008cff"),
           "Lincoln": ("0x774732", "0x135D52", "0x78243E", "0x3B59A6")}
 
@@ -300,6 +302,7 @@ class Loop(unittest.TestCase):
         self.car.put(f"{APPS_MENU_CE}\\SyncApps.swf", MENU)
         self.car.put(HISTORY_CE, HISTORY)
         self.car.put(FRAME_CE, FRAME)
+        self.car.put(HOME_CE, HOME)
         self.stick = self.tmp / "stick"
         self.stick.mkdir()
         self.drive_log()
@@ -322,6 +325,9 @@ class Loop(unittest.TestCase):
         frame = report / "skins" / "8inchSkins" / "Ford" / "Sync" / "Apps" / FRAME_SCREEN
         frame.parent.mkdir(parents=True)
         frame.write_bytes(FRAME)
+        home = report / "skins" / "8inchSkins" / "Ford" / "Sync" / "Apps" / "Home" / "Home.swf"
+        home.parent.mkdir(parents=True)
+        home.write_bytes(HOME)
         store = Store()
         job = Job(SERIAL, "log", params={"seconds": 600, "drive": True})
         store.save_job(SERIAL, job.id, {**__import__("json").loads(job.to_json()), "status": "applied"})
@@ -529,6 +535,24 @@ class Loop(unittest.TestCase):
         self.assertIn("verified: the original screen is back (1 files match byte for byte)", imported)
         self.assertEqual(self.car._resolve(FRAME_CE).read_bytes(), FRAME)
 
+    def test_home_is_a_startup_screen_too(self):
+        swf = self.tmp / "Home.swf"
+        swf.write_bytes(flash(10, b"four cards" * 3000, compressed=True))
+        code, out = self.cli("job", "screen", "--screen", "Home/Home.swf", "--swf", str(swf), "--serial", SERIAL,
+                             "--no-pack")
+        self.assertNotEqual(code, 0)
+        self.assertIn("loads when SYNC starts", out)
+        job, work, imported = self.run_job("screen", "--screen", "Home/Home.swf", "--swf", str(swf), "--startup")
+        self.assertIs(job.params["startup"], True)
+        self.assertIn("verified: the new screen is on the car (1 files match byte for byte)", imported)
+        self.assertEqual(self.car._resolve(HOME_CE).read_bytes(), swf.read_bytes())
+        self.assertEqual(self.car._resolve(FRAME_CE).read_bytes(), FRAME)  # only Home
+        script = (work / "payload" / job.job_dir.lstrip("/") / "s2amjob.mscr").read_text()
+        self.assertIn('th = "\\8inchSkins\\Ford\\Sync\\Apps\\Home"', script)
+        _, _, imported = self.run_job("screen", "--restore", job.id)
+        self.assertIn("verified: the original screen is back (1 files match byte for byte)", imported)
+        self.assertEqual(self.car._resolve(HOME_CE).read_bytes(), HOME)
+
     def test_a_bundle_cannot_carry_the_frame_without_startup(self):
         swf = self.tmp / "AppConsole.swf"
         swf.write_bytes(flash(10, b"flat buttons" * 2000, compressed=True))
@@ -626,7 +650,7 @@ class Loop(unittest.TestCase):
                 self.assertNotEqual(code, 0)
                 self.assertIn(why, out)
         with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):  # not on the list
-            cli.main(["job", "screen", "--screen", "Home/Home.swf", "--swf", str(swf), "--serial", SERIAL])
+            cli.main(["job", "screen", "--screen", "Phone/Phone.swf", "--swf", str(swf), "--serial", SERIAL])
         theme_job, _, _ = self.run_job("theme", "--preset", "lincoln")
         code, out = self.cli("job", "screen", "--restore", theme_job.id, "--serial", SERIAL, "--no-pack")
         self.assertNotEqual(code, 0)

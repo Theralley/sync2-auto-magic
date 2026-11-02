@@ -666,9 +666,10 @@ FORD_APPS_CE = "\\8inchSkins\\Ford\\Sync\\Apps"
 # Ford's own screens a screen job may replace, one file each. SCREENS load when they are opened.
 # STARTUP_SCREENS load when SYNC starts, so a fault in one can leave the screen dark: planning a
 # job for one needs --startup, and its undo stick runs in SyncExtPack's install service, which
-# runs apart from SYNC's screens (RECOVERY.md). Home and the four main areas are not here.
+# runs apart from SYNC's screens (RECOVERY.md). Home is the frame's first screen; its four corners
+# (PhoneSmartCorner.swf and the others) and the four main areas are not here.
 SCREENS = ("Phone/PhoneHistory/PhoneHistory.swf", "Menu/Display/Display.swf")
-STARTUP_SCREENS = ("AppConsole/AppConsole.swf",)
+STARTUP_SCREENS = ("AppConsole/AppConsole.swf", "Home/Home.swf")
 SWAP_KINDS = (*SWAPS, "screen")
 
 

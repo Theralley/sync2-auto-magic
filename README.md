@@ -71,7 +71,7 @@ run the same system, but nothing is guaranteed.
 | Leaving AutoKit returns to SYNC | **Works in the car with the runner guard** (`s2am job runner-guard`, undo with `--off`). Without it, Exit only hides AutoKit and the screen freezes. Reported upstream: [syncextpack#4](https://github.com/chr0m1ng/syncextpack/issues/4) |
 | New colours for SYNC's menus (`s2am job theme`; Lincoln's colours now, your own next) | **Works in the car**: the change and its undo stick both verified byte for byte (2026-10-31). How to undo: [sync-redesign RECOVERY.md](https://github.com/Theralley/sync-redesign/blob/main/docs/RECOVERY.md) |
 | A new Apps menu with big tiles, CarPlay first (`s2am job apps-menu`) | Built and rehearsed on the computer with the car's files; **first car test 2026-10-31**. Built by [sync-redesign](https://github.com/Theralley/sync-redesign)'s `tools/build_apps_menu.py` from your own copy of SyncExtPack's menu |
-| One of Ford's own screens, rebuilt (`s2am job screen`; first the call history with new icons) | Built and rehearsed on the computer with the car's files (2026-10-31). Only screens SYNC loads when opened; built by [sync-redesign](https://github.com/Theralley/sync-redesign) from your own copy |
+| One of Ford's own screens, rebuilt (`s2am job screen`: the call history, Settings > Display, the frame, Home) | **Works in the car** (call history 2026-11-01, the restyled frame 2026-11-01 and 11-02). The frame (`AppConsole.swf`) and Home load when SYNC starts and need `--startup`, with the undo stick built at the same time; built by [sync-redesign](https://github.com/Theralley/sync-redesign) from your own copy |
 | Call sound: boxy, no bass (narrowband or wideband?) | Two read-only loggers, built 2026-10-31: the iPhone's Bluetooth log read by `tools/hfp_codec.py`, and SYNC's own settings (`s2am job registry`). How: [docs/CALL-SOUND.md](docs/CALL-SOUND.md) |
 | Several jobs in one visit to the car (`s2am job bundle`) | Built and rehearsed (2026-10-31): jobs already built run in one go, in order, each verified on its own after import; the first that stops ends the run. An undo bundle puts everything back in one go |
 | Reverse camera while AutoKit is open | **Does not show** (seen in the car); leave AutoKit before reversing |
@@ -199,6 +199,7 @@ python3 -m s2am job apps-menu --swf NEW.swf --tiles DIR --serial YOURSERIAL  # a
 python3 -m s2am job apps-menu --restore JOB_ID --serial YOURSERIAL   # the undo stick for it
 python3 -m s2am job cleanup --serial YOURSERIAL                      # remove s2am's old job folders (backups stay)
 python3 -m s2am job screen --screen Phone/PhoneHistory/PhoneHistory.swf --swf NEW.swf --serial YOURSERIAL
+python3 -m s2am job screen --screen Home/Home.swf --startup --swf NEW.swf --serial YOURSERIAL  # loads at start-up
 python3 -m s2am job screen --restore JOB_ID --serial YOURSERIAL      # the undo stick for it
 python3 -m s2am job bundle --part build/jobs/ID1 --part build/jobs/ID2 --serial YOURSERIAL  # several, one run
 python3 -m s2am job registry --serial YOURSERIAL                     # read-only: SYNC's settings, for the call sound
