@@ -460,3 +460,13 @@ Two findings from the photos:
 
 Rasmus: "it still feels old/like the old system BUT with some new skins". Next: a near-black
 palette (`restyle_frame.py --palette deep`) and the new layouts (Home, then the frame).
+
+## Same day, afternoon: the fifth visit's sticks
+
+Built, rehearsed on a simulated SYNC in the car's state after `bundle-8d9d` (on and off, every
+file byte for byte, the rest untouched), written, read back after a remount, labelled and ejected:
+- **SYNC:** `bundle-6bce`: Ford's theme back (`theme-ab5f`), the deep theme without glow
+  (`theme-bdc9`), Ford's frame back (`screen-d013`), the straight deep frame (`screen-b1e5`),
+  Home as four cards (`screen-f9a4`, the second start-up screen).
+- **UNTITLED 2:** `bundle-1b62`: Ford's frame (`screen-a2b5`), Ford's Home (`screen-7cee`),
+  Ford's theme (`theme-d31d`). Display's dim floor, the Apps menu and R3b stay.
