@@ -442,7 +442,7 @@ length, and the import's byte-for-byte check proves the copy.
 The third visit's cause was ours, not Ford's: `swf_bitmaps` wrote 0 into the first byte of
 every pixel of a picture without alpha. The format calls that byte reserved; Ford's files hold
 0xFF there and the car's player reads it as opacity, so the restyled button strips and corner
-bars drew transparent. Fixed in sync-redesign (47ad11d) and the frame rebuilt.
+bars drew transparent. Fixed in sync-redesign (9872d67) and the frame rebuilt.
 
 `bundle-8d9d` ran at 07:39 and was imported the same day: every part applied and verified byte
 for byte (`screen-0371` Settings > Display with the Auto dim offset from -10, `screen-c492`
