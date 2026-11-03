@@ -862,7 +862,7 @@ def parser() -> argparse.ArgumentParser:
                                      "(sync-redesign), backed up first; undo with --restore JOB")
     screen.add_argument("--screen", choices=SCREENS + STARTUP_SCREENS, help="which of Ford's screens")
     screen.add_argument("--startup", action="store_true",
-                        help="allow a screen SYNC loads at start-up (the frame); build its undo stick with it")
+                        help="allow a screen SYNC loads at start-up (the frame, Home and the files they load); build its undo stick with it")
     screen.add_argument("--swf", type=Path, help="the new screen (built on this Mac from the car's own)")
     screen.add_argument("--restore", metavar="JOB_ID", help="put back what that screen job replaced")
     screen.add_argument("--fetch", action="append", default=[], metavar="PATTERN",

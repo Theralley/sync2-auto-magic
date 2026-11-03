@@ -666,10 +666,17 @@ FORD_APPS_CE = "\\8inchSkins\\Ford\\Sync\\Apps"
 # Ford's own screens a screen job may replace, one file each. SCREENS load when they are opened.
 # STARTUP_SCREENS load when SYNC starts, so a fault in one can leave the screen dark: planning a
 # job for one needs --startup, and its undo stick runs in SyncExtPack's install service, which
-# runs apart from SYNC's screens (RECOVERY.md). Home is the frame's first screen; its four corners
-# (PhoneSmartCorner.swf and the others) and the four main areas are not here.
+# runs apart from SYNC's screens (RECOVERY.md). Home is the frame's first screen and loads its
+# four corners; the frame loads the console objects (the labels in its bars) and Media.swf, which
+# carries a copy of the media console's strings. Menu.swf and Info.swf (the side menus) are
+# counted here too: whether they load at start-up is not known. The main areas' other files are
+# not here.
 SCREENS = ("Phone/PhoneHistory/PhoneHistory.swf", "Menu/Display/Display.swf")
-STARTUP_SCREENS = ("AppConsole/AppConsole.swf", "Home/Home.swf")
+STARTUP_SCREENS = ("AppConsole/AppConsole.swf", "Home/Home.swf",
+                   "Phone/PhoneSmartCorner.swf", "Nav/NavSmartCorner.swf", "Media/MediaSmartCorner.swf",
+                   "Climate/ClimateSmartCorner.swf", "AppConsole/MenuConsoleObject.swf",
+                   "Phone/PhoneConsoleObject.swf", "Nav/NavConsoleObject.swf", "Media/MediaConsoleObject.swf",
+                   "Climate/ClimateConsoleObject.swf", "Media/Media.swf", "Menu/Menu.swf", "Info/Info.swf")
 SWAP_KINDS = (*SWAPS, "screen")
 
 
@@ -847,14 +854,16 @@ def cleanup_lines(job: Job, home: str | None = None) -> list[str]:
 
 
 BUNDLE_PARTS = (*SWAP_KINDS, "clean")  # jobs a bundle may run; a cleanup only last
-BUNDLE_LIMIT = 8
+# a screen job changes one file, and the new frame and Home with their corners, labels and side
+# menus are 14 files, plus the theme and putting back the previous visit's frame, Home and theme
+BUNDLE_LIMIT = 24
 
 
 def bundle_parts(job: Job) -> list[Job]:
     """A bundle's parts as jobs of their own, checked like any job read back from a stick."""
     parts = job.params.get("parts")
     if not isinstance(parts, list) or not 1 <= len(parts) <= BUNDLE_LIMIT:
-        raise ValueError("a bundle holds 1 to 8 parts")
+        raise ValueError(f"a bundle holds 1 to {BUNDLE_LIMIT} parts")
     jobs = [validate(Job(job.serial, p["kind"], id=p["id"], created_utc=p["created_utc"], params=p["params"]))
             for p in parts]
     if any(part.kind not in BUNDLE_PARTS for part in jobs):

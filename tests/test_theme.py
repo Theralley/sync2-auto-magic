@@ -18,8 +18,8 @@ sys.path.insert(0, str(ROOT))
 
 from s2am import cli, native, stick, theme  # noqa: E402
 from s2am.fakecar import FakeCar  # noqa: E402
-from s2am.job import (APPS_MENU_CE, THEMES_CE, Job, bundle_parts, bundle_script, meta, swap_script,  # noqa: E402
-                      theme_script)
+from s2am.job import (APPS_MENU_CE, BUNDLE_LIMIT, STARTUP_SCREENS, THEMES_CE, Job, bundle_parts,  # noqa: E402
+                      bundle_script, meta, swap_script, theme_script)
 from s2am.state import Store  # noqa: E402
 
 HAVE_UPSTREAM = (ROOT.parent / "syncextpack" / "SyncExtPack").exists()
@@ -42,6 +42,9 @@ FRAME_SCREEN = "AppConsole/AppConsole.swf"
 FRAME_CE = "\\8inchSkins\\Ford\\Sync\\Apps\\AppConsole\\AppConsole.swf"
 HOME = flash(10, bytes(range(0, 256, 3)) * 200, compressed=True)  # Ford's Home, also loaded at start-up
 HOME_CE = "\\8inchSkins\\Ford\\Sync\\Apps\\Home\\Home.swf"
+CORNER = flash(10, bytes(range(0, 256, 5)) * 300)  # one of the four corners Home loads, stored uncompressed
+CORNER_SCREEN = "Nav/NavSmartCorner.swf"
+CORNER_CE = "\\8inchSkins\\Ford\\Sync\\Apps\\Nav\\NavSmartCorner.swf"
 COLORS = {"Ford": ("0x966716", "0x45a180", "0xb3252a", "0x008cff"),
           "Lincoln": ("0x774732", "0x135D52", "0x78243E", "0x3B59A6")}
 
@@ -126,6 +129,24 @@ class Checks(unittest.TestCase):
                         "params": {}}], []):
             with self.subTest(wrong), self.assertRaises(ValueError):
                 bundle_parts(Job(SERIAL, "bundle", params={"parts": wrong}))
+
+    def test_a_bundle_holds_a_whole_visit_of_screens_but_not_more(self):
+        # the new frame and Home: 14 files, each its own screen job, plus the theme and the
+        # previous visit's frame, Home and theme put back first
+        jobs = []
+        for i, screen in enumerate(STARTUP_SCREENS):
+            name = screen.rsplit("/", 1)[1]
+            jobs.append(Job(SERIAL, "screen", id=f"20261103-1200{i:02d}-screen-{i:04x}", params={
+                "screen": screen, "startup": True,
+                "files": {name: {"old": 9, "new": 10, "old_sha256": "a", "new_sha256": "b"}}}))
+        parts = [{"kind": j.kind, "id": j.id, "created_utc": j.created_utc, "params": j.params} for j in jobs]
+        self.assertEqual(len(bundle_parts(Job(SERIAL, "bundle", params={"parts": parts}))), len(STARTUP_SCREENS))
+        script = bundle_script(Job(SERIAL, "bundle", params={"parts": parts}))
+        self.assertIn('th = "\\8inchSkins\\Ford\\Sync\\Apps\\Phone"', script)
+        self.assertIn('Copy(jd & "\\new-PhoneSmartCorner.swf", th & "\\PhoneSmartCorner.swf", TRUE)', script)
+        many = [{**parts[0], "id": f"20261103-1300{i:02d}-screen-{i:04x}"} for i in range(BUNDLE_LIMIT + 1)]
+        with self.assertRaisesRegex(ValueError, f"1 to {BUNDLE_LIMIT} parts"):
+            bundle_parts(Job(SERIAL, "bundle", params={"parts": many}))
 
     def test_script_checks_every_rollback_before_reporting_failure_or_done(self):
         files = {name: {"old": 10 + i, "new": 20 + i} for i, name in enumerate(theme.FILES)}
@@ -303,6 +324,7 @@ class Loop(unittest.TestCase):
         self.car.put(HISTORY_CE, HISTORY)
         self.car.put(FRAME_CE, FRAME)
         self.car.put(HOME_CE, HOME)
+        self.car.put(CORNER_CE, CORNER)
         self.stick = self.tmp / "stick"
         self.stick.mkdir()
         self.drive_log()
@@ -328,6 +350,9 @@ class Loop(unittest.TestCase):
         home = report / "skins" / "8inchSkins" / "Ford" / "Sync" / "Apps" / "Home" / "Home.swf"
         home.parent.mkdir(parents=True)
         home.write_bytes(HOME)
+        corner = report / "skins" / "8inchSkins" / "Ford" / "Sync" / "Apps" / CORNER_SCREEN
+        corner.parent.mkdir(parents=True)
+        corner.write_bytes(CORNER)
         store = Store()
         job = Job(SERIAL, "log", params={"seconds": 600, "drive": True})
         store.save_job(SERIAL, job.id, {**__import__("json").loads(job.to_json()), "status": "applied"})
@@ -552,6 +577,28 @@ class Loop(unittest.TestCase):
         _, _, imported = self.run_job("screen", "--restore", job.id)
         self.assertIn("verified: the original screen is back (1 files match byte for byte)", imported)
         self.assertEqual(self.car._resolve(HOME_CE).read_bytes(), HOME)
+
+    def test_a_corner_of_home_is_a_startup_screen_and_must_change_length(self):
+        swf = self.tmp / "NavSmartCorner.swf"
+        swf.write_bytes(flash(10, bytes(len(CORNER) - 8)))  # as long as Ford's: a failed copy would look whole
+        code, out = self.cli("job", "screen", "--screen", CORNER_SCREEN, "--swf", str(swf), "--startup",
+                             "--serial", SERIAL, "--no-pack")
+        self.assertNotEqual(code, 0)
+        self.assertIn("exactly as long as Ford's", out)
+        swf.write_bytes(flash(10, b"street centred" * 2000, compressed=True))
+        code, out = self.cli("job", "screen", "--screen", CORNER_SCREEN, "--swf", str(swf), "--serial", SERIAL,
+                             "--no-pack")
+        self.assertNotEqual(code, 0)
+        self.assertIn("loads when SYNC starts", out)
+        job, work, imported = self.run_job("screen", "--screen", CORNER_SCREEN, "--swf", str(swf), "--startup")
+        self.assertIn("verified: the new screen is on the car (1 files match byte for byte)", imported)
+        self.assertEqual(self.car._resolve(CORNER_CE).read_bytes(), swf.read_bytes())
+        self.assertEqual(self.car._resolve(HOME_CE).read_bytes(), HOME)  # only the corner
+        script = (work / "payload" / job.job_dir.lstrip("/") / "s2amjob.mscr").read_text()
+        self.assertIn('th = "\\8inchSkins\\Ford\\Sync\\Apps\\Nav"', script)
+        _, _, imported = self.run_job("screen", "--restore", job.id)
+        self.assertIn("verified: the original screen is back (1 files match byte for byte)", imported)
+        self.assertEqual(self.car._resolve(CORNER_CE).read_bytes(), CORNER)
 
     def test_a_bundle_cannot_carry_the_frame_without_startup(self):
         swf = self.tmp / "AppConsole.swf"

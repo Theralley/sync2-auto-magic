@@ -470,3 +470,14 @@ file byte for byte, the rest untouched), written, read back after a remount, lab
   Home as four cards (`screen-f9a4`, the second start-up screen).
 - **UNTITLED 2:** `bundle-1b62`: Ford's frame (`screen-a2b5`), Ford's Home (`screen-7cee`),
   Ford's theme (`theme-d31d`). Display's dim floor, the Apps menu and R3b stay.
+
+# 2026-11-02, afternoon: the fifth visit, Home as cards
+
+`bundle-6bce` ran at about 16:30 and was imported on 2026-11-03: every part applied and verified
+byte for byte (`theme-ab5f` Ford's theme back, `theme-bdc9` the deep theme without glow,
+`screen-d013` Ford's frame back, `screen-b1e5` the straight deep frame, `screen-f9a4` Home as
+four cards). The undo stick (`bundle-1b62`) was not needed and is unused.
+
+Rasmus, with six photos from 16:35: "still very as the old. looks shit. not even align." What
+the photos show is in sync-redesign's FINDINGS.md. Next: version 2, the frame and Home rebuilt
+on one grid instead of repainted.
