@@ -501,3 +501,13 @@ photos show version 2. The undo stick (`bundle-6088`) was not needed and is unus
 all 14 files and the theme back to Ford's. Three faults, in sync-redesign's FINDINGS.md: the media
 presets' outlines drawn out of place, a stray "Klimat" in the climate card, and grey outlines left
 in the areas' own screens.
+
+## 2026-11-03, afternoon: the seventh visit's sticks (version 2's fixes)
+
+Four of version 2's files rebuilt (the frame with the theme's outline invisible, the climate
+console object's Home label parked off the screen, the media and phone corners with the outline
+clips at Ford's placement). Rehearsed on a simulated SYNC in the car's state after the sixth
+visit: on and off byte for byte, and the sixth visit's unused undo (`bundle-6088`) still puts
+everything back after it. Written, read back after a remount, labelled and ejected:
+- **SYNC:** `bundle-b2a0` (8 parts: the four files back to Ford's, then the new ones).
+- **UNTITLED 2:** `bundle-de93` (15 parts: all 14 of version 2's files and the theme back to Ford's).
