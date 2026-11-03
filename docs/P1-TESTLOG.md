@@ -481,3 +481,14 @@ four cards). The undo stick (`bundle-1b62`) was not needed and is unused.
 Rasmus, with six photos from 16:35: "still very as the old. looks shit. not even align." What
 the photos show is in sync-redesign's FINDINGS.md. Next: version 2, the frame and Home rebuilt
 on one grid instead of repainted.
+
+## 2026-11-03: the sixth visit's sticks (version 2)
+
+Built from sync-redesign's tools (frame and Home rebuilt on one grid), rehearsed on a simulated
+SYNC in the car's state after the fifth visit (on and off, all 33 parts verified byte for byte,
+the rest untouched), written, read back after a remount, labelled and ejected:
+- **SYNC:** `bundle-6166`: the fifth visit's theme, Home and frame back to Ford's (`theme-e3fb`,
+  `screen-49bf`, `screen-b5e8`), the new theme (`theme-ed24`), then 14 screen jobs: Home's four
+  corners, the five console objects, `Media.swf`, `Menu.swf`, `Info.swf`, the frame
+  (`screen-6f01`) and Home last (`screen-24e8`).
+- **UNTITLED 2:** `bundle-6088`: each of the 14 files back to Ford's, then Ford's theme.
