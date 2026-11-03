@@ -492,3 +492,12 @@ the rest untouched), written, read back after a remount, labelled and ejected:
   corners, the five console objects, `Media.swf`, `Menu.swf`, `Info.swf`, the frame
   (`screen-6f01`) and Home last (`screen-24e8`).
 - **UNTITLED 2:** `bundle-6088`: each of the 14 files back to Ford's, then Ford's theme.
+
+# 2026-11-03, midday: the sixth visit, version 2
+
+`bundle-6166` ran at about 12:50 and was imported the same day: all 18 parts applied and
+verified byte for byte, 14 of Ford's start-up files and the theme. SYNC started normally and the
+photos show version 2. The undo stick (`bundle-6088`) was not needed and is unused; it still puts
+all 14 files and the theme back to Ford's. Three faults, in sync-redesign's FINDINGS.md: the media
+presets' outlines drawn out of place, a stray "Klimat" in the climate card, and grey outlines left
+in the areas' own screens.
