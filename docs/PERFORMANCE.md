@@ -35,7 +35,23 @@ it, the two fight for the same core, and every tap waits behind both.
 
 ## Plan: measure first, then one change per visit
 
-**Step 1: measure.** A logger run with CarPlay on, and on Ford's screens with AutoKit closed.
+**Step 1: measure.** `s2am job logger --load` records for 30 minutes: the processor's load per
+program every 10 s, and the busiest threads with their priorities. It copies no files and no
+screens, so it adds next to nothing itself. It only reads from the car.
+
+Parked with the engine running. The stick goes in its usual USB port **before AutoKit is opened**,
+so its report also brings AutoKit's log of the last CarPlay run, and it stays in until the end. The
+adapter stays in the other port. Then, in this order:
+
+| Minutes | Do | Answers |
+|---|---|---|
+| 3 | Home, touch nothing | What version 2 costs at rest, against the 53% above |
+| 2 | Tap through climate, radio and the menus | What Ford's screens cost in use |
+| 3 | The map, touch nothing | What the map adds |
+| 2 | AutoKit open, phone not connected | What AutoKit costs alone |
+| 3 | CarPlay's home screen, touch nothing | Whether `Desktop.exe` keeps working behind it |
+| 5 | CarPlay: Maps with a route, Spotify playing, scroll the map | The worst case, and which threads fight |
+| 2 | Exit, then Home | Whether everything goes back to normal |
 
 **Step 2: try the levers, one per visit,** each with its own undo stick:
 

@@ -1,6 +1,6 @@
 /*
  * s2am drive: records what a redesign of SYNC 2's screens needs, while you drive.
- * Usage: s2amdrive.exe <seconds> <output folder>
+ * Usage: s2amdrive.exe <seconds> [load] <output folder>
  *
  * At the start it writes the system's facts to drive.log: CE version, memory, screen,
  * and every root folder with its free space. A thread of its own then lists every file
@@ -10,6 +10,10 @@
  * 10 s it copies the screen; a picture that has changed and then held still until the
  * next look (or every 30 s while it keeps changing, like a moving map) is saved as a BMP
  * in <folder>\screens. Only the layer under SYNC's Flash screens can be copied this way.
+ *
+ * With "load" it measures speed and nothing else: no file list, no copy of the screens and no
+ * screen copies, so the logger itself costs next to nothing. After each load line comes a
+ * threads line: the busiest threads with their share and their base and changed priority.
  *
  * It only reads from the car: everything it writes goes to the stick. Its threads run
  * below normal priority, so SYNC's own work always comes first. It stops after
@@ -206,6 +210,36 @@ static void bmp_header(BYTE header[54], int width, int height, int stride)
     put_le(header + 26, 1, 2);
     put_le(header + 28, 24, 2);
     put_le(header + 34, image, 4);
+}
+
+#define TOP_THREADS 8
+
+typedef struct {
+    DWORD id, delta;
+    int program, base, change;
+} Busy;
+
+static Busy busy[TOP_THREADS];
+static int busy_count;
+
+/* Keeps the TOP_THREADS threads with the largest delta, the busiest first. */
+static void note_busy(DWORD id, DWORD delta, int program, int base, int change)
+{
+    int at = busy_count;
+    if (at == TOP_THREADS) {
+        if (delta <= busy[at - 1].delta)
+            return;
+        at--;
+    } else {
+        busy_count++;
+    }
+    for (; at > 0 && busy[at - 1].delta < delta; at--)
+        busy[at] = busy[at - 1];
+    busy[at].id = id;
+    busy[at].delta = delta;
+    busy[at].program = program;
+    busy[at].base = base;
+    busy[at].change = change;
 }
 
 /* pure: end */
@@ -791,7 +825,7 @@ typedef struct {
 static Usage usage[MAX_PROCS];
 static Seen threads_before[MAX_THREADS], threads_now[MAX_THREADS];
 static int threads_before_count;
-static BOOL times_work = TRUE;
+static BOOL times_work = TRUE, load_only;
 
 static BOOL thread_time(DWORD id, DWORD *units)
 {
@@ -821,6 +855,7 @@ static void sample_load(DWORD interval, DWORD idle_delta, BOOL idle_known)
     DWORD measured = 0;
     BOOL first = threads_before_count == 0;
 
+    busy_count = 0;
     if (snapshot && first_process && next_process && close_snapshot) {
         list = snapshot(TH32CS_SNAPPROCESS | TH32CS_SNAPTHREAD | TH32CS_SNAPNOHEAPS, 0);
         if (list != INVALID_HANDLE_VALUE) {
@@ -855,8 +890,12 @@ static void sample_load(DWORD interval, DWORD idle_delta, BOOL idle_known)
                             now_count++;
                             if (threads_before_count && delta <= interval * 10000UL)
                                 for (j = 0; j < count; j++)
-                                    if (usage[j].pid == thread.th32OwnerProcessID)
+                                    if (usage[j].pid == thread.th32OwnerProcessID) {
                                         usage[j].delta += delta;
+                                        if (load_only)
+                                            note_busy(thread.th32ThreadID, delta, j, (int)thread.tpBasePri,
+                                                      (int)thread.tpDeltaPri);
+                                    }
                         }
                         thread.dwSize = sizeof(thread);
                     } while (next_thread(list, &thread));
@@ -909,6 +948,23 @@ static void sample_load(DWORD interval, DWORD idle_delta, BOOL idle_known)
         }
     }
     end_line();
+    if (load_only && interval && busy_count) {
+        begin("threads|");
+        for (i = 0; i < busy_count && busy[i].delta / (interval * 100UL) >= 1; i++) {
+            if (i)
+                put(", ");
+            put_wide(usage[busy[i].program].exe, 31);
+            put(" ");
+            put_uint(busy[i].id);
+            put(" ");
+            put_uint(busy[i].delta / (interval * 100UL));
+            put("% p");
+            put_uint((unsigned long)busy[i].base);
+            put(busy[i].change < 0 ? " d-" : " d");
+            put_uint((unsigned long)(busy[i].change < 0 ? -busy[i].change : busy[i].change));
+        }
+        end_line();
+    }
 }
 
 /* ---- screenshots ---- */
@@ -1045,7 +1101,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
     DWORD seconds = 0, started, last_load, last_look, last_heartbeat, idle_before = 0, reported_files = 0;
     BOOL idle_known, screen_ok, listing_reported = FALSE, dump_reported = FALSE;
     WCHAR *at = command, path[MAX_PATH];
-    HANDLE worker;
+    HANDLE worker = NULL;
+    static const WCHAR load_word[] = L"load ";
+    int same = 0;
     (void)instance;
     (void)previous;
     (void)show;
@@ -1056,6 +1114,14 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
         seconds = seconds * 10 + (DWORD)(*at++ - L'0');
     while (*at == L' ' || *at == L'"')
         at++;
+    while (load_word[same] && at[same] == load_word[same])
+        same++;
+    if (!load_word[same]) {
+        load_only = TRUE;
+        at += same;
+        while (*at == L' ' || *at == L'"')
+            at++;
+    }
     if (seconds < 10 || seconds > 14400 || !*at || wcslen(at) + 40 >= MAX_PATH)
         return 1;
     wcscpy(folder, at);
@@ -1082,14 +1148,20 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
     if (write_failures)
         return 1;
 
-    if (in_folder(path, L"\\screens"))
-        CreateDirectoryW(path, NULL);
-    screen_ok = screen_setup();
-    begin(screen_ok ? "screen|copying the screen every 10 s" : "screen|cannot copy the screen");
-    end_line();
-    worker = CreateThread(NULL, 0, dump, NULL, 0, NULL);
-    begin(worker ? "files|listing every file, then copying \\8inchSkins" : "files|could not start");
-    end_line();
+    screen_ok = FALSE;
+    if (load_only) {
+        begin("load only|no screen copies, no file copy");
+        end_line();
+    } else {
+        if (in_folder(path, L"\\screens"))
+            CreateDirectoryW(path, NULL);
+        screen_ok = screen_setup();
+        begin(screen_ok ? "screen|copying the screen every 10 s" : "screen|cannot copy the screen");
+        end_line();
+        worker = CreateThread(NULL, 0, dump, NULL, 0, NULL);
+        begin(worker ? "files|listing every file, then copying \\8inchSkins" : "files|could not start");
+        end_line();
+    }
     idle_known = idle_time && idle_time() != 0xFFFFFFFF;
     if (idle_known)
         idle_before = idle_time();

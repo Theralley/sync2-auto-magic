@@ -39,6 +39,7 @@ AUTOKIT_CE = "\\SyncExtendedPack\\Apps\\Media\\AutoKit"
 TOOLS_CE = "\\SyncExtendedPack\\Apps\\Tools"
 GUARD_LOG = "\\SyncExtendedPack\\_s2am\\guard.log"
 DRIVE_SECONDS = 4 * 3600  # s2amdrive.exe and s2amwatch.exe stop by themselves after this
+LOAD_SECONDS = 1800  # logger --load: long enough for each screen and CarPlay in turn
 AUTOKIT_LOGS = ("hwlog.log", "hwlog.txt")  # AutoKit writes hwlog.log into its folder
 # Litter that Macs and local tools leave in folders; never copied to the car. Real hidden files
 # (Navitel keeps an empty Userdata\.tmp) still go.
@@ -621,16 +622,21 @@ def logger_script(job: Job) -> str:
     change. It replaced a MortScript loop that stopped after its first line in the car.
     With ``native`` notifylog.exe runs too: it receives AutoKit's registered _UIGEAR_*
     window messages. With ``drive`` s2amdrive.exe runs next to the watcher, for up to four
-    hours: system facts, processor load, a copy of Ford's screens and screenshots.
+    hours: system facts, processor load, a copy of Ford's screens and screenshots. With
+    ``load`` it records only the facts and the load, with the busiest threads, to measure speed.
     """
     seconds = job.params.get("seconds", 180)
-    longest = DRIVE_SECONDS if job.params.get("drive") else 900
+    if job.params.get("drive") and job.params.get("load"):
+        raise ValueError("a logger has either drive or load, not both")
+    longest = DRIVE_SECONDS if job.params.get("drive") or job.params.get("load") else 900
     if not isinstance(seconds, int) or not 10 <= seconds <= longest:
         raise ValueError(f"invalid logger duration {seconds!r}")
     folder = _quote(ce_path(job.job_dir))
     lines = _header(job) + [f'Run({folder} & "\\s2amwatch.exe", "{seconds} " & out)']
     if job.params.get("drive"):
         lines += [f'Run({folder} & "\\s2amdrive.exe", "{seconds} " & out)']
+    if job.params.get("load"):
+        lines += [f'Run({folder} & "\\s2amdrive.exe", "{seconds} load " & out)']
     if job.params.get("native"):
         lines += [f'Run({folder} & "\\notifylog.exe", "{seconds} " & out & "\\notify.txt")']
     lines += ['WriteFile(out & "\\logger-started.txt", "leave the stick in until watch.log says end")']

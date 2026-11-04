@@ -133,6 +133,8 @@ class FakeCar:
                 (out / name).write_bytes(data)
             if job.params.get("native"):
                 (out / "notify.txt").write_text("".join(f"{line}\r\n" for line in self.notify_lines))
+            if job.params.get("load"):
+                (out / "drive.log").write_text("".join(f"{line}\r\n" for line in self.drive_lines))
             if job.params.get("drive"):
                 (out / "drive.log").write_text("".join(f"{line}\r\n" for line in self.drive_lines))
                 (out / "files.txt").write_text("D|\\8inchSkins\r\nF|\\8inchSkins\\a.swf|3\r\n")

@@ -158,6 +158,12 @@ class Drive(unittest.TestCase):
             "        fwrite(header, 1, 54, out); fwrite(pixels, 1, (size_t)(stride * height), out); fclose(out);",
             "        return 0;",
             "    }",
+            "    if (argc > 1 && strcmp(argv[1], \"busy\") == 0) {",  # busy <delta> <delta> ...
+            "        int i;",
+            "        for (i = 2; i < argc; i++) note_busy((DWORD)i, (DWORD)atoi(argv[i]), i, 251, 0);",
+            "        for (i = 0; i < busy_count; i++) printf(\"%u \", busy[i].delta);",
+            "        printf(\"\\n\"); return 0;",
+            "    }",
             "    {",
             "        BYTE frame[48 * 16]; BOOL black; DWORD a, b;",
             "        memset(frame, 0, sizeof(frame)); a = frame_hash(frame, 16, 16, 48, &black);",
@@ -181,6 +187,11 @@ class Drive(unittest.TestCase):
     def run_helper(self, *args):
         return subprocess.run([str(self.work / "drive"), *args], check=True, capture_output=True,
                               text=True).stdout
+
+    def test_load_keeps_the_eight_busiest_threads_in_order(self):
+        self.assertEqual(self.run_helper("busy", "3", "9", "5").split(), ["9", "5", "3"])
+        deltas = ["4", "1", "9", "2", "7", "6", "8", "3", "5", "10", "0"]
+        self.assertEqual(self.run_helper("busy", *deltas).split(), ["10", "9", "8", "7", "6", "5", "4", "3"])
 
     def test_sha256_matches_python_at_every_block_edge(self):
         import hashlib

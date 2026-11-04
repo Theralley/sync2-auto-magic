@@ -202,6 +202,15 @@ class Loop(unittest.TestCase):
         self.assertLess(report.index("first run"), report.index("second run"))
         self.assertNotIn("\x00", report)
 
+    def test_load_logger_asks_for_the_load_alone(self):
+        script = logger_script(Job(SERIAL, "log", params={"seconds": 1800, "load": True}))
+        self.assertIn('\\s2amwatch.exe", "1800 " & out)', script)
+        self.assertIn('\\s2amdrive.exe", "1800 load " & out)', script)
+        self.assertNotIn("RunWait", script)
+        balanced(self, script)
+        with self.assertRaises(ValueError):
+            logger_script(Job(SERIAL, "log", params={"seconds": 1800, "load": True, "drive": True}))
+
     def test_a_long_copied_log_shows_its_start_and_end(self):
         path = self.tmp / "autokit-hwlog-live-01.log"
         path.write_bytes("".join(f"line {n}\r\n" for n in range(1, 501)).encode("utf-16-le"))
@@ -222,6 +231,17 @@ class Loop(unittest.TestCase):
                      "[skins.txt] 1 screen files copied", "0 failed; complete|1 files",
                      "[files.txt] 2 folders and files listed", "[watch.log"):
             self.assertIn(text, report)
+
+    def test_load_logger_ships_both_programs_and_reports_no_copies(self):
+        job, work, imported = self.run_job("logger", "--load")
+        self.assertIn("applied", imported)
+        self.assertEqual(job.params["seconds"], 1800)
+        folder = work / "payload" / job.job_dir.lstrip("/")
+        self.assertTrue((folder / "s2amdrive.exe").is_file())
+        report = self.cli("report", "--serial", SERIAL, job.id)[1]
+        self.assertIn("load|cpu 41%|memory 60%", report)
+        for text in ("[screens]", "[skins.txt]", "[files.txt]"):
+            self.assertNotIn(text, report)
 
     def test_logger_ships_the_watcher_and_starts_it_in_the_background(self):
         job, work, _ = self.run_job("logger")

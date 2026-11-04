@@ -87,6 +87,7 @@ run the same system, but nothing is guaranteed.
 | Android Auto with the same dongle | Not tried yet (`autokit-config` sets the picture; [plan](docs/P2-AA-AUTOSTART-PLAN.md)) |
 | See what is installed on SYNC 2 from your Mac | **Works in the car** |
 | Drive logger for a redesign: system facts, processor load, every file, a copy of Ford's screens (`logger --drive`) | **Works in the car** (one 22-minute drive). Its screen copies show only the coloured background, not the Flash screens. Findings: [sync-redesign](https://github.com/Theralley/sync-redesign/blob/main/docs/FINDINGS.md) |
+| Measure speed: the processor's load per program and thread (`logger --load`) | Built and tested on the computer; first car run to come ([docs/PERFORMANCE.md](docs/PERFORMANCE.md)) |
 | Remove apps from your Mac (one or several per stick, menu only or with their files) | **Works in the car** |
 | Install apps from your Mac (SyncExtPack apps, AutoKit with the sound fix) | **Works in the car**: the full app pack, and single apps (Video Player) |
 | CarPlay starts by itself when you plug in the phone | Being investigated: diagnostic jobs ready (`snapshot`, `logger`), the auto-start itself not built yet ([plan](docs/P2-AA-AUTOSTART-PLAN.md)) |

@@ -13,6 +13,7 @@
     s2am apps --serial S                         installable apps and what is on the car
     s2am job autokit-config --serial S           AutoKit video: 800,480,15, software decoding
     s2am job snapshot|logger --serial S          read-only registry snapshot / 3-minute logger
+    s2am job logger --load --serial S            measure the processor's load, per program and thread
     s2am report --serial S [JOB_ID]              print a report (snapshot, logger timeline)
     s2am native build                            build the WinCE helpers (CeGCC in Docker)
     s2am job native-hello --serial S             prove compiled code runs on this SYNC 2
@@ -34,7 +35,8 @@ from pathlib import Path
 
 from . import apps, autokit, bootstrap, diskcheck, native, pack, stick, theme, window
 from .container import REPO, ContainerError
-from .job import (AUTOKIT_CE, AUTOKIT_LANGS, AUTOKIT_MODULES, DRIVE_SECONDS, REGISTRY_ROOTS, REGISTRY_WAIT_S,
+from .job import (AUTOKIT_CE, AUTOKIT_LANGS, AUTOKIT_MODULES, DRIVE_SECONDS, LOAD_SECONDS, REGISTRY_ROOTS,
+                  REGISTRY_WAIT_S,
                   SCREENS, SERIAL, STARTUP_SCREENS, SWAP_KINDS, Job, autokit_lang_file, bundle_parts, stage)
 from .state import Store, diff, parse_inventory
 
@@ -329,7 +331,7 @@ def cmd_job(args) -> int:
                 params["lang"] = args.lang
                 extra = {"lang": autokit_lang_file(AUTOKIT_LANGS[args.lang])}
     elif args.kind == "logger":
-        seconds = args.seconds or (DRIVE_SECONDS if args.drive else 180)
+        seconds = args.seconds or (DRIVE_SECONDS if args.drive else LOAD_SECONDS if args.load else 180)
         params = {"seconds": seconds, "native": args.native}
         extra = {"s2amwatch.exe": native.binary("s2amwatch.exe")}
         if args.native:
@@ -340,6 +342,12 @@ def cmd_job(args) -> int:
             print(f"drive logger: insert the stick and leave it in while you drive; for up to {seconds} s "
                   "it records the screens (screenshots), processor load, every file's name and a copy "
                   "of Ford's screen files. Pull the stick when you are done, then import it")
+        elif args.load:
+            params["load"] = True
+            extra["s2amdrive.exe"] = native.binary("s2amdrive.exe")
+            print(f"load logger: insert the stick and leave it in; for {seconds} s it records the "
+                  "processor's load per program and thread, and nothing else. Pull the stick when "
+                  "you are done, then import it")
         else:
             print(f"logger: insert the stick and leave it in; for {seconds} s it records every "
                   f"program and window on the screen. Do the test meanwhile, then import it")
@@ -690,8 +698,9 @@ def cmd_report(args) -> int:
         print("[drive.log: time|event|details] system facts, processor load every 10 s, screenshots, "
               "the file copy")
         print(_log_text(report / "drive.log"))
-        shots = sorted((report / "screens").glob("*.bmp")) if (report / "screens").is_dir() else []
-        print(f"[screens] {len(shots)} screenshots in {report / 'screens'}")
+        if (report / "screens").is_dir():
+            shots = sorted((report / "screens").glob("*.bmp"))
+            print(f"[screens] {len(shots)} screenshots in {report / 'screens'}")
         if (report / "skins.txt").is_file():
             lines = (report / "skins.txt").read_text(errors="replace").splitlines()
             files = sum(1 for line in lines if line.startswith("F|"))
@@ -820,10 +829,15 @@ def parser() -> argparse.ArgumentParser:
                        help="read-only: services, startup entries and USB devices").set_defaults(func=cmd_job)
     logger = job_sub.add_parser("logger", parents=[common],
                                 help="record every program and window on the screen, twice a second")
-    logger.add_argument("--seconds", type=int, help="default 180, or four hours with --drive")
-    logger.add_argument("--drive", action="store_true",
-                        help="also run s2amdrive.exe while you drive: screenshots, processor load, "
-                             "the file list and a copy of Ford's screen files (for a redesign)")
+    logger.add_argument("--seconds", type=int,
+                        help="default 180, four hours with --drive, 30 minutes with --load")
+    kind = logger.add_mutually_exclusive_group()
+    kind.add_argument("--drive", action="store_true",
+                      help="also run s2amdrive.exe while you drive: screenshots, processor load, "
+                           "the file list and a copy of Ford's screen files (for a redesign)")
+    kind.add_argument("--load", action="store_true",
+                      help="also run s2amdrive.exe for the processor's load alone, per program and "
+                           "thread, to measure speed (docs/PERFORMANCE.md)")
     logger.add_argument("--native", action="store_true",
                         help="also run notifylog.exe, which records AutoKit's window messages")
     logger.set_defaults(func=cmd_job)
