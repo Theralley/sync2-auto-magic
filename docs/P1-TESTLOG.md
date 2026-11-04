@@ -134,7 +134,7 @@ What the watch log showed:
 | Runner guard upgrade job (second guard) | Applied: self-test passed (`toolhelp 1`, `desktop 1`, `background 1`); SyncExtPack's runner stays `SyncAppsRunner.orig.exe` |
 | Logger job with the watcher (600 s), then AutoKit opened five times | Recorded until the stick was pulled at 494 s |
 | AutoKit, Exit, four times | **Works**: SYNC's screen was back each time, about 3 s after Exit |
-| Reverse camera while AutoKit is open | **No camera picture**. Not caused by the guard (see below); open |
+| Reverse gear while AutoKit is open | **No parking-sensor pop-up** (first written down here as a camera picture; the car has no camera). Not caused by the guard (see below); open |
 
 What the watch log showed, the same at every Exit:
 - AutoKit hid its window (`SW_HIDE`), leaving only the shell background visible.
@@ -145,11 +145,11 @@ What the watch log showed, the same at every Exit:
 - The guard now recognises AutoKit (`app 1`) and counts the shell background as nothing
   (`other_windows 0` while AutoKit is hidden).
 
-The reverse camera: during the third opening (13:49–13:50) AutoKit's own log grew from a few
+Reverse gear: during the third opening (13:49–13:50) AutoKit's own log grew from a few
 hundred bytes to 258 KB, and AutoKit was briefly slow to answer (1.5–2.3 s, seven times). No
 window appeared or disappeared in that time: AutoKit stayed on top and visible, so the guard
-did nothing. The camera picture is drawn without a window of its own, and AutoKit's full-screen
-window seems to cover it. The 258 KB log was overwritten by the next opening's copy, so what
+did nothing. The parking sensors' pop-up is drawn without a window of its own, and AutoKit's
+full-screen window seems to cover it. The 258 KB log was overwritten by the next opening's copy, so what
 AutoKit logged is not known yet. The watcher now numbers its copies
 (`autokit-hwlog-live-01.log`, `-02.log`, ...): each time AutoKit starts its log over, the next
 copy begins, so every run of the log is kept, and `s2am report` shows them all.
@@ -158,8 +158,8 @@ The freeze and the workaround are reported upstream as
 [chr0m1ng/syncextpack#4](https://github.com/chr0m1ng/syncextpack/issues/4), since the launcher
 comes with SyncExtPack's app pack.
 
-**Open:** CarPlay (T1–T7) and the sound fix wait for the adapter. The reverse camera while
-AutoKit is open needs its own investigation.
+**Open:** CarPlay (T1–T7) and the sound fix wait for the adapter. The parking sensors' pop-up
+while AutoKit is open needs its own investigation.
 
 # Video Player test (reported 2026-10-31)
 
@@ -511,3 +511,42 @@ visit: on and off byte for byte, and the sixth visit's unused undo (`bundle-6088
 everything back after it. Written, read back after a remount, labelled and ejected:
 - **SYNC:** `bundle-b2a0` (8 parts: the four files back to Ford's, then the new ones).
 - **UNTITLED 2:** `bundle-de93` (15 parts: all 14 of version 2's files and the theme back to Ford's).
+
+# 2026-11-04: the seventh visit, and the first CarPlay
+
+| Field | Value |
+|---|---|
+| Adapter | CarlinKit wired AutoKit type, firmware not read |
+| Phone | iPhone, through the adapter |
+| AutoKit | Sound modules patched, 800x480 at 15 fps, software decoding, English, runner guard on |
+
+**The seventh visit.** `bundle-b2a0` ran at 15:53 and was imported the same day: all 8 parts
+applied and verified byte for byte. The undo stick (`bundle-de93`) was not needed and is unused.
+The owner's verdict: better. The photos show the map screen only, so Home's cards were not checked
+on a picture. Details in sync-redesign's FINDINGS.md.
+
+**CarPlay works.** AutoKit, installed by these tools, showed CarPlay on SYNC 2's screen, about
+two hours after the install.
+
+| Test | Result |
+|---|---|
+| AutoKit's waiting screen | "Connect your phone via USB to begin", in English |
+| T1 time to CarPlay (**G2**) | Not timed |
+| T2 picture and touch (**G2**) | **Works**: CarPlay's home screen fills the screen and taps work, but they react late |
+| T3 sound (**G3**) | **Heard**: Spotify over CarPlay through the speakers. The iPhone's Bluetooth was on, so the route is not proven, and the A/B test of the patch is still to do |
+| T4 navigation | Apple Maps ran with route guidance on the screen. Spoken directions not noted |
+| T5 Siri, T6 call (**G4**) | Not tested. Some photos show CarPlay's orange microphone mark; what opened the microphone was not noted |
+| T7 smoothness | **Very slow**: the picture is choppy and delayed |
+| T8 Exit with CarPlay running (**G5**) | **Works**: SYNC came back |
+| T9 restart | Not noted |
+| Reverse gear with CarPlay open | **No parking-sensor pop-up**. Beeps not noted |
+
+**The open issue: speed.** The owner's words: SYNC 2 is horribly slow and hard to use. CarPlay's
+touch and picture are slow, and so are Ford's own screens. See [PERFORMANCE.md](PERFORMANCE.md).
+
+**Correction.** The car has no reverse camera: reverse gear brings up the parking sensors' pop-up,
+and nothing else. The notes from 2026-10-30 called it a camera picture; they are fixed above.
+
+**Logs.** The install ran before CarPlay, so this stick's report holds no log of CarPlay. AutoKit's
+own log of that run stays on the car until AutoKit is opened again, and the next job stick
+collects it, so the next stick should go in before AutoKit is opened.

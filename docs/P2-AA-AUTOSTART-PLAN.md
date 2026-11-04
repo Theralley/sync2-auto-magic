@@ -51,7 +51,7 @@ step is one `s2am` job stick with a check in the car.
 - **Cause and fix (measured later the same day):** Exit only hides AutoKit (`SW_HIDE`); Ford's
   runner waits for the process to end. Our runner guard (AS-2) closes AutoKit once nothing
   usable is on the screen, and SYNC comes back about 3 s after Exit. While AutoKit is open, the
-  reverse camera picture does not show; AS-3 must take that into account.
+  parking sensors' pop-up does not show; AS-3 must take that into account.
 
 ## Android Auto: phases (no new native code)
 

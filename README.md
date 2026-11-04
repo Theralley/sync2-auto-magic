@@ -3,14 +3,15 @@
 **Apple CarPlay (and soon Android Auto) for Ford SYNC 2 / MyFord Touch, using one USB dongle
 and free software.** It also includes a Mac tool that shows what is installed on your SYNC 2.
 
-> **Status: experimental, first car session done.** CarPlay itself and the sound fix still wait
-> for the adapter. Leaving AutoKit froze the screen; the runner guard fixes that (verified in
-> the car). Try it only if you are comfortable with the recovery steps.
+> **Status: experimental. CarPlay works in the car** (first run 4 November 2026, installed with
+> these tools), **but it is very slow, and so is SYNC 2 itself**:
+> [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Leaving AutoKit froze the screen; the runner guard
+> fixes that (verified in the car). Try it only if you are comfortable with the recovery steps.
 
 ## Tested and working
 
 Tested in a real car: a **2016 Ford Mondeo Mk5, 8" SYNC 2, software 3.10 (EU)**, on
-**30 October 2026**. Details in [docs/P1-TESTLOG.md](docs/P1-TESTLOG.md).
+**30 October to 4 November 2026**. Details in [docs/P1-TESTLOG.md](docs/P1-TESTLOG.md).
 
 | What | Result in the car |
 |---|---|
@@ -22,13 +23,16 @@ Tested in a real car: a **2016 Ford Mondeo Mk5, 8" SYNC 2, software 3.10 (EU)**,
 | Reboot button | **Works** |
 | AutoKit opens | **Works**: shows its "connect the adapter" screen |
 | AutoKit in English | **Works** (`autokit-config --lang english`; new installs now start in English) |
-| AutoKit's sound patch installed | **Yes**: all three audio modules patched (whether it plays sound needs the adapter) |
+| AutoKit's sound patch installed | **Yes**: all three audio modules patched |
+| Apple CarPlay over a cable (iPhone, CarlinKit wired adapter) | **Works, but very slow**: home screen, taps, Maps with route guidance, Spotify. [docs/PERFORMANCE.md](docs/PERFORMANCE.md) |
+| CarPlay sound through the car's speakers | **Heard** (Spotify), but with the iPhone's Bluetooth on, so the route is not proven yet |
 | Leave AutoKit with its Exit button, with the runner guard (`runner-guard`) | **Works**: SYNC is back about 3 s after Exit (four tries) |
 | Soft reset when the screen is stuck (power/volume knob + Seek-Up ⏭, 10 s) | **Worked once**; twice later it did not, and switching the car off did |
 
 **Not tested yet:**
-- CarPlay picture, touch, sound, Siri and calls: waiting for the adapter.
-- Android Auto: waiting for the adapter.
+- Siri, the microphone and calls over CarPlay.
+- CarPlay sound with the iPhone's Bluetooth off, and the A/B test of the sound patch.
+- Android Auto: the adapter is here, not tried yet.
 - The first install through the wallpaper picker (`Installer.jpg`): the test car already had
   SyncExtPack.
 - The guided installer (`s2am wizard`): tested on the Mac only.
@@ -37,8 +41,12 @@ Tested in a real car: a **2016 Ford Mondeo Mk5, 8" SYNC 2, software 3.10 (EU)**,
 - Without the runner guard, leaving AutoKit with its Exit button freezes the screen, because
   Exit only hides AutoKit. Install the guard (`s2am job runner-guard`). Without it, recover by
   switching the car off and opening and closing the driver's door.
-- The reverse camera picture does not appear while AutoKit is open. Leave AutoKit before
-  reversing ([TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)).
+- **SYNC 2 is very slow, with CarPlay and on its own screens:** taps react late and CarPlay's
+  picture is choppy. Open issue, with what is known and the plan:
+  [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+- The parking sensors' pop-up does not appear while AutoKit is open. Leave AutoKit before
+  reversing ([TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)). A reverse camera is untested: the
+  test car has none.
 
 ---
 
@@ -64,19 +72,19 @@ run the same system, but nothing is guaranteed.
 
 | Feature | Status |
 |---|---|
-| AutoKit installed and opening on SYNC 2 | **Works in the car** (waits for the adapter) |
+| AutoKit installed and opening on SYNC 2 | **Works in the car** |
 | AutoKit in English | **Works in the car**; new installs start in English (the stock app is Chinese; `autokit-config --lang` changes it) |
-| Apple CarPlay over a cable | Waiting for the adapter |
-| Sound through the car's speakers | Fix installed (all three modules patched), waiting for the adapter. The Video Player, which gets its sound through the same `WaveOutHooks.dll`, plays through the speakers in the car |
+| Apple CarPlay over a cable | **Works in the car, very slow** (2026-11-04): [docs/PERFORMANCE.md](docs/PERFORMANCE.md) |
+| Sound through the car's speakers | Fix installed (all three modules patched). Spotify over CarPlay played through the speakers, with the iPhone's Bluetooth on, so the route is not proven. The Video Player, which gets its sound through the same `WaveOutHooks.dll`, plays through the speakers in the car |
 | Leaving AutoKit returns to SYNC | **Works in the car with the runner guard** (`s2am job runner-guard`, undo with `--off`). Without it, Exit only hides AutoKit and the screen freezes. Reported upstream: [syncextpack#4](https://github.com/chr0m1ng/syncextpack/issues/4) |
 | New colours for SYNC's menus (`s2am job theme`; Lincoln's colours now, your own next) | **Works in the car**: the change and its undo stick both verified byte for byte (2026-10-31). How to undo: [sync-redesign RECOVERY.md](https://github.com/Theralley/sync-redesign/blob/main/docs/RECOVERY.md) |
 | A new Apps menu with big tiles, CarPlay first (`s2am job apps-menu`) | Built and rehearsed on the computer with the car's files; **first car test 2026-10-31**. Built by [sync-redesign](https://github.com/Theralley/sync-redesign)'s `tools/build_apps_menu.py` from your own copy of SyncExtPack's menu |
 | One of Ford's own screens, rebuilt (`s2am job screen`: the call history, Settings > Display, the frame, Home) | **Works in the car** (call history 2026-11-01, the restyled frame 2026-11-01 and 11-02). The frame (`AppConsole.swf`), Home and the files they load (Home's four corners, the labels in the frame's bars, `Media.swf`, the side menus `Menu.swf` and `Info.swf`) load when SYNC starts and need `--startup`, with the undo stick built at the same time; a new start-up file must differ in length from Ford's, since the car checks a copy by its size; built by [sync-redesign](https://github.com/Theralley/sync-redesign) from your own copy |
 | Call sound: boxy, no bass (narrowband or wideband?) | Two read-only loggers, built 2026-10-31: the iPhone's Bluetooth log read by `tools/hfp_codec.py`, and SYNC's own settings (`s2am job registry`). How: [docs/CALL-SOUND.md](docs/CALL-SOUND.md) |
 | Several jobs in one visit to the car (`s2am job bundle`) | Built and rehearsed (2026-10-31): jobs already built run in one go, in order, each verified on its own after import; the first that stops ends the run. An undo bundle puts everything back in one go |
-| Reverse camera while AutoKit is open | **Does not show** (seen in the car); leave AutoKit before reversing |
+| Parking sensors' pop-up while AutoKit is open | **Does not show** (seen in the car); leave AutoKit before reversing. A reverse camera is untested: the test car has none |
 | Play MP4 videos from a USB stick (SyncExtPack's Video Player) | **Works in the car** at 800x480 (H.264), with sound and correct colours; 720p and 1080p glitch, and the sound runs slightly off the picture. Install with `s2am job install "Video Player"`; test videos from `tools/make_test_videos.py`. Parked only |
-| Android Auto with the same dongle | Waiting for the adapter (`autokit-config` sets the picture; [plan](docs/P2-AA-AUTOSTART-PLAN.md)) |
+| Android Auto with the same dongle | Not tried yet (`autokit-config` sets the picture; [plan](docs/P2-AA-AUTOSTART-PLAN.md)) |
 | See what is installed on SYNC 2 from your Mac | **Works in the car** |
 | Drive logger for a redesign: system facts, processor load, every file, a copy of Ford's screens (`logger --drive`) | **Works in the car** (one 22-minute drive). Its screen copies show only the coloured background, not the Flash screens. Findings: [sync-redesign](https://github.com/Theralley/sync-redesign/blob/main/docs/FINDINGS.md) |
 | Remove apps from your Mac (one or several per stick, menu only or with their files) | **Works in the car** |

@@ -57,14 +57,21 @@ That brought SYNC back every time. Last resort: engine off, lock the car, wait 1
 - **Reported upstream:** [chr0m1ng/syncextpack#4](https://github.com/chr0m1ng/syncextpack/issues/4),
   with the cause, this workaround and an offer of a PR for the pack.
 
-### No reverse camera picture while AutoKit is open
-- **Seen:** 2026-10-30, with the runner guard, no adapter connected. In reverse, AutoKit's
-  screen stayed and the camera picture did not appear.
-- **Not the guard:** the watch log shows AutoKit's window visible and on top the whole time,
-  so the guard did nothing. AutoKit's own log grew fast at the same time.
-- **Cause:** not known yet. The camera picture has no window of its own; AutoKit's full-screen
-  window probably covers it.
-- **For now:** leave AutoKit (Exit) before reversing. Not tested with the adapter connected.
+### SYNC 2 or CarPlay is very slow
+- **Seen:** 2026-11-04, the first run of CarPlay. Taps in CarPlay react late, its picture is
+  choppy, and Ford's own screens are slow too.
+- **Status:** open. Everything known, and the plan, is in [PERFORMANCE.md](PERFORMANCE.md).
+
+### No parking-sensor pop-up while AutoKit is open
+- **Seen:** 2026-10-30 with the runner guard and no adapter, and again on 2026-11-04 with CarPlay
+  running. In reverse, AutoKit's screen stayed and the pop-up did not appear. Whether the
+  sensors' beeps were heard was not noted.
+- **Not the guard:** on 2026-10-30 the watch log shows AutoKit's window visible and on top the
+  whole time, so the guard did nothing. AutoKit's own log grew fast at the same time.
+- **Cause:** not known yet. The pop-up has no window of its own; AutoKit's full-screen window
+  probably covers it.
+- **For now:** leave AutoKit (Exit) before reversing. The test car has no reverse camera, so a
+  camera picture is untested; expect the same.
 - **To find out more:** run a logger job, open AutoKit and reverse. The watcher keeps every
   run of AutoKit's log as a numbered copy (`autokit-hwlog-live-01.log`, ...).
 
