@@ -14,6 +14,7 @@
     s2am job autokit-config --serial S           AutoKit video: 800,480,15, software decoding
     s2am job snapshot|logger --serial S          read-only registry snapshot / 3-minute logger
     s2am job logger --load --serial S            measure the processor's load, per program and thread
+    s2am job logger --collect JOB_ID --serial S  fetch that measurement from the car
     s2am report --serial S [JOB_ID]              print a report (snapshot, logger timeline)
     s2am native build                            build the WinCE helpers (CeGCC in Docker)
     s2am job native-hello --serial S             prove compiled code runs on this SYNC 2
@@ -330,6 +331,11 @@ def cmd_job(args) -> int:
             if args.lang is not None:  # four bytes, so the file travels in the job folder
                 params["lang"] = args.lang
                 extra = {"lang": autokit_lang_file(AUTOKIT_LANGS[args.lang])}
+    elif args.kind == "logger" and args.collect:
+        if not Store().job(args.serial, args.collect).get("params", {}).get("load"):
+            raise ValueError(f"{args.collect} is not a logger --load job")
+        params = {"collect": args.collect}
+        print(f"collect: copies what {args.collect} wrote on the car to the stick")
     elif args.kind == "logger":
         seconds = args.seconds or (DRIVE_SECONDS if args.drive else LOAD_SECONDS if args.load else 180)
         params = {"seconds": seconds, "native": args.native}
@@ -345,9 +351,9 @@ def cmd_job(args) -> int:
         elif args.load:
             params["load"] = True
             extra["s2amdrive.exe"] = native.binary("s2amdrive.exe")
-            print(f"load logger: insert the stick and leave it in; for {seconds} s it records the "
-                  "processor's load per program and thread, and nothing else. Pull the stick when "
-                  "you are done, then import it")
+            print(f"load logger: for {seconds} s it records the processor's load per program and thread, "
+                  "and nothing else, on the car, so the stick can leave. Build the second stick "
+                  "as well: s2am job logger --collect <this job>")
         else:
             print(f"logger: insert the stick and leave it in; for {seconds} s it records every "
                   f"program and window on the screen. Do the test meanwhile, then import it")
@@ -437,7 +443,11 @@ def cmd_stick_prepare(args) -> int:
               "drive and use SYNC as usual (screens change only when parked or by a passenger). "
               "Pull the stick when you are done; the logger stops by itself after "
               f"{job.params.get('seconds', DRIVE_SECONDS)} s")
-    elif job.kind == "log":
+    elif job.kind == "log" and job.params.get("load"):
+        print("in the car: insert the stick, wait for 'Install successfully completed', pull it. The "
+              f"logger writes to the car for {job.params.get('seconds', LOAD_SECONDS)} s, so its port "
+              "is free for the adapter. A logger --collect stick fetches the logs afterwards")
+    elif job.kind == "log" and not job.params.get("collect"):
         seconds = job.params.get("seconds", 180)
         print(f"in the car: insert the stick and LEAVE IT IN. After 'Install successfully completed' "
               f"the logger records for {seconds} s: do the test meanwhile. Leave the stick in "
@@ -837,7 +847,9 @@ def parser() -> argparse.ArgumentParser:
                            "the file list and a copy of Ford's screen files (for a redesign)")
     kind.add_argument("--load", action="store_true",
                       help="also run s2amdrive.exe for the processor's load alone, per program and "
-                           "thread, to measure speed (docs/PERFORMANCE.md)")
+                           "thread, writing to the car so the stick can leave (docs/PERFORMANCE.md)")
+    kind.add_argument("--collect", metavar="JOB_ID",
+                      help="fetch from the car what that logger --load job wrote")
     logger.add_argument("--native", action="store_true",
                         help="also run notifylog.exe, which records AutoKit's window messages")
     logger.set_defaults(func=cmd_job)

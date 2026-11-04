@@ -202,14 +202,32 @@ class Loop(unittest.TestCase):
         self.assertLess(report.index("first run"), report.index("second run"))
         self.assertNotIn("\x00", report)
 
-    def test_load_logger_asks_for_the_load_alone(self):
-        script = logger_script(Job(SERIAL, "log", params={"seconds": 1800, "load": True}))
-        self.assertIn('\\s2amwatch.exe", "1800 " & out)', script)
-        self.assertIn('\\s2amdrive.exe", "1800 load " & out)', script)
+    def test_load_logger_writes_to_the_car_so_the_stick_can_leave(self):
+        job = Job(SERIAL, "log", params={"seconds": 1800, "load": True})
+        script = logger_script(job)
+        self.assertIn(f'logs = "\\SyncExtendedPack\\_s2am\\load\\{job.id}"', script)
+        self.assertLess(script.index("MkDir(logs)"), script.index("s2amwatch.exe"))
+        self.assertIn('\\s2amwatch.exe", "1800 " & logs)', script)
+        self.assertIn('\\s2amdrive.exe", "1800 load " & logs)', script)
+        self.assertNotIn('.exe", "1800 " & out', script)
+        self.assertNotIn('load " & out', script)
         self.assertNotIn("RunWait", script)
         balanced(self, script)
+        for other in ("drive", "native"):
+            with self.subTest(other), self.assertRaises(ValueError):
+                logger_script(Job(SERIAL, "log", params={"seconds": 1800, "load": True, other: True}))
+
+    def test_collect_copies_the_logs_from_the_car_to_the_stick(self):
+        logger = Job(SERIAL, "log", params={"seconds": 1800, "load": True})
+        script = logger_script(Job(SERIAL, "log", params={"collect": logger.id}))
+        folder = f"\\SyncExtendedPack\\_s2am\\load\\{logger.id}"
+        for name in ("drive.log", "watch.log", "autokit-hwlog-live-01.log", "guard-live-99.log"):
+            self.assertIn(f'If (FileExists("{folder}\\{name}"))', script)
+            self.assertIn(f'Copy("{folder}\\{name}", out & "\\{name}", TRUE)', script)
+        self.assertNotIn(".exe", script)
+        balanced(self, script)
         with self.assertRaises(ValueError):
-            logger_script(Job(SERIAL, "log", params={"seconds": 1800, "load": True, "drive": True}))
+            logger_script(Job(SERIAL, "log", params={"collect": "..\\windows"}))
 
     def test_a_long_copied_log_shows_its_start_and_end(self):
         path = self.tmp / "autokit-hwlog-live-01.log"
@@ -232,16 +250,28 @@ class Loop(unittest.TestCase):
                      "[files.txt] 2 folders and files listed", "[watch.log"):
             self.assertIn(text, report)
 
-    def test_load_logger_ships_both_programs_and_reports_no_copies(self):
+    def test_load_logger_then_collect_brings_the_logs_home_on_a_second_stick(self):
         job, work, imported = self.run_job("logger", "--load")
         self.assertIn("applied", imported)
         self.assertEqual(job.params["seconds"], 1800)
-        folder = work / "payload" / job.job_dir.lstrip("/")
-        self.assertTrue((folder / "s2amdrive.exe").is_file())
-        report = self.cli("report", "--serial", SERIAL, job.id)[1]
-        self.assertIn("load|cpu 41%|memory 60%", report)
+        self.assertTrue((work / "payload" / job.job_dir.lstrip("/") / "s2amdrive.exe").is_file())
+        self.assertTrue(self.car.exists(f"\\SyncExtendedPack\\_s2am\\load\\{job.id}\\drive.log"))
+        self.assertNotIn("load|cpu", self.cli("report", "--serial", SERIAL, job.id)[1])
+        collect, work, imported = self.run_job("logger", "--collect", job.id)
+        self.assertIn("applied", imported)
+        self.assertFalse((work / "payload" / collect.job_dir.lstrip("/") / "s2amdrive.exe").exists())
+        report = self.cli("report", "--serial", SERIAL, collect.id)[1]
+        for text in ("[drive.log", "load|cpu 41%|memory 60%", "[watch.log"):
+            self.assertIn(text, report)
         for text in ("[screens]", "[skins.txt]", "[files.txt]"):
             self.assertNotIn(text, report)
+
+    def test_collect_needs_a_load_logger(self):
+        job, _, _ = self.run_job("logger")
+        code, out = self.cli("job", "logger", "--collect", job.id, "--serial", SERIAL, "--no-pack",
+                             "--work", str(self.tmp / "nope"))
+        self.assertNotEqual(code, 0)
+        self.assertIn("not a logger --load job", out)
 
     def test_logger_ships_the_watcher_and_starts_it_in_the_background(self):
         job, work, _ = self.run_job("logger")

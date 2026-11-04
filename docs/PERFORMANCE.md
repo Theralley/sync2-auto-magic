@@ -37,11 +37,17 @@ it, the two fight for the same core, and every tap waits behind both.
 
 **Step 1: measure.** `s2am job logger --load` records for 30 minutes: the processor's load per
 program every 10 s, and the busiest threads with their priorities. It copies no files and no
-screens, so it adds next to nothing itself. It only reads from the car.
+screens, so it adds next to nothing itself. It writes only its own logs, in s2am's folder on the
+car, so the stick can leave and the adapter can take its USB port. `s2am job logger --collect
+<that job>` on a second stick fetches the logs.
 
-Parked with the engine running. The stick goes in its usual USB port **before AutoKit is opened**,
-so its report also brings AutoKit's log of the last CarPlay run, and it stays in until the end. The
-adapter stays in the other port. Then, in this order:
+Parked with the engine running:
+
+1. Insert the first stick **before AutoKit is opened**, so its report also brings AutoKit's log of
+   the last CarPlay run. Wait for "Install successfully completed" and pull it.
+2. Put the adapter in the same port. SYNC does not restart, and the logger is running.
+3. Do the steps below, in order.
+4. Pull the adapter, insert the second stick, wait for "Install successfully completed", pull it.
 
 | Minutes | Do | Answers |
 |---|---|---|

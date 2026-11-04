@@ -11,7 +11,8 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from .job import (AUTOKIT_CE, AUTOKIT_LOGS, AUTOKIT_MODULES, BACKUP_DIR, GUARD_LOG, INVENTORY_ROOT, MENU_XML,
+from .job import (AUTOKIT_CE, AUTOKIT_LOGS, AUTOKIT_MODULES, BACKUP_DIR, GUARD_LOG, INVENTORY_ROOT, LOAD_LOGS,
+                  MENU_XML, load_folder,
                   PHASE_DIR, PLUGINS_MASK, REPORTS_DIR, SWAP_KINDS, TOOLS_CE, Job, bundle_parts,
                   ce_path, swap_target)
 
@@ -126,15 +127,25 @@ class FakeCar:
             return
         if job.kind == "snap":
             self._snapshot(out)
-        if job.kind == "log":
+        if job.kind == "log" and job.params.get("collect"):
+            for name in LOAD_LOGS:
+                source = self._resolve(f"{load_folder(job.params['collect'])}\\{name}")
+                if source.is_file():
+                    shutil.copyfile(source, out / name)
+        elif job.kind == "log" and job.params.get("load"):
+            (out / "logger-started.txt").write_text("started")
+            folder = load_folder(job.id)
+            self.put(f"{folder}\\watch.log", "".join(f"{line}\r\n" for line in self.watch_lines).encode())
+            self.put(f"{folder}\\drive.log", "".join(f"{line}\r\n" for line in self.drive_lines).encode())
+            for name, data in self.watch_copies.items():
+                self.put(f"{folder}\\{name}", data)
+        elif job.kind == "log":
             (out / "logger-started.txt").write_text("started")
             (out / "watch.log").write_text("".join(f"{line}\r\n" for line in self.watch_lines))
             for name, data in self.watch_copies.items():
                 (out / name).write_bytes(data)
             if job.params.get("native"):
                 (out / "notify.txt").write_text("".join(f"{line}\r\n" for line in self.notify_lines))
-            if job.params.get("load"):
-                (out / "drive.log").write_text("".join(f"{line}\r\n" for line in self.drive_lines))
             if job.params.get("drive"):
                 (out / "drive.log").write_text("".join(f"{line}\r\n" for line in self.drive_lines))
                 (out / "files.txt").write_text("D|\\8inchSkins\r\nF|\\8inchSkins\\a.swf|3\r\n")

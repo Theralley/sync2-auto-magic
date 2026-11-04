@@ -40,6 +40,13 @@ TOOLS_CE = "\\SyncExtendedPack\\Apps\\Tools"
 GUARD_LOG = "\\SyncExtendedPack\\_s2am\\guard.log"
 DRIVE_SECONDS = 4 * 3600  # s2amdrive.exe and s2amwatch.exe stop by themselves after this
 LOAD_SECONDS = 1800  # logger --load: long enough for each screen and CarPlay in turn
+LOAD_DIR = "\\SyncExtendedPack\\_s2am\\load"  # logger --load writes here, so the stick can leave
+# What logger --collect fetches: the two logs and the watcher's numbered copies.
+LOAD_LOGS = ("drive.log", "watch.log",
+             *(f"{name}-{number:02d}{extension}"
+               for name, extension in (("guard-live", ".log"), ("autokit-hwlog-live", ".log"),
+                                       ("autokit-hwlog-live", ".txt"), ("nav-show-live", ".txt"))
+               for number in range(1, 100)))
 AUTOKIT_LOGS = ("hwlog.log", "hwlog.txt")  # AutoKit writes hwlog.log into its folder
 # Litter that Macs and local tools leave in folders; never copied to the car. Real hidden files
 # (Navitel keeps an empty Userdata\.tmp) still go.
@@ -614,6 +621,26 @@ def snapshot_script(job: Job) -> str:
     return _script(lines + _inventory() + _footer(job))
 
 
+def load_folder(job_id: str) -> str:
+    """The folder on the car where the logger job ``job_id`` writes."""
+    if not re.fullmatch(r"\d{8}-\d{6}-log-[0-9a-f]{4}", job_id):
+        raise ValueError(f"not a logger job: {job_id!r}")
+    return f"{LOAD_DIR}\\{job_id}"
+
+
+def collect_script(job: Job) -> str:
+    """Copy what a ``load`` logger wrote on the car to the stick, as if it had written there.
+
+    Both programs close their log after each write, so this works while they still run too.
+    """
+    folder = load_folder(job.params["collect"])
+    lines = _header(job)
+    for name in LOAD_LOGS:
+        path = _quote(f"{folder}\\{name}")
+        lines += [f"If (FileExists({path}))", f'  Copy({path}, out & "\\{name}", TRUE)', "EndIf"]
+    return _script(lines + _inventory() + _footer(job))
+
+
 def logger_script(job: Job) -> str:
     """Start the watcher in the background, then report as usual (UpdateService waits for this).
 
@@ -623,23 +650,34 @@ def logger_script(job: Job) -> str:
     With ``native`` notifylog.exe runs too: it receives AutoKit's registered _UIGEAR_*
     window messages. With ``drive`` s2amdrive.exe runs next to the watcher, for up to four
     hours: system facts, processor load, a copy of Ford's screens and screenshots. With
-    ``load`` it records only the facts and the load, with the busiest threads, to measure speed.
+    ``load`` it records only the facts and the load, with the busiest threads, to measure speed,
+    and both programs write to the car, so the stick can leave and the adapter can take its port;
+    a second job, ``collect``, fetches the logs.
     """
+    if job.params.get("collect"):
+        return collect_script(job)
     seconds = job.params.get("seconds", 180)
-    if job.params.get("drive") and job.params.get("load"):
-        raise ValueError("a logger has either drive or load, not both")
+    if job.params.get("load") and (job.params.get("drive") or job.params.get("native")):
+        raise ValueError("a logger with load writes to the car: it cannot have drive or native")
     longest = DRIVE_SECONDS if job.params.get("drive") or job.params.get("load") else 900
     if not isinstance(seconds, int) or not 10 <= seconds <= longest:
         raise ValueError(f"invalid logger duration {seconds!r}")
     folder = _quote(ce_path(job.job_dir))
-    lines = _header(job) + [f'Run({folder} & "\\s2amwatch.exe", "{seconds} " & out)']
+    lines, logs = _header(job), "out"
+    if job.params.get("load"):
+        logs = "logs"
+        lines += [f"logs = {_quote(load_folder(job.id))}", 'MkDir("\\SyncExtendedPack\\_s2am")',
+                  f"MkDir({_quote(LOAD_DIR)})", "MkDir(logs)"]
+    lines += [f'Run({folder} & "\\s2amwatch.exe", "{seconds} " & {logs})']
     if job.params.get("drive"):
         lines += [f'Run({folder} & "\\s2amdrive.exe", "{seconds} " & out)']
     if job.params.get("load"):
-        lines += [f'Run({folder} & "\\s2amdrive.exe", "{seconds} load " & out)']
+        lines += [f'Run({folder} & "\\s2amdrive.exe", "{seconds} load " & logs)']
     if job.params.get("native"):
         lines += [f'Run({folder} & "\\notifylog.exe", "{seconds} " & out & "\\notify.txt")']
-    lines += ['WriteFile(out & "\\logger-started.txt", "leave the stick in until watch.log says end")']
+    started = "this logger writes to the car; the stick can leave" if logs == "logs" else \
+        "leave the stick in until watch.log says end"
+    lines += [f'WriteFile(out & "\\logger-started.txt", "{started}")']
     return _script(lines + _inventory() + _footer(job))
 
 

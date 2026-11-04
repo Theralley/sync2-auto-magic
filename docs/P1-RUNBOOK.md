@@ -81,7 +81,9 @@ off, so do not build at the edges.
 - the Mac (the rename step, the job sticks, reading reports), stick A and stick B
 - the adapter and a cable from it to the iPhone (Lightning, or USB-C for iPhone 15 and later)
 - the phone, charged
-- **USB ports:** always put the stick in the **same** USB port and the adapter in the other.
+- **USB ports:** always put the stick in the **same** USB port. A logger that writes to the stick
+  needs it left in, so the adapter then needs a second port; `logger --load` writes to the car and
+  needs only one.
   UpdateService writes its own `install_log.txt` only to the stick it sees as `\USB Disk`, so a
   missing log does not prove that nothing ran. `s2am` reports find the stick on any port.
 - **fuel and a healthy battery**; turn **Auto-Start-Stop off** so the engine keeps running
