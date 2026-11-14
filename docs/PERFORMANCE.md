@@ -7,8 +7,8 @@ system is so slow that it is hard to use:
 - CarPlay's picture is choppy and delayed;
 - Ford's own screens are slow too.
 
-Nothing has been measured with CarPlay running yet. The causes below are what the earlier logs
-point to, not proof.
+**Measured 2026-11-14 with CarPlay running: the processor is full.** It was at 100% in 82 of 88
+samples while CarPlay ran. The details are in [P1-TESTLOG.md](P1-TESTLOG.md), 2026-11-14.
 
 ## What we know
 
@@ -20,23 +20,33 @@ point to, not proof.
 | The kernel used another 8%. The logger itself used 14%, and is a cost we can avoid | The same log |
 | Most screen files run at 15 frames per second, none set a rendering quality | Read from the car's own files |
 | AutoKit decodes CarPlay's picture in software: 800x480 at 15 frames per second | `s2am status` |
+| **With CarPlay running, the processor is at 100%.** AutoKit takes about 58%, the kernel 19%, `Desktop.exe` 16% | Load log, 2026-11-14, 88 samples |
+| Most of AutoKit's share is one thread, probably the video decoding, at priority 252. `Desktop.exe`'s main thread runs at 250, above it | The same log |
+| `Desktop.exe` drops to about 12% behind CarPlay. With AutoKit in front but CarPlay stopped, it ran at about 60% for ten minutes | The same log |
+| AutoKit's log says `IsHaveNeon() = 0`, although the i.MX51's Cortex-A8 core has NEON | AutoKit's log, 2026-11-14 |
+| The car has Freescale's hardware video decoder files (`vpu.dll`, `mx51_vpu_dec_*.dll`) | The car's file list, 2026-10-31 |
+| Memory is not short: 141-183 MB free | Load log, 2026-11-14 |
 
-**The likely picture.** Ford's screens already take over half of the one processor core, and
-AutoKit has to decode video on what is left. If `Desktop.exe` keeps working while AutoKit covers
-it, the two fight for the same core, and every tap waits behind both.
+**The picture.** CarPlay alone fills the one processor core. Decoding the video in software
+takes the biggest share, and every tap and frame waits in the queue behind it. Ford's screens
+take only about 12% while CarPlay runs, so making them lighter would help CarPlay little. Making
+the decoding cheaper would help a lot.
 
 ## What we don't know
 
-1. How much AutoKit uses, and whether `Desktop.exe` keeps its 53% behind it.
+1. ~~How much AutoKit uses, and whether `Desktop.exe` keeps its 53% behind it.~~ Answered
+   2026-11-14: AutoKit about 58%, and `Desktop.exe` drops to about 12%.
 2. Whether version 2 of the screens ([sync-redesign](https://github.com/Theralley/sync-redesign))
    is slower or quicker than Ford's. The only number is from before any change.
 3. What inside `Desktop.exe` takes the time.
 4. Whether AutoKit's hardware decoding works at all on this chip.
 5. What clock speed the processor runs at, and how hot it gets. The logger records neither yet.
+6. Why AutoKit finds no NEON, and whether it would be quicker if it did.
+7. What `Desktop.exe` does at 60% while it is hidden.
 
 ## Plan: measure first, then one change per visit
 
-**Step 1: measure.** `s2am job logger --load` records for 30 minutes: the processor's load per
+**Step 1: measure.** Done 2026-11-14 (the numbers above). `s2am job logger --load` records for 30 minutes: the processor's load per
 program every 10 s, and the busiest threads with their priorities. It copies no files and no
 screens, so it adds next to nothing itself. It writes only its own logs, in s2am's folder on the
 car, so the stick can leave and the adapter can take its USB port. `s2am job logger --collect
@@ -60,12 +70,14 @@ Parked with the engine running:
 | 5 | CarPlay: Maps with a route, Spotify playing, scroll the map | The worst case, and which threads fight |
 | 2 | Exit, then Home | Whether everything goes back to normal |
 
-**Step 2: try the levers, one per visit,** each with its own undo stick:
+**Step 2: try the levers, one per visit,** each with its own undo stick. After the measurement,
+the first two are the ones to try first:
 
 | Lever | What changes | How | Risk |
 |---|---|---|---|
-| Frame rate | 10 frames per second instead of 15, so that frames don't queue up | `autokit-config --screen 800,480,10` (exists) | A less smooth picture |
-| Hardware decoding | The video leaves the processor | `autokit-config --decoder hardware` (exists) | Its code path was made for other chips, so the picture may go black. `--restore` undoes it |
+| Hardware decoding | The video leaves the processor. The decoding is the biggest single cost, and the chip has a hardware decoder | `autokit-config --decoder hardware` (exists) | Its code path was made for other chips, so the picture may go black. `--restore` undoes it |
+| Frame rate | 10 frames per second instead of 15: a third less decoding, and frames don't queue up | `autokit-config --screen 800,480,10` (exists) | A less smooth picture |
+| NEON | AutoKit's faster path, if its check is what holds it back | Not known yet: first find out how AutoKit checks | Unknown |
 | AutoKit's priority | AutoKit's video runs ahead of `Desktop.exe` while it is on the screen; JasonACT's runner on XDA sets thread priority too | New, in the runner guard | Can starve SYNC behind it, so it needs testing with calls and climate |
 | Flash quality | Ford's screens drawn at a lower quality setting, which may cost less to draw | New, a small patch in the frame | Rougher text. Whether Ford's player honours the setting is not known |
 | Lighter screens | Fewer and simpler things to draw | sync-redesign, plan step S7 | Slow work, screen by screen |

@@ -60,7 +60,30 @@ That brought SYNC back every time. Last resort: engine off, lock the car, wait 1
 ### SYNC 2 or CarPlay is very slow
 - **Seen:** 2026-11-04, the first run of CarPlay. Taps in CarPlay react late, its picture is
   choppy, and Ford's own screens are slow too.
+- **Measured 2026-11-14:** with CarPlay running, the processor is at 100% nearly all the time.
+  AutoKit's software video decoding takes the biggest share.
 - **Status:** open. Everything known, and the plan, is in [PERFORMANCE.md](PERFORMANCE.md).
+
+### A call over CarPlay does not work
+- **Seen:** 2026-11-14, a call at 12:06 with CarPlay running. In the owner's words: the
+  microphone and phone do not work.
+- **Cause:** not known. The wired adapter has no microphone of its own, so AutoKit has to take
+  the sound from SYNC's microphone. AutoKit's log says nothing about the microphone. SYNC's own
+  hands-free service may hold the microphone, or AutoKit may not open it on this system.
+- **For now:** don't rely on CarPlay for calls. Whether SYNC's own Bluetooth phone works while
+  CarPlay runs, or only after Exit with the cable out, has not been tested yet. Test it before
+  you depend on it.
+
+### CarPlay does not come back after switching to the radio
+- **Seen:** 2026-11-14. The radio was started while CarPlay played music. The music then played
+  on the radio, and CarPlay's music would not start until the cable was pulled out and put back
+  in. After that CarPlay did not start again.
+- **In the logs:** at 12:18 CarPlay's picture stream stopped while AutoKit stayed in front. At
+  12:44 AutoKit's window disappeared and the runner guard closed it. Which of the two was the
+  radio is not certain, because the time was not noted.
+- **What brought it back, if the stop at 12:18 was the radio:** switching the car off and on.
+  AutoKit started again by itself and CarPlay ran.
+- **Cause:** not known. Probably SYNC and AutoKit both claim the sound when the source changes.
 
 ### No parking-sensor pop-up while AutoKit is open
 - **Seen:** 2026-10-30 with the runner guard and no adapter, and again on 2026-11-04 with CarPlay

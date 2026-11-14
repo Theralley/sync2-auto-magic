@@ -11,7 +11,7 @@ and free software.** It also includes a Mac tool that shows what is installed on
 ## Tested and working
 
 Tested in a real car: a **2016 Ford Mondeo Mk5, 8" SYNC 2, software 3.10 (EU)**, on
-**30 October to 4 November 2026**. Details in [docs/P1-TESTLOG.md](docs/P1-TESTLOG.md).
+**30 October to 14 November 2026**. Details in [docs/P1-TESTLOG.md](docs/P1-TESTLOG.md).
 
 | What | Result in the car |
 |---|---|
@@ -30,7 +30,7 @@ Tested in a real car: a **2016 Ford Mondeo Mk5, 8" SYNC 2, software 3.10 (EU)**,
 | Soft reset when the screen is stuck (power/volume knob + Seek-Up ⏭, 10 s) | **Worked once**; twice later it did not, and switching the car off did |
 
 **Not tested yet:**
-- Siri, the microphone and calls over CarPlay.
+- Siri over CarPlay. A call over CarPlay was tried and failed (see *Known problems*).
 - CarPlay sound with the iPhone's Bluetooth off, and the A/B test of the sound patch.
 - Android Auto: the adapter is here, not tried yet.
 - The first install through the wallpaper picker (`Installer.jpg`): the test car already had
@@ -42,8 +42,13 @@ Tested in a real car: a **2016 Ford Mondeo Mk5, 8" SYNC 2, software 3.10 (EU)**,
   Exit only hides AutoKit. Install the guard (`s2am job runner-guard`). Without it, recover by
   switching the car off and opening and closing the driver's door.
 - **SYNC 2 is very slow, with CarPlay and on its own screens:** taps react late and CarPlay's
-  picture is choppy. Open issue, with what is known and the plan:
+  picture is choppy. Measured 2026-11-14: with CarPlay running, the processor is at 100%, and
+  most of that is AutoKit's software video decoding. Open issue, with what is known and the plan:
   [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+- **A call over CarPlay did not work** (2026-11-14: microphone and phone). Don't rely on CarPlay
+  for calls yet ([TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)).
+- **Switching to the radio while CarPlay plays** stopped CarPlay's music, and pulling the cable
+  out and in did not bring CarPlay back ([TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)).
 - The parking sensors' pop-up does not appear while AutoKit is open. Leave AutoKit before
   reversing ([TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)). A reverse camera is untested: the
   test car has none.

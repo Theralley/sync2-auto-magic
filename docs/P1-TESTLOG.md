@@ -550,3 +550,64 @@ and nothing else. The notes from 2026-10-30 called it a camera picture; they are
 **Logs.** The install ran before CarPlay, so this stick's report holds no log of CarPlay. AutoKit's
 own log of that run stays on the car until AutoKit is opened again, and the next job stick
 collects it, so the next stick should go in before AutoKit is opened.
+
+# 2026-11-14: the speed measurement, with CarPlay
+
+| Field | Value |
+|---|---|
+| Sticks | `log-9500` (`logger --load`, 30 minutes) ran at 12:04, `log-f742` (`logger --collect`) at 12:51. Both imported the same day |
+| Adapter, phone, AutoKit | As on 2026-11-04: iPhone over a cable, 800x480 at 15 fps, software decoding |
+
+**What the logs cover.** 173 load samples, 10 s apart, from 12:04 to 12:42 by SYNC's clock. The
+car was switched off from 12:29 to 12:38 while the owner was in a shop. SYNC slept and the
+logger carried on afterwards, so its 30 minutes ran until 12:42. The steps in PERFORMANCE.md were
+not followed one by one, so what was on the screen comes from the owner's notes and the window
+log. AutoKit's own log says little: start, hide and memory clean-ups.
+
+**The owner's notes, and what the logs show:**
+
+| Note | What the logs show |
+|---|---|
+| A call at 12:06 did not work: "Mikrofon/telefon funkar ej" (microphone/phone does not work) | CarPlay had connected a minute earlier. The processor was at 92-100%. AutoKit's log says nothing about the microphone. **G4 failed** |
+| Music over the cable works | Spotify over CarPlay played. Whether the iPhone's Bluetooth was off is not noted |
+| GPS sluggish, "troligen pga hastigheten" (probably because of the speed) | Nothing in the logs about the GPS |
+| The car was switched off, 12:29 to 12:38 | AutoKit closed at 12:29:10 behind Ford's shut-down animation. After the car started, AutoKit opened again by itself at 12:38:36 |
+| 12:38: touching the music made it stutter and skip forward for a moment | AutoKit had just started again while SYNC's own screen was still busy: Desktop.exe at 23-60%, AutoKit at up to 52%, the processor at 79-100% |
+| The radio started while CarPlay played. The music then played on the radio, and CarPlay's music would not start until the cable was pulled out and put back in. After that CarPlay did not start again | Time not noted. Two moments in the logs fit. At 12:18:31 CarPlay's picture stream stopped: AutoKit's load fell to 0% and stayed there, with its window still in front, until the car was switched off. At 12:44 AutoKit's window disappeared and the runner guard closed it 2 s later. AutoKit was opened again at 12:45 and hid itself at 12:50:41, when the adapter came out for the second stick |
+| Heat on maximum, all vents shut except those at the screen, to warm SYNC up | No temperature recorded. The logger can't read one yet |
+
+**The load:**
+
+| Situation | Samples | Processor | AutoKit | Desktop.exe | Kernel (NK.EXE) |
+|---|---|---|---|---|---|
+| Ford's screen, before AutoKit (12:04-12:05) | 5 | 75-90%, mean 83% | - | mean 49% | mean 10% |
+| CarPlay running (12:06-12:18 and 12:39-12:42) | 88 | **100% in 82 samples**, mean 99% | mean 58% | mean 16%, mostly 12% | mean 19% |
+| AutoKit in front, CarPlay stopped (12:18-12:29) | 61 | 71-80%, mean 75% | 0% | mean 60% | mean 8% |
+| Just after the car started again (12:38-12:39) | 8 | 79-100% | 0-52% | 23-60% | 9-29% |
+
+Free memory stayed between 141 and 183 MB the whole time.
+
+**What this shows:**
+
+1. **With CarPlay, the processor is full,** at 100% in nearly every sample for 12 minutes. That
+   explains the late taps and the choppy picture. AutoKit takes about 60%, most of it in one
+   thread, probably the software video decoding. That thread runs at priority 252, below
+   Desktop.exe's main thread at 250. The kernel takes about 20%, against 8% without CarPlay,
+   probably the USB traffic from the adapter (not proven).
+2. **Desktop.exe does not keep its load behind CarPlay.** Its main thread drops to about 12%.
+   But when CarPlay had stopped and AutoKit was still in front, the same thread ran at about 60%
+   for ten minutes while hidden. What it was doing is not known. The radio may have been on.
+3. **AutoKit thinks the processor has no NEON.** Its log says `IsHaveNeon() = 0` at start, but
+   the i.MX51's Cortex-A8 core has NEON, the chip's instructions for fast media work. So AutoKit
+   probably takes a slower path. Why it reads 0 is not known; Windows CE 6 may not report it.
+4. **The car has Freescale's own hardware video decoder:** `vpu.dll`, `mx51_vpu_dec_wrapper.dll`,
+   `mx51_vpu_dec_dshow.dll` are in its Windows folder (file list, 2026-10-31). Whether AutoKit's
+   hardware mode (`usehwdec`) can use it is not known.
+5. **The runner guard worked as designed.** It closed AutoKit at 12:44 and at 12:50, each time 2 s
+   after its window had disappeared, and SYNC came back.
+6. SYNC's clock moved back by about 24 s at 12:09, probably set from the GPS.
+
+**Next:** see PERFORMANCE.md. Hardware decoding comes first, because the decoding is the biggest
+single cost. A call over CarPlay is a separate, open problem (TROUBLESHOOTING.md). The undo stick
+(`bundle-de93`) is back on the 2 GB stick. Like every pack built so far, it installs only until
+2026-11-17 09:35 UTC.
