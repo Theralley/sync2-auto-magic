@@ -611,3 +611,20 @@ Free memory stayed between 141 and 183 MB the whole time.
 single cost. A call over CarPlay is a separate, open problem (TROUBLESHOOTING.md). The undo stick
 (`bundle-de93`) is back on the 2 GB stick. Like every pack built so far, it installs only until
 2026-11-17 09:35 UTC.
+
+## Same day: the hardware-decoding sticks
+
+The first lever from PERFORMANCE.md. `akcfg-1063` (`autokit-config --decoder hardware`) writes
+AutoKit's `usehwdec` flag and `screenconfig` 800,480,15, which is the size it used before
+without the file. It backs up what was there. `akcfg-53a1` (`--restore akcfg-1063`) puts that
+backup back. Both refuse to run while AutoKit is open, so AutoKit has to be closed (Exit) before
+the stick goes in. AutoKit reads the settings when it starts.
+
+Rehearsed on the simulated car in the car's state: the flag and the size are set, nothing else
+on the car changes, the undo removes both again, and with AutoKit running the job changes
+nothing. The 2 GB stick now carries this undo instead of the screens' undo (`bundle-de93`,
+kept on the Mac). Both jobs install only until 2026-11-17 09:35 UTC.
+
+If the picture goes black: Exit, or pull the adapter. On 2026-11-14 AutoKit hid itself at 12:50,
+probably when the adapter came out for the second stick, and the runner guard closed it 2 s
+later. Then use the undo stick.
