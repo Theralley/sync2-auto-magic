@@ -32,13 +32,13 @@ Tested in a real car: a **2016 Ford Mondeo Mk5, 8" SYNC 2, software 3.10 (EU)**,
 | AutoKit in English | **Works** (`autokit-config --lang english`; new installs now start in English) |
 | AutoKit's sound patch installed | **Yes**: all three audio modules patched |
 | Apple CarPlay over a cable (iPhone, CarlinKit wired adapter) | **Works, but very slow**: home screen, taps, Maps with route guidance, Spotify. [docs/PERFORMANCE.md](docs/PERFORMANCE.md) |
-| CarPlay sound through the car's speakers | **Heard** (Spotify), but with the iPhone's Bluetooth on, so the route is not proven yet |
+| CarPlay sound through the car's speakers | **Works**: Spotify over CarPlay, with the iPhone's Bluetooth off, so the sound came through the cable and AutoKit (14 November) |
 | Leave AutoKit with its Exit button, with the runner guard (`runner-guard`) | **Works**: SYNC is back about 3 s after Exit (four tries) |
 | Soft reset when the screen is stuck (power/volume knob + Seek-Up ⏭, 10 s) | **Worked once**; twice later it did not, and switching the car off did |
 
 **Not tested yet:**
 - Siri over CarPlay. A call over CarPlay was tried and failed (see *Known problems*).
-- CarPlay sound with the iPhone's Bluetooth off, and the A/B test of the sound patch.
+- The A/B test of the sound patch: whether CarPlay's sound also works without it.
 - Android Auto: the adapter is here, not tried yet.
 - The first install through the wallpaper picker (`Installer.jpg`): the test car already had
   SyncExtPack.
@@ -87,7 +87,7 @@ run the same system, but nothing is guaranteed.
 | AutoKit installed and opening on SYNC 2 | **Works in the car** |
 | AutoKit in English | **Works in the car**; new installs start in English (the stock app is Chinese; `autokit-config --lang` changes it) |
 | Apple CarPlay over a cable | **Works in the car, very slow** (2026-11-04): [docs/PERFORMANCE.md](docs/PERFORMANCE.md) |
-| Sound through the car's speakers | Fix installed (all three modules patched). Spotify over CarPlay played through the speakers, with the iPhone's Bluetooth on, so the route is not proven. The Video Player, which gets its sound through the same `WaveOutHooks.dll`, plays through the speakers in the car |
+| Sound through the car's speakers | Fix installed (all three modules patched). Spotify over CarPlay plays through the speakers with the iPhone's Bluetooth off (14 November), so the sound comes through AutoKit. The Video Player, which gets its sound through the same `WaveOutHooks.dll`, plays through the speakers in the car |
 | Leaving AutoKit returns to SYNC | **Works in the car with the runner guard** (`s2am job runner-guard`, undo with `--off`). Without it, Exit only hides AutoKit and the screen freezes. Reported upstream: [syncextpack#4](https://github.com/chr0m1ng/syncextpack/issues/4) |
 | New colours for SYNC's menus (`s2am job theme`; Lincoln's colours now, your own next) | **Works in the car**: the change and its undo stick both verified byte for byte (2026-10-31). How to undo: [sync-redesign RECOVERY.md](https://github.com/Theralley/sync-redesign/blob/main/docs/RECOVERY.md) |
 | A new Apps menu with big tiles, CarPlay first (`s2am job apps-menu`) | Built and rehearsed on the computer with the car's files; **first car test 2026-10-31**. Built by [sync-redesign](https://github.com/Theralley/sync-redesign)'s `tools/build_apps_menu.py` from your own copy of SyncExtPack's menu |

@@ -569,7 +569,7 @@ log. AutoKit's own log says little: start, hide and memory clean-ups.
 | Note | What the logs show |
 |---|---|
 | A call at 12:06 did not work: "Mikrofon/telefon funkar ej" (microphone/phone does not work) | CarPlay had connected a minute earlier. The processor was at 92-100%. AutoKit's log says nothing about the microphone. **G4 failed** |
-| Music over the cable works | Spotify over CarPlay played. Whether the iPhone's Bluetooth was off is not noted |
+| Music over the cable works | Spotify over CarPlay played with the iPhone's Bluetooth **off** (the owner, afterwards), so the sound came through the cable and AutoKit. **G3 passed** |
 | GPS sluggish, "troligen pga hastigheten" (probably because of the speed) | Nothing in the logs about the GPS |
 | The car was switched off, 12:29 to 12:38 | AutoKit closed at 12:29:10 behind Ford's shut-down animation. After the car started, AutoKit opened again by itself at 12:38:36 |
 | 12:38: touching the music made it stutter and skip forward for a moment | AutoKit had just started again while SYNC's own screen was still busy: Desktop.exe at 23-60%, AutoKit at up to 52%, the processor at 79-100% |
