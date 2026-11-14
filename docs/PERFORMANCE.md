@@ -75,7 +75,7 @@ the first two are the ones to try first:
 
 | Lever | What changes | How | Risk |
 |---|---|---|---|
-| Hardware decoding | The video leaves the processor. The decoding is the biggest single cost, and the chip has a hardware decoder | `autokit-config --decoder hardware` (exists) | Its code path was made for other chips, so the picture may go black. `--restore` undoes it |
+| Hardware decoding | The video leaves the processor. The decoding is the biggest single cost, and the chip has a hardware decoder | `autokit-config --decoder hardware` (exists). **Sticks built and rehearsed 2026-11-14** (`akcfg-1063`, undo `akcfg-53a1`), not yet run in the car | Its code path was made for other chips, so the picture may go black. `--restore` undoes it |
 | Frame rate | 10 frames per second instead of 15: a third less decoding, and frames don't queue up | `autokit-config --screen 800,480,10` (exists) | A less smooth picture |
 | NEON | AutoKit's faster path, if its check is what holds it back | Not known yet: first find out how AutoKit checks | Unknown |
 | AutoKit's priority | AutoKit's video runs ahead of `Desktop.exe` while it is on the screen; JasonACT's runner on XDA sets thread priority too | New, in the runner guard | Can starve SYNC behind it, so it needs testing with calls and climate |

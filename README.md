@@ -7,6 +7,13 @@ and free software.** It also includes a Mac tool that shows what is installed on
 > these tools), **but it is very slow, and so is SYNC 2 itself**:
 > [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Leaving AutoKit froze the screen; the runner guard
 > fixes that (verified in the car). Try it only if you are comfortable with the recovery steps.
+>
+> **Where it stands (14 November 2026):**
+> - **Measured:** with CarPlay running, the processor is at 100%. Most of it goes on AutoKit's
+>   video decoding in software.
+> - **Next test:** hardware decoding (`autokit-config --decoder hardware`). The job and its undo
+>   are built, rehearsed and on the car's sticks, but have not run in the car yet.
+> - **Calls over CarPlay don't work yet** (the microphone). Don't rely on CarPlay for calls.
 
 ## Tested and working
 
