@@ -32,6 +32,7 @@ it, the two fight for the same core, and every tap waits behind both.
    is slower or quicker than Ford's. The only number is from before any change.
 3. What inside `Desktop.exe` takes the time.
 4. Whether AutoKit's hardware decoding works at all on this chip.
+5. What clock speed the processor runs at, and how hot it gets. The logger records neither yet.
 
 ## Plan: measure first, then one change per visit
 
@@ -68,6 +69,62 @@ Parked with the engine running:
 | AutoKit's priority | AutoKit's video runs ahead of `Desktop.exe` while it is on the screen; JasonACT's runner on XDA sets thread priority too | New, in the runner guard | Can starve SYNC behind it, so it needs testing with calls and climate |
 | Flash quality | Ford's screens drawn at a lower quality setting, which may cost less to draw | New, a small patch in the frame | Rougher text. Whether Ford's player honours the setting is not known |
 | Lighter screens | Fewer and simpler things to draw | sync-redesign, plan step S7 | Slow work, screen by screen |
+
+## A possible lever: a faster processor clock (overclocking)
+
+**Proposed 2026-11-14 by the car's owner, who accepts the risk. Nothing has been built or tried.**
+More clock speed helps everything at once: Ford's screens, AutoKit's decoding, the taps. It is
+also the only lever here that can damage the hardware, so it comes last, after the cheaper levers
+above and after the groundwork below.
+
+**What the logger records today:** load per program and thread, memory, and the system's name.
+No temperature and no clock speed (checked in `s2am/native/s2amdrive.c`). Nobody knows yet what
+clock this processor runs at, or what it is rated for.
+
+**Where a temperature or a clock speed might come from.** The car's own file list (drive log,
+2026-10-31) has these candidates. None has been tried:
+
+| Candidate | What it might give |
+|---|---|
+| `pmicsdk_mc13892.dll`, `pmicpdk_mc13892.dll` | The driver for the MC13892 power chip that feeds the processor. The chip measures voltages and warns when it is hot. Whether this board gives a temperature on one of its channels is not known |
+| `syshealth.exe`, `devhealth.exe`, `devhealthdll.dll` | Ford's own health watch, which may read temperatures |
+| `sync2ibdccpu.dll` | Ford's diagnostics for the main processor board |
+| The kernel's processor information (`KernelIoControl`, `IOCTL_PROCESSOR_INFORMATION`) | The clock speed the system reports about itself. This may be a fixed number, not the live clock |
+
+No file is named like a frequency-scaling driver. If the processor slows itself down to save
+power, that happens inside the kernel.
+
+**The groundwork, in this order:**
+
+1. **Measure without changing anything.** A logger that also records the clock speed and any
+   temperature it can read, through a whole drive and a long CarPlay session.
+2. **Check that it already runs at its rated speed.** If power saving holds it below that,
+   running at the rated speed all the time is the safe first win. That is not overclocking.
+3. **Only then try small steps above the rated speed,** with a temperature limit that drops
+   back to the normal clock on its own.
+
+**How it would be done.** The processor's clock is set in its clock controller, and a higher clock
+usually also needs a higher voltage from the power chip. Ordinary programs on Windows CE 6 can't
+reach either, so this needs code that runs inside the kernel, such as a small driver. s2am has
+no such code yet.
+
+**Rules if it is ever tried:**
+
+- **Never at start-up.** Set the clock only after SYNC is up and running, so that a restart
+  always brings back Ford's clock. A clock that hangs SYNC at start-up could not be undone with
+  a stick, because SYNC would never get as far as reading one.
+- **Watch the temperature the whole time,** and drop back on the first sign of trouble.
+- **The test drive is long, in summer heat as well as now.** The box sits behind the dashboard.
+
+**The risk:**
+
+- **Freezes and crashes.** The screen carries climate, calls and the parking-sensor pop-up, and
+  a frozen SYNC takes them all with it until it restarts.
+- **Damaged storage.** Files written while the processor is unstable can come out corrupt. If
+  that hits SYNC's own system files, SYNC may stop starting at all, and then it needs a
+  workshop.
+- **Heat.** Extra clock and voltage mean extra heat. That can shorten the box's life, or trip
+  Ford's own protection, if there is any.
 
 **What must keep working:** calls, climate with MAX DEFROST, and the parking sensors. A change that
 makes CarPlay quicker but delays any of them does not ship.
