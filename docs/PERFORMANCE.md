@@ -40,7 +40,8 @@ the decoding cheaper would help a lot.
    is slower or quicker than Ford's. The only number is from before any change.
 3. What inside `Desktop.exe` takes the time.
 4. Whether AutoKit's hardware decoding works at all on this chip.
-5. What clock speed the processor runs at, and how hot it gets. The logger records neither yet.
+5. What clock speed the processor runs at, and how hot it gets. The logger records the clock
+   from 2026-11-14 (not yet run in the car), and no temperature.
 6. Why AutoKit finds no NEON, and whether it would be quicker if it did.
 7. What `Desktop.exe` does at 60% while it is hidden.
 
@@ -50,7 +51,9 @@ the decoding cheaper would help a lot.
 program every 10 s, and the busiest threads with their priorities. It copies no files and no
 screens, so it adds next to nothing itself. It writes only its own logs, in s2am's folder on the
 car, so the stick can leave and the adapter can take its USB port. `s2am job logger --collect
-<that job>` on a second stick fetches the logs.
+<that job>` on a second stick fetches the logs. `s2am job autokit-config --measure` does both
+with one stick: it starts the same recording after its change, and fetches the logs when the
+stick is inserted a second time.
 
 Parked with the engine running:
 
@@ -75,7 +78,7 @@ the first two are the ones to try first:
 
 | Lever | What changes | How | Risk |
 |---|---|---|---|
-| Hardware decoding | The video leaves the processor. The decoding is the biggest single cost, and the chip has a hardware decoder | `autokit-config --decoder hardware` (exists). **Sticks built and rehearsed 2026-11-14** (`akcfg-1063`, undo `akcfg-53a1`), not yet run in the car | Its code path was made for other chips, so the picture may go black. `--restore` undoes it |
+| Hardware decoding | The video leaves the processor. The decoding is the biggest single cost, and the chip has a hardware decoder | `autokit-config --decoder hardware` (exists). **Sticks built and rehearsed 2026-11-14** (`akcfg-9b10`, undo `akcfg-da1b`, both with `--measure`), not yet run in the car | Its code path was made for other chips, so the picture may go black. `--restore` undoes it |
 | Frame rate | 10 frames per second instead of 15: a third less decoding, and frames don't queue up | `autokit-config --screen 800,480,10` (exists) | A less smooth picture |
 | NEON | AutoKit's faster path, if its check is what holds it back | Not known yet: first find out how AutoKit checks | Unknown |
 | AutoKit's priority | AutoKit's video runs ahead of `Desktop.exe` while it is on the screen; JasonACT's runner on XDA sets thread priority too | New, in the runner guard | Can starve SYNC behind it, so it needs testing with calls and climate |
@@ -84,41 +87,56 @@ the first two are the ones to try first:
 
 ## A possible lever: a faster processor clock (overclocking)
 
-**Proposed 2026-11-14 by the car's owner, who accepts the risk. Nothing has been built or tried.**
+**Proposed 2026-11-14 by the car's owner, who accepts the risk. The measuring is built. No change
+to the clock has been built or tried.**
 More clock speed helps everything at once: Ford's screens, AutoKit's decoding, the taps. It is
 also the only lever here that can damage the hardware, so it comes last, after the cheaper levers
 above and after the groundwork below.
 
-**What the logger records today:** load per program and thread, memory, and the system's name.
-No temperature and no clock speed (checked in `s2am/native/s2amdrive.c`). Nobody knows yet what
-clock this processor runs at, or what it is rated for.
+**What the logger records.** Since 2026-11-14 the load logger also writes, every 10 s, a `clock`
+line, and at its start what the processor says about itself. None of it has run in the car yet:
 
-**Where a temperature or a clock speed might come from.** The car's own file list (drive log,
-2026-10-31) has these candidates. None has been tried:
+| What | How | How good |
+|---|---|---|
+| The clock speed | Two timing loops that differ by 32 one-cycle steps a round; the time between them gives the clock | A few percent. It shows 600 against 800 MHz, and whether the clock changes with load |
+| The core voltage | The normal setting of the MC13892 power chip's output SW1, read through Freescale's own library on the car (`pmicSdk_mc13892.dll`) | The value the chip is set to, not a measurement of the rail. The chip has two more settings for the same output, and which one is in use is not known |
+| What the processor is | The system's own answer (`IOCTL_PROCESSOR_INFORMATION`) and its feature bits, NEON among them | As good as Ford's system fills it in |
+| The power chip's set-up | Its switcher and regulator registers and how its measuring is set up, read once. Never its measuring results: reading those moves the chip on under Ford's driver | Raw values, for planning |
 
-| Candidate | What it might give |
-|---|---|
-| `pmicsdk_mc13892.dll`, `pmicpdk_mc13892.dll` | The driver for the MC13892 power chip that feeds the processor. The chip measures voltages and warns when it is hot. Whether this board gives a temperature on one of its channels is not known |
-| `syshealth.exe`, `devhealth.exe`, `devhealthdll.dll` | Ford's own health watch, which may read temperatures |
-| `sync2ibdccpu.dll` | Ford's diagnostics for the main processor board |
-| The kernel's processor information (`KernelIoControl`, `IOCTL_PROCESSOR_INFORMATION`) | The clock speed the system reports about itself. This may be a fixed number, not the live clock |
+**No temperature yet.** The i.MX51 has no temperature sensor of its own. The power chip can
+measure its own temperature, but taking that reading means changing how the chip's measuring is
+set up, and Ford's software may be using it. The logger reads that set-up first. A probe taped
+to the box would say more about the processor than the power chip's temperature does.
 
-No file is named like a frequency-scaling driver. If the processor slows itself down to save
-power, that happens inside the kernel.
+**What changing the clock takes** (checked with Codex against Freescale's documents, 2026-11-14;
+the register values are from the documents, not yet read from this car):
 
-**The groundwork, in this order:**
+- The processor's clock comes from the chip's first clock generator (PLL1, at `0x83F80000`),
+  through the clock controller (CCM, at `0x73FD4000`). Both can only be reached from inside the
+  kernel. Whether a driver of ours loads there on SYNC is not known.
+- **The memory's clock may come from the same generator** (the clock controller's `CBCDR`
+  register, bit 30). If it does, changing PLL1 changes the memory's clock too, and SYNC stops at
+  once. This has to be read before anything is changed.
+- The change itself: raise the core voltage if needed, move the processor to a second clock
+  source, set PLL1, wait until it is steady, move back. The 800 MHz parts of this chip are
+  specified at 1.10 V (1.05 to 1.15 V). The car parts are specified for 600 MHz.
+- Ford's own power saving may set the clock back, and the power chip keeps its settings while
+  SYNC sleeps. So "a restart brings back Ford's clock" holds for the clock, but the voltage must
+  be put back by us.
 
-1. **Measure without changing anything.** A logger that also records the clock speed and any
-   temperature it can read, through a whole drive and a long CarPlay session.
-2. **Check that it already runs at its rated speed.** If power saving holds it below that,
-   running at the rated speed all the time is the safe first win. That is not overclocking.
-3. **Only then try small steps above the rated speed,** with a temperature limit that drops
-   back to the normal clock on its own.
+**The order, one visit each:**
 
-**How it would be done.** The processor's clock is set in its clock controller, and a higher clock
-usually also needs a higher voltage from the power chip. Ordinary programs on Windows CE 6 can't
-reach either, so this needs code that runs inside the kernel, such as a small driver. s2am has
-no such code yet.
+1. **Baseline, with nothing changed.** The clock, the voltage and the processor's own answer,
+   next to the hardware-decoding test. Stop if the power chip cannot be read.
+2. **A read-only driver.** It only reads the clock controller and PLL1, and shows whether our
+   code can run in the kernel at all. Stop if the memory's clock hangs on PLL1.
+3. **A rehearsal with the stock values.** Go through the whole change and back, ending at the
+   same clock. Stop on any difference.
+4. **About 5% up, for a few minutes,** parked, with as little writing to storage as possible, and
+   back down before SYNC sleeps. Stop on any fault, or if nothing gets quicker.
+
+If the baseline shows 600 MHz, the first aim is the 800 MHz that the same chip is sold for. If
+it shows 800 MHz, anything more is beyond what any version of the chip is specified for.
 
 **Rules if it is ever tried:**
 

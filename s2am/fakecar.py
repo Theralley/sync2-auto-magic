@@ -100,6 +100,8 @@ class FakeCar:
         out.mkdir(parents=True, exist_ok=True)
         if self.exists(job.done_marker):
             (out / "replayed.txt").write_text(job.id)
+            if job.kind == "akcfg" and job.params.get("measure"):
+                self._collect(out, job.id)
             for part in bundle_parts(job) if job.kind == "bundle" else []:
                 (out.parent / part.id).mkdir(exist_ok=True)
                 (out.parent / part.id / "replayed.txt").write_text(part.id)
@@ -128,11 +130,8 @@ class FakeCar:
         if job.kind == "snap":
             self._snapshot(out)
         if job.kind == "log" and job.params.get("collect"):
-            for name in LOAD_LOGS:
-                source = self._resolve(f"{load_folder(job.params['collect'])}\\{name}")
-                if source.is_file():
-                    shutil.copyfile(source, out / name)
-        elif job.kind == "log" and job.params.get("load"):
+            self._collect(out, job.params["collect"])
+        elif (job.kind == "log" and job.params.get("load")) or (job.kind == "akcfg" and job.params.get("measure")):
             (out / "logger-started.txt").write_text("started")
             folder = load_folder(job.id)
             self.put(f"{folder}\\watch.log", "".join(f"{line}\r\n" for line in self.watch_lines).encode())
@@ -362,6 +361,12 @@ class FakeCar:
         for path in p.get("delete_files", []):
             self._resolve(ce_path(path)).unlink(missing_ok=True)
         return True
+
+    def _collect(self, out: Path, job_id: str) -> None:
+        for name in LOAD_LOGS:
+            source = self._resolve(f"{load_folder(job_id)}\\{name}")
+            if source.is_file():
+                shutil.copyfile(source, out / name)
 
     def _autokit_config(self, out: Path, job: Job) -> bool:
         ak = self._resolve(AUTOKIT_CE)

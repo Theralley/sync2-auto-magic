@@ -411,16 +411,22 @@ def autokit_config_script(job: Job) -> str:
     ``usehwdec`` (present = hardware decoding) from its folder at start (Codex,
     AutoKit.exe+0x47a48). Any Auto_Box_Update.img is removed: AutoKit would flash it
     to the dongle, and a wrong image kills the dongle.
+
+    With ``measure`` (seconds) the job also starts the watcher and the load logger once the
+    settings are in place. They write to the car, and inserting the same stick again fetches
+    their logs: the job has run, so that second visit changes nothing.
     """
     p = job.params
     ak = AUTOKIT_CE
-    lines = _header(job) + [
+    measure = _measure(job, p["measure"]) if p.get("measure") is not None else []
+    lines = _header(job, _collect(job.id, "  ") if measure else []) + [
         f"ak = {_quote(ak)}",
         "If (NOT DirExists(ak))",
         *_stop("missing.txt", "AutoKit is not installed; nothing changed", "  "),
         "EndIf",
         'If (ProcExists("AutoKit.exe"))',
-        *_stop("busy.txt", "AutoKit is running: restart SYNC and re-prepare the stick on the Mac", "  "),
+        *_stop("busy.txt", "AutoKit is running: press Exit in AutoKit and insert the stick again" if measure else
+               "AutoKit is running: restart SYNC and re-prepare the stick on the Mac", "  "),
         "EndIf",
     ]
     if p.get("restore"):
@@ -505,7 +511,7 @@ def autokit_config_script(job: Job) -> str:
         '  WriteFile(out & "\\firmware-image-removed.txt", "a dongle firmware image was removed")',
         "EndIf",
     ]
-    return _script(lines + _inventory() + _footer(job))
+    return _script(lines + measure + _inventory() + _footer(job))
 
 
 def guard_script(job: Job) -> str:
@@ -622,10 +628,39 @@ def snapshot_script(job: Job) -> str:
 
 
 def load_folder(job_id: str) -> str:
-    """The folder on the car where the logger job ``job_id`` writes."""
-    if not re.fullmatch(r"\d{8}-\d{6}-log-[0-9a-f]{4}", job_id):
+    """The folder on the car where the logger job ``job_id`` writes (or a job that measures)."""
+    if not re.fullmatch(r"\d{8}-\d{6}-(log|akcfg)-[0-9a-f]{4}", job_id):
         raise ValueError(f"not a logger job: {job_id!r}")
     return f"{LOAD_DIR}\\{job_id}"
+
+
+def _collect(job_id: str, indent: str = "") -> list[str]:
+    """Copy the load logs that job wrote on the car into this report."""
+    folder, lines = load_folder(job_id), []
+    for name in LOAD_LOGS:
+        path = _quote(f"{folder}\\{name}")
+        lines += [f"{indent}If (FileExists({path}))", f'{indent}  Copy({path}, out & "\\{name}", TRUE)',
+                  f"{indent}EndIf"]
+    return lines
+
+
+def _measure(job: Job, seconds: int) -> list[str]:
+    """Start the watcher and the load logger, writing to the car, so the stick can leave.
+
+    Both run from copies in their log folder: the stick comes back while they still run, and
+    UpdateService then writes the job folder's files again, which a running program would block.
+    """
+    if isinstance(seconds, bool) or not isinstance(seconds, int) or not 60 <= seconds <= DRIVE_SECONDS:
+        raise ValueError(f"invalid measuring time {seconds!r}")
+    folder = _quote(ce_path(job.job_dir))
+    return [f"logs = {_quote(load_folder(job.id))}", 'MkDir("\\SyncExtendedPack\\_s2am")',
+            f"MkDir({_quote(LOAD_DIR)})", "MkDir(logs)",
+            f'Copy({folder} & "\\s2amwatch.exe", logs & "\\s2amwatch.exe", TRUE)',
+            f'Copy({folder} & "\\s2amdrive.exe", logs & "\\s2amdrive.exe", TRUE)',
+            f'Run(logs & "\\s2amwatch.exe", "{seconds} " & logs)',
+            f'Run(logs & "\\s2amdrive.exe", "{seconds} load " & logs)',
+            'WriteFile(out & "\\logger-started.txt", "this job also measures, writing to the car; '
+            'insert the stick again to fetch the logs")']
 
 
 def collect_script(job: Job) -> str:
@@ -633,11 +668,7 @@ def collect_script(job: Job) -> str:
 
     Both programs close their log after each write, so this works while they still run too.
     """
-    folder = load_folder(job.params["collect"])
-    lines = _header(job)
-    for name in LOAD_LOGS:
-        path = _quote(f"{folder}\\{name}")
-        lines += [f"If (FileExists({path}))", f'  Copy({path}, out & "\\{name}", TRUE)', "EndIf"]
+    lines = _header(job) + _collect(job.params["collect"])
     return _script(lines + _inventory() + _footer(job))
 
 

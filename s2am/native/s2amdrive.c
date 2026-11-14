@@ -13,7 +13,9 @@
  *
  * With "load" it measures speed and nothing else: no file list, no copy of the screens and no
  * screen copies, so the logger itself costs next to nothing. After each load line comes a
- * threads line: the busiest threads with their share and their base and changed priority.
+ * threads line: the busiest threads with their share and their base and changed priority, and a
+ * clock line: the processor's speed from a timing loop and, if the power chip can be read, the
+ * voltage that feeds the core. At the start it also logs what the processor says about itself.
  *
  * It only reads from the car: everything it writes goes to the stick. Its threads run
  * below normal priority, so SYNC's own work always comes first. It stops after
@@ -240,6 +242,36 @@ static void note_busy(DWORD id, DWORD delta, int program, int base, int change)
     busy[at].program = program;
     busy[at].base = base;
     busy[at].change = change;
+}
+
+/* ---- the processor's clock, from a timing loop ---- */
+
+/* Two loops that differ only in how many adds a round has: 64 and 32. Each add waits for the one
+ * before it, so it takes one cycle, and the time between the two loops is 32 cycles a round: what
+ * the count and the branch cost drops out. */
+#define SPIN_CYCLES 32
+
+/* A timing window is long enough at 50 counter ticks and half a millisecond. */
+static BOOL window_ok(DWORD ticks, DWORD per_second)
+{
+    return ticks >= 50 && (unsigned long long)ticks * 2000 >= per_second;
+}
+
+/* The clock in MHz, if `loops` rounds of the long loop took `ticks` longer than the short one's,
+ * on a counter that counts `per_second`. 0 if it cannot be told. */
+static DWORD loop_mhz(DWORD loops, DWORD ticks, DWORD per_second)
+{
+    if (!ticks || !per_second)
+        return 0;
+    return (DWORD)((unsigned long long)loops * SPIN_CYCLES * per_second / ticks / 1000000);
+}
+
+/* The voltage the MC13892 is set to give on SW1, in millivolts, from its register "Switchers 0":
+ * the low five bits, in 25 mV steps from 600 mV (SW1 has no high range). This is the normal
+ * setting; bits 5-9 hold the one for a second mode (DVS) and bits 10-14 the one for standby. */
+static DWORD sw1_millivolts(DWORD switchers0)
+{
+    return 600 + 25 * (switchers0 & 31);
 }
 
 /* pure: end */
@@ -523,6 +555,233 @@ static void system_facts(void)
         end_line();
     } while (FindNextFileW(search, &found));
     FindClose(search);
+}
+
+/* ---- the processor: what it says it is, how fast it runs, what feeds it (load only) ----
+ *
+ * Everything here only reads. The clock comes from a timing loop, because a program outside the
+ * kernel cannot read the clock registers. The core voltage comes from the power chip, an
+ * MC13892, through Freescale's own library on the car (pmicSdk_mc13892.dll), which is looked up
+ * at run time. Its first call is tried in a second copy of this program: if the library is not
+ * what we think and that copy dies, the logger and its load log live on. */
+
+#define PROCESSOR_INFORMATION 0x01010064UL  /* CTL_CODE(FILE_DEVICE_HAL, 25, METHOD_BUFFERED, FILE_ANY_ACCESS) */
+#define FEATURE_BASE 0x80000000UL  /* PF_ARM_V4 is 0x80000001; PF_ARM_NEON is 0x8000001B */
+#define FEATURES 28
+#define PMIC_ID 7
+#define PMIC_SWITCHERS0 24
+#define PMIC_WORKS 42  /* the trial copy's exit code when the power chip answered */
+
+typedef struct {
+    WORD version;
+    WCHAR core[40];
+    WORD core_revision;
+    WCHAR name[40];
+    WORD revision;
+    WCHAR catalog[100], vendor[100];
+    DWORD instruction_set, clock_speed;
+} ProcessorInfo;
+
+typedef BOOL (WINAPI *KernelIoFn)(DWORD, void *, DWORD, void *, DWORD, DWORD *);
+typedef BOOL (WINAPI *FeatureFn)(DWORD);
+typedef int (*PmicReadFn)(unsigned char, DWORD *);  /* PMIC_STATUS PmicRegisterRead(index, &value); 0 = read */
+
+static PmicReadFn pmic_read;
+static DWORD counter_rate, spin_loops;
+
+static BOOL pmic_open(void)
+{
+    HMODULE library = LoadLibraryW(L"pmicSdk_mc13892.dll");
+    pmic_read = library ? LOOKUP(library, PmicReadFn, L"PmicRegisterRead") : NULL;
+    return pmic_read != NULL;
+}
+
+/* The trial copy: 42 if the power chip gave its identification, 2 or 3 if not. */
+static int pmic_trial(void)
+{
+    DWORD value = 0;
+    if (!pmic_open())
+        return 3;
+    return pmic_read(PMIC_ID, &value) == 0 ? PMIC_WORKS : 2;
+}
+
+static DWORD pmic_tried(void)
+{
+    WCHAR self[MAX_PATH], word[] = L"pmic";
+    PROCESS_INFORMATION child;
+    DWORD code = 1;
+    if (!GetModuleFileNameW(NULL, self, MAX_PATH) ||
+        !CreateProcessW(self, word, NULL, NULL, FALSE, 0, NULL, NULL, NULL, &child))
+        return 1;
+    if (WaitForSingleObject(child.hProcess, 5000) == WAIT_OBJECT_0)
+        GetExitCodeProcess(child.hProcess, &code);
+    else
+        TerminateProcess(child.hProcess, 1);
+    CloseHandle(child.hThread);
+    CloseHandle(child.hProcess);
+    return code;
+}
+
+/* The loops the clock is told from: adds that each need the result of the one before, so the
+ * processor cannot run two at once. The long one has 64 a round, the short one 32. */
+#define ADD4 "add %1, %1, %2\n add %1, %1, %2\n add %1, %1, %2\n add %1, %1, %2\n"
+#define ADD16 ADD4 ADD4 ADD4 ADD4
+
+static DWORD __attribute__((noinline)) spin_long(DWORD loops)
+{
+    DWORD sum = 0, one = 1;
+    __asm__ volatile("1:\n" ADD16 ADD16 ADD16 ADD16 "subs %0, %0, #1\n bne 1b\n"
+                     : "+r"(loops), "+r"(sum) : "r"(one) : "cc");
+    return sum;
+}
+
+static DWORD __attribute__((noinline)) spin_short(DWORD loops)
+{
+    DWORD sum = 0, one = 1;
+    __asm__ volatile("1:\n" ADD16 ADD16 "subs %0, %0, #1\n bne 1b\n"
+                     : "+r"(loops), "+r"(sum) : "r"(one) : "cc");
+    return sum;
+}
+
+/* The quickest of `windows` runs, so that a run another thread cut into does not count. */
+static DWORD spin_ticks(BOOL longer, DWORD loops, int windows)
+{
+    LARGE_INTEGER before, after;
+    DWORD best = 0, ticks;
+    while (windows-- > 0) {
+        QueryPerformanceCounter(&before);
+        if (longer)
+            spin_long(loops);
+        else
+            spin_short(loops);
+        QueryPerformanceCounter(&after);
+        ticks = (DWORD)(after.QuadPart - before.QuadPart);
+        if (ticks && (!best || ticks < best))
+            best = ticks;
+    }
+    return best;
+}
+
+static void processor_facts(void)
+{
+    HMODULE core = GetModuleHandleW(L"coredll.dll");
+    KernelIoFn kernel_io = core ? LOOKUP(core, KernelIoFn, L"KernelIoControl") : NULL;
+    FeatureFn feature = core ? LOOKUP(core, FeatureFn, L"IsProcessorFeaturePresent") : NULL;
+    /* Identification, power control, the switchers and regulators, and how the chip's own
+     * measuring (which has a temperature channel) is set up. Only registers that reading does not
+     * change: never the measuring results (45 on), where a read moves the chip on to its next
+     * result under Ford's driver, and never the interrupt registers. */
+    static const unsigned char registers[] = {7, 13, 14, 15, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 43, 44};
+    ProcessorInfo info;
+    LARGE_INTEGER rate;
+    DWORD size = 0, bits = 0, code;
+    int i;
+
+    memset(&info, 0, sizeof(info));
+    rate.QuadPart = 0;
+    begin("processor|");
+    if (kernel_io && kernel_io(PROCESSOR_INFORMATION, NULL, 0, &info, sizeof(info), &size)) {
+        info.core[39] = info.name[39] = info.catalog[99] = info.vendor[99] = L'\0';
+        put_wide(info.vendor, 40);
+        put(" ");
+        put_wide(info.name, 40);
+        put("|core ");
+        put_wide(info.core, 40);
+        put(" revision ");
+        put_uint(info.core_revision);
+        put("|processor revision ");
+        put_uint(info.revision);
+        put("|catalog ");
+        put_wide(info.catalog, 60);
+        put("|instruction set ");
+        put_hex(info.instruction_set);
+        put("|stated clock ");
+        put_uint(info.clock_speed);
+    } else {
+        put("the system does not say");
+    }
+    end_line();
+
+    if (feature) {
+        for (i = 1; i <= FEATURES; i++)
+            if (feature(FEATURE_BASE + (DWORD)i))
+                bits |= 1UL << i;
+        begin("features|");  /* bit n set = IsProcessorFeaturePresent(0x80000000 + n) */
+        put_hex(bits);
+        put(bits >> 27 & 1 ? "|NEON yes" : "|NEON no");
+        put(bits >> 26 & 1 ? "|VFP3 yes" : "|VFP3 no");
+        end_line();
+    }
+
+    if (QueryPerformanceFrequency(&rate) && !rate.HighPart && rate.LowPart >= 100) {
+        counter_rate = rate.LowPart;
+        for (spin_loops = 4096; spin_loops < (1UL << 22); spin_loops *= 2)  /* the short loop sets the size */
+            if (window_ok(spin_ticks(FALSE, spin_loops, 2), counter_rate))
+                break;
+        if (spin_loops >= (1UL << 22))
+            counter_rate = 0;  /* a counter that hardly moves: no clock lines, rather than long loops */
+    }
+    begin(counter_rate ? "counter|" : "counter|not usable for the clock: ");
+    put_uint(rate.LowPart);
+    put(" ticks per s|timing loops of ");
+    put_uint(spin_loops);
+    put(" rounds, ");
+    put_uint(SPIN_CYCLES);
+    put(" cycles apart");
+    end_line();
+    flush();  /* on the car before the power chip is asked */
+
+    code = pmic_tried();
+    begin("pmic|");
+    if (code != PMIC_WORKS || !pmic_open()) {
+        pmic_read = NULL;
+        put("not readable (trial ");
+        put_uint(code);
+        put(")");
+    } else {
+        for (i = 0; i < (int)sizeof(registers); i++) {
+            DWORD value = 0;
+            put(i ? " r" : "r");
+            put_uint(registers[i]);
+            put(" ");
+            if (pmic_read(registers[i], &value) == 0)
+                put_hex(value);
+            else
+                put("?");
+        }
+    }
+    end_line();
+}
+
+/* The clock now. About 20 ms of work with a fine counter, 0.2% of the time between samples. A
+ * coarse counter needs windows of 50 ms and more, so the clock is then taken once a minute, with
+ * two windows a loop: under 1% as well. The work shows in the load line as this program's share. */
+static void sample_clock(void)
+{
+    static int sample;
+    BOOL fine = counter_rate >= 100000;
+    int windows = fine ? 12 : 2;
+    DWORD longer, shorter, value = 0;
+    if (!counter_rate || (!fine && sample++ % 6))
+        return;
+    longer = spin_ticks(TRUE, spin_loops, windows);
+    shorter = spin_ticks(FALSE, spin_loops, windows);
+    begin("clock|about ");
+    put_uint(longer > shorter ? loop_mhz(spin_loops, longer - shorter, counter_rate) : 0);
+    put(" MHz|");
+    put_uint(spin_loops);
+    put(" rounds in ");
+    put_uint(longer);
+    put(" and ");
+    put_uint(shorter);
+    put(" ticks");
+    if (pmic_read && pmic_read(PMIC_SWITCHERS0, &value) == 0) {
+        put("|SW1 normal setting ");  /* which of its three settings is in use is not known */
+        put_uint(sw1_millivolts(value));
+        put(" mV, r24 ");
+        put_hex(value);
+    }
+    end_line();
 }
 
 /* ---- the file list and the copy of Ford's screens, in a thread of their own ---- */
@@ -1110,6 +1369,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
 
     while (*at == L' ')
         at++;
+    if (at[0] == L'p' && at[1] == L'm' && at[2] == L'i' && at[3] == L'c')
+        return pmic_trial();  /* the trial copy that processor_facts() starts */
     while (*at >= L'0' && *at <= L'9')
         seconds = seconds * 10 + (DWORD)(*at++ - L'0');
     while (*at == L' ' || *at == L'"')
@@ -1152,6 +1413,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
     if (load_only) {
         begin("load only|no screen copies, no file copy");
         end_line();
+        processor_facts();
     } else {
         if (in_folder(path, L"\\screens"))
             CreateDirectoryW(path, NULL);
@@ -1165,7 +1427,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
     idle_known = idle_time && idle_time() != 0xFFFFFFFF;
     if (idle_known)
         idle_before = idle_time();
-    last_load = last_heartbeat = started;
+    last_heartbeat = started;
+    last_load = GetTickCount();  /* not `started`: the start-up above is not part of the first sample */
     last_look = started - LOOK_EVERY_MS;  /* the first look at once */
     flush();
 
@@ -1178,6 +1441,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
         if (now - last_load >= LOAD_EVERY_MS) {
             DWORD idle_now = idle_known ? idle_time() : 0;
             sample_load(now - last_load, idle_now - idle_before, idle_known);
+            if (load_only)
+                sample_clock();
             idle_before = idle_now;
             last_load = now;
         }

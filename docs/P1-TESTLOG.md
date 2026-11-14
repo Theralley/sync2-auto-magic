@@ -625,6 +625,31 @@ on the car changes, the undo removes both again, and with AutoKit running the jo
 nothing. The 2 GB stick now carries this undo instead of the screens' undo (`bundle-de93`,
 kept on the Mac). Both jobs install only until 2026-11-17 09:35 UTC.
 
+**Rebuilt the same afternoon, now with measuring.** `akcfg-9b10` and its undo `akcfg-da1b`
+replace the two jobs above, which never ran in the car. Each starts the load logger once its
+settings are in place (`autokit-config --measure`, 30 minutes, written to the car). The logger
+now also records:
+
+- the processor's clock speed, from two timing loops;
+- the normal setting of the core voltage, read from the power chip through Freescale's library
+  on the car, and that chip's other settings, once;
+- what the processor says about itself, with its feature bits (NEON among them).
+
+Inserting the same stick a second time fetches the logs and changes nothing. For that the stick
+carries a stand-in `installed.bin`: SyncExtPack then cannot rename the used `install.bin`, and
+runs it again. **This is read from SyncExtPack's code and has not been seen in the car.** If it
+does not work, the logs stay on the car and a `logger --collect` stick fetches them.
+
+Codex (gpt-6-astra) checked the plan and reviewed the code. Its review found six faults before
+anything reached a stick, all fixed: the first version also read the power chip's measuring
+results, which moves the chip on to its next result under Ford's driver; the voltage was
+labelled as the one in use; and importing a stick between its two visits left it able to run
+with no record of itself. Rehearsed on the simulated car: the change, the second visit, the
+undo, and a first visit with AutoKit still running followed by a second that then does the work.
+
+The first call into Freescale's library is tried in a second copy of the logger. If the library
+is not what we think and that copy dies, the logger and its load log go on without the voltage.
+
 If the picture goes black: Exit, or pull the adapter. On 2026-11-14 AutoKit hid itself at 12:50,
 probably when the adapter came out for the second stick, and the runner guard closed it 2 s
 later. Then use the undo stick.

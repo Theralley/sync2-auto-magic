@@ -331,8 +331,15 @@ def cmd_job(args) -> int:
             if args.lang is not None:  # four bytes, so the file travels in the job folder
                 params["lang"] = args.lang
                 extra = {"lang": autokit_lang_file(AUTOKIT_LANGS[args.lang])}
+        if args.measure is not None:  # the watcher and the load logger travel in the job folder
+            params["measure"] = args.measure
+            extra = {**(extra or {}), "s2amwatch.exe": native.binary("s2amwatch.exe"),
+                     "s2amdrive.exe": native.binary("s2amdrive.exe")}
+            print(f"measure: once the settings are in place it records the processor's load, clock and "
+                  f"core voltage for {args.measure} s, on the car. Insert the same stick again to fetch the logs")
     elif args.kind == "logger" and args.collect:
-        if not Store().job(args.serial, args.collect).get("params", {}).get("load"):
+        measured = Store().job(args.serial, args.collect).get("params", {})
+        if not measured.get("load") and not measured.get("measure"):
             raise ValueError(f"{args.collect} is not a logger --load job")
         params = {"collect": args.collect}
         print(f"collect: copies what {args.collect} wrote on the car to the stick")
@@ -443,6 +450,10 @@ def cmd_stick_prepare(args) -> int:
               "drive and use SYNC as usual (screens change only when parked or by a passenger). "
               "Pull the stick when you are done; the logger stops by itself after "
               f"{job.params.get('seconds', DRIVE_SECONDS)} s")
+    elif job.kind == "akcfg" and job.params.get("measure"):
+        print("in the car: Exit AutoKit, insert the stick, wait for 'Install successfully completed', pull "
+              f"it. It measures for {job.params['measure']} s, writing to the car. Insert the same stick "
+              "once more at the end, and wait for the same message: that fetches the logs")
     elif job.kind == "log" and job.params.get("load"):
         print("in the car: insert the stick, wait for 'Install successfully completed', pull it. The "
               f"logger writes to the car for {job.params.get('seconds', LOAD_SECONDS)} s, so its port "
@@ -834,6 +845,10 @@ def parser() -> argparse.ArgumentParser:
                         help="AutoKit's own language (the stock folder is Chinese); "
                              "on its own it leaves the video settings alone")
     config.add_argument("--restore", metavar="JOB_ID", help="put back what that config job replaced")
+    config.add_argument("--measure", metavar="SECONDS", type=int, nargs="?", const=LOAD_SECONDS,
+                        help="also record the processor's load, clock and core voltage afterwards "
+                             "(default 30 minutes), on the car; the same stick fetches the logs "
+                             "when it is inserted again")
     config.set_defaults(func=cmd_job)
     job_sub.add_parser("snapshot", parents=[common],
                        help="read-only: services, startup entries and USB devices").set_defaults(func=cmd_job)

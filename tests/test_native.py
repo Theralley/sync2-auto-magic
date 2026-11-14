@@ -158,6 +158,14 @@ class Drive(unittest.TestCase):
             "        fwrite(header, 1, 54, out); fwrite(pixels, 1, (size_t)(stride * height), out); fclose(out);",
             "        return 0;",
             "    }",
+            "    if (argc > 1 && strcmp(argv[1], \"clock\") == 0) {",  # clock <rounds> <ticks apart> <per second>
+            "        DWORD loops = (DWORD)strtoul(argv[2], NULL, 10), ticks = (DWORD)strtoul(argv[3], NULL, 10);",
+            "        DWORD rate = (DWORD)strtoul(argv[4], NULL, 10);",
+            "        printf(\"%u %d\\n\", loop_mhz(loops, ticks, rate), window_ok(ticks, rate)); return 0;",
+            "    }",
+            "    if (argc > 1 && strcmp(argv[1], \"sw1\") == 0) {",  # sw1 <register, hex>
+            "        printf(\"%u\\n\", sw1_millivolts((DWORD)strtoul(argv[2], NULL, 16))); return 0;",
+            "    }",
             "    if (argc > 1 && strcmp(argv[1], \"busy\") == 0) {",  # busy <delta> <delta> ...
             "        int i;",
             "        for (i = 2; i < argc; i++) note_busy((DWORD)i, (DWORD)atoi(argv[i]), i, 251, 0);",
@@ -192,6 +200,27 @@ class Drive(unittest.TestCase):
         self.assertEqual(self.run_helper("busy", "3", "9", "5").split(), ["9", "5", "3"])
         deltas = ["4", "1", "9", "2", "7", "6", "8", "3", "5", "10", "0"]
         self.assertEqual(self.run_helper("busy", *deltas).split(), ["10", "9", "8", "7", "6", "5", "4", "3"])
+
+    def test_clock_comes_from_loops_cycles_and_the_counter(self):
+        # 65 cycles a round: 8192 rounds in 887 ticks of a 1 MHz counter is 600 MHz, in 665 ticks 800 MHz
+        # the long loop has 32 more adds a round than the short one, and the difference in time is
+        # theirs alone: 16384 rounds, 874 ticks apart on a 1 MHz counter, is 600 MHz; 655 ticks, 800
+        self.assertEqual(self.run_helper("clock", "16384", "874", "1000000").split(), ["599", "1"])
+        self.assertEqual(self.run_helper("clock", "16384", "655", "1000000").split(), ["800", "1"])
+        # a millisecond counter: 1048576 rounds, 56 ticks apart
+        self.assertEqual(self.run_helper("clock", "1048576", "56", "1000").split(), ["599", "1"])
+        self.assertEqual(self.run_helper("clock", "4096", "49", "1000").split()[1], "0")
+        self.assertEqual(self.run_helper("clock", "4096", "400", "1000000").split()[1], "0")  # 0.4 ms
+        self.assertEqual(self.run_helper("clock", "4096", "0", "1000000").split()[0], "0")
+        # a fast counter must not overflow: 4096 rounds in 29000 ticks of 66.5 MHz
+        self.assertEqual(self.run_helper("clock", "4096", "14500", "66500000").split(), ["601", "0"])
+        self.assertEqual(self.run_helper("clock", "32768", "116000", "66500000").split(), ["601", "1"])
+
+    def test_core_voltage_follows_the_mc13892_table(self):
+        self.assertEqual(self.run_helper("sw1", "000000").strip(), "600")
+        self.assertEqual(self.run_helper("sw1", "000014").strip(), "1100")   # code 20
+        self.assertEqual(self.run_helper("sw1", "0003f2").strip(), "1050")   # other fields ignored
+        self.assertEqual(self.run_helper("sw1", "80001f").strip(), "1375")   # SW1 has no high range
 
     def test_sha256_matches_python_at_every_block_edge(self):
         import hashlib

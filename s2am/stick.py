@@ -3,7 +3,9 @@
 UpdateService renames install.bin to installed.bin after a run, but the rename
 fails when installed.bin already exists, and the same install.bin then runs
 again on the next insertion. So preparing a stick moves every earlier
-UpdateService file out of the way first.
+UpdateService file out of the way first. A job that measures uses that on purpose:
+its stick gets a stand-in installed.bin (STAY), so it runs again when it is inserted
+again, and that second run only fetches the logs.
 
 Everything read back from a stick is untrusted: job ids and serials are
 validated, and symlinks anywhere in what we read are refused.
@@ -23,6 +25,9 @@ UPDATER_DIR = "SyncExtPack"
 # on a job stick would let the wallpaper picker reinstall the base pack by accident.
 UPDATER_FILES = ("install.bin", "installed.bin", "install_log.txt", "pack_install.bin",
                  "Installer.jpg", "UpdateInstaller.dll", "update.bin")
+# Stands in for installed.bin on the stick of a job that measures (read from UpdateService's
+# code, see docs/TOOLKIT-PLAN.md; not yet seen in the car).
+STAY = b"s2am: this file keeps install.bin in place, so the same stick runs again and fetches the logs\r\n"
 STOPPED = {"stale.txt": "stale", "busy.txt": "busy", "backup-failed.txt": "failed",
            "rollback-failed.txt": "rollback-failed",
            "backup-missing.txt": "failed", "copy-failed.txt": "failed", "payload-bad.txt": "failed",
@@ -65,6 +70,8 @@ def prepare(stick: Path, install_bin: Path, job: Job, require_volume: bool = Tru
             archive.mkdir(parents=True, exist_ok=True)
             shutil.move(str(old), str(archive / name))
     shutil.copy2(install_bin, updater / "install.bin")
+    if runs_again(job):
+        (updater / "installed.bin").write_bytes(STAY)
     pending = stick / "s2am" / "pending"
     pending.mkdir(parents=True, exist_ok=True)
     # Only one job fits on a stick; an older one that never ran is superseded.
@@ -78,9 +85,23 @@ def prepare(stick: Path, install_bin: Path, job: Job, require_volume: bool = Tru
     return archive
 
 
+def runs_again(job: Job) -> bool:
+    """A job that measures: its second run on the car fetches what the first one started."""
+    return job.kind == "akcfg" and job.params.get("measure") is not None
+
+
+def _used(updater: Path) -> bool:
+    """UpdateService renamed install.bin after a run (the stand-in is ours, not a run's)."""
+    used = updater / "installed.bin"
+    return used.exists() and not (used.is_file() and used.read_bytes() == STAY)
+
+
 def differences(stick: Path, install_bin: Path, job: Job) -> list[str]:
     """What on the stick does not read back as prepare wrote it: install.bin and the job records."""
     wrong = []
+    stand_in = stick / UPDATER_DIR / "installed.bin"
+    if runs_again(job) and not (stand_in.is_file() and stand_in.read_bytes() == STAY):
+        wrong.append("installed.bin")
     if not (stick / UPDATER_DIR / "install.bin").is_file() or \
             (stick / UPDATER_DIR / "install.bin").read_bytes() != install_bin.read_bytes():
         wrong.append("install.bin")
@@ -104,8 +125,9 @@ def _status(report: Path, updater: Path) -> tuple[str, bool]:
     for marker, status in STOPPED.items():
         if (report / marker).is_file():
             return status, False
-    if (updater / "installed.bin").exists():
-        return "processed-no-report", False
+    stand_in = updater / "installed.bin"
+    if _used(updater) or (stand_in.is_file() and (updater / "install_log.txt").exists()):
+        return "processed-no-report", False  # with the stand-in, UpdateService's log shows the run
     if (updater / "install.bin").exists():
         return "pending", False
     return "unknown", False
@@ -166,4 +188,9 @@ def import_reports(stick: Path, store: Store, require_volume: bool = True) -> li
         if status != "pending":
             imported.mkdir(parents=True, exist_ok=True)
             shutil.move(str(path), str(imported / path.name))
+            if runs_again(job) and not _used(updater) and (updater / "install.bin").is_file():
+                # Its record has left the stick, so the stick must not run again: it could no
+                # longer tell which stick it is, and nothing it did would be imported.
+                (updater / "installed.bin").unlink(missing_ok=True)
+                (updater / "install.bin").rename(updater / "installed.bin")
     return results
