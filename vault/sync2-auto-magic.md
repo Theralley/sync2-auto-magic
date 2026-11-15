@@ -35,9 +35,28 @@ The PMIC and registry helpers compiled on `ant-srv-001` with warnings as errors 
 ARM/COREDLL-only checks. Eight PMIC tests, nine registry tests and three native binary checks
 pass; the optional Docker build test was skipped locally. Review found and fixed interrupted
 snapshot overwrite and oversized completion-marker acceptance. No full CI or car test ran.
-Both jobs were staged locally without install packs; neither USB stick was changed.
+The standalone jobs were initially staged without install packs. A subsequent one-stick
+request produced the combined diagnostic described below.
 
 The bounded advisory review completed with `codex + agy`, no skipped providers. The synthesis
 rejects speculative memory-scaling factors and an unsupported decoder-demand upper bound;
 target performance still needs car measurement. See the finalized
 [consultation](multi-consult/c5f58d8b-a1b5-4561-8b5e-69b359e1cb8f.md).
+
+## Combined capture prepared November 15
+
+`s2am job clock` runs the same two readers in one install, with one report folder and no reboot.
+It captures Drivers, Services, System, Init and Platform to depth 8, while retaining separate
+completion checks. Three combined-job tests and the existing eight PMIC/nine registry tests
+pass. Three independent reviewers found no blockers; misleading overall wait wording was fixed.
+
+Job `20261115-214729-clock-9792` was packed on `ant-srv-001`: 180,968 bytes, six payload files,
+all byte-identical after unpacking. The pack and a Swedish instruction were written to the
+identified SanDisk SYNC stick after backing up 665 existing files. The first read-back matched.
+The earlier decoder package and instruction were archived; the second stick was not changed.
+This pack must be used before November 17, 2026, 10:35 Swedish time.
+
+The final check after remount remains pending: macOS loginwindow refused a normal unmount;
+after a successful forced unmount the SanDisk device disappeared before it could be remounted.
+Reconnect that stick, verify the existing package and instruction, then eject. Do not rebuild
+or rewrite merely to resume verification. No car result is available yet.
