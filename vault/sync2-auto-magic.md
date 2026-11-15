@@ -11,12 +11,33 @@ The November 15 registry capture does not establish that custom kernel code is t
 
 ## Implementation and verification
 
-Local commit `6d9e3dc` on `fix/clock-evidence` retains bounded, validated driver references while preserving credential filtering and corrects `docs/PERFORMANCE.md`. Nine focused registry tests pass, including malformed input and credential cases. Independent security, performance and tests reviews found no blocking issues. Windows CE compilation and a car run are outstanding; no clock-change implementation or new USB job was produced. Full CI was not run for this experimental development change.
+Commit `6d9e3dc` on `fix/clock-evidence` retains bounded, validated driver references while preserving credential filtering and corrects `docs/PERFORMANCE.md`. Nine focused registry tests pass, including malformed input and credential cases. Independent security, performance and tests reviews found no blocking issues. Both the corrected registry reader and the subsequent PMIC helper now compile for Windows CE; car validation remains outstanding. No clock-change implementation is available. Full CI was not run for this experimental development change.
 
 ## Next evidence
 
-Build and validate the updated registry reader before another capture. Record per-file attributes and copy errors before attributing missing files to ROM. Check actual Ford driver interfaces against the Freescale reference BSP; a documented reference interface does not prove that Ford ships it.
+Run the staged PMIC diagnostic and corrected driver-registry capture in the car. Record per-file attributes and copy errors before attributing missing files to ROM. Check actual Ford driver interfaces against the Freescale reference BSP; a documented reference interface does not prove that Ford ships it.
 
 Reference: [Freescale i.MX51 CE 6.0 BSP manual, chapters 7 and 9](https://community.nxp.com/pwmxy87654/attachments/pwmxy87654/imx-processors/9897/1/481-WCE600_MX51_ER_1104_ReferenceManual.pdf).
 
-This documentation branch contains only the investigation record. The implementation remains local.
+## Further investigation and PMIC diagnostic
+
+The follow-up is documented in [CLOCK-METHOD.md](../docs/CLOCK-METHOD.md). Existing reference
+DVFC interfaces select compiled operating points; driver discovery alone does not establish
+700 MHz support. The observed 58% AutoKit share is delivered CPU time under saturation, not
+its unconstrained demand. No clock-change command or tested target frequency is available.
+
+An ordinary application now reads identification and SW1 presets through the existing `PMI1:`
+driver, using the reference Freescale read ABI. It checks identity before reading SW1 and has
+no hardware-write interface. Normal/DVS/standby presets do not identify the active voltage.
+Ford ABI compatibility and hardware behavior remain unverified.
+
+The PMIC and registry helpers compiled on `ant-srv-001` with warnings as errors and passed CE
+ARM/COREDLL-only checks. Eight PMIC tests, nine registry tests and three native binary checks
+pass; the optional Docker build test was skipped locally. Review found and fixed interrupted
+snapshot overwrite and oversized completion-marker acceptance. No full CI or car test ran.
+Both jobs were staged locally without install packs; neither USB stick was changed.
+
+The bounded advisory review completed with `codex + agy`, no skipped providers. The synthesis
+rejects speculative memory-scaling factors and an unsupported decoder-demand upper bound;
+target performance still needs car measurement. See the finalized
+[consultation](multi-consult/c5f58d8b-a1b5-4561-8b5e-69b359e1cb8f.md).
