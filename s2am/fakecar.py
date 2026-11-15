@@ -11,8 +11,8 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from .job import (AUTOKIT_CE, AUTOKIT_LOGS, AUTOKIT_MODULES, BACKUP_DIR, GUARD_LOG, INVENTORY_ROOT, LOAD_LOGS,
-                  MENU_XML, load_folder,
+from .job import (AUTOKIT_CE, AUTOKIT_LOGS, AUTOKIT_MODULES, BACKUP_DIR, BOOST_STUCK_OFF, BOOST_STUCK_ON,
+                  BOOST_STUCK_WRITE, GUARD_BOOST, GUARD_LOG, INVENTORY_ROOT, LOAD_LOGS, MENU_XML, load_folder,
                   PHASE_DIR, PLUGINS_MASK, REPORTS_DIR, SWAP_KINDS, TOOLS_CE, Job, bundle_parts,
                   ce_path, swap_target)
 
@@ -29,6 +29,7 @@ class FakeCar:
         self.autokit_running = False
         self.running: set[str] = set()  # lower-case process names
         self.broken_copies: set[str] = set()  # lower-case CE paths whose Copy silently fails
+        self.stuck_files: set[str] = set()  # lower-case CE paths whose Delete silently fails
         self.registry: dict[str, dict[str, str]] = {}  # "HKLM\\Services\\X" -> values
         self.watch_lines: list[str] = ["12:00:00.000|start|s2am watch|seconds 180|toolhelp 1",
                                        "12:00:00.010|proc+|57|AutoKit.exe|threads 9", "12:03:00.000|end"]
@@ -45,6 +46,7 @@ class FakeCar:
             "T|complete|2 keys|3 values|1 not copied"]
         self.power_cut_after_phase = False
         self.native_runs = True  # does a CeGCC program start on this car? (test knob)
+        self.thread_priority = True  # does the guard's self-test find the boost's thread functions?
         root.mkdir(parents=True, exist_ok=True)
 
     # Paths -----------------------------------------------------------------
@@ -195,6 +197,8 @@ class FakeCar:
         guard_log = self._resolve(GUARD_LOG)
         if guard_log.exists():
             shutil.copyfile(guard_log, out / "guard.log")
+        if self.exists(GUARD_BOOST):
+            shutil.copyfile(self._resolve(GUARD_BOOST), out / "guard-boost.txt")
         for name in AUTOKIT_LOGS:
             if self._resolve(f"{AUTOKIT_CE}\\{name}").exists():
                 shutil.copyfile(self._resolve(f"{AUTOKIT_CE}\\{name}"), out / f"autokit-{name}")
@@ -436,7 +440,8 @@ class FakeCar:
                 (out / "selftest-failed.txt").write_text("did not run")
                 return False
             (out / "guard-selftest.txt").write_text("s2amrun ok|s2am runner guard|toolhelp 1|"
-                                                    "processes 40|desktop 1|desktop_visible 1\r\n")
+                                                    "processes 40|desktop 1|desktop_visible 1|background 1|"
+                                                    f"priority {int(self.thread_priority)}\r\n")
             if original.exists() and size(original) != stock:
                 if size(runner) != stock:
                     (out / "backup-bad.txt").write_text("neither is the stock runner")
@@ -448,6 +453,8 @@ class FakeCar:
                     return False
                 shutil.copyfile(runner, original)
             shutil.copyfile(self._resolve(ce_path(job.job_dir)) / "s2amrun.exe", runner)
+            if job.params.get("boost") is not None:
+                return self._guard_boost(out, job.params["boost"])
         elif original.exists():
             if size(original) != stock:
                 (out / "backup-bad.txt").write_text("damaged keep")
@@ -456,7 +463,45 @@ class FakeCar:
             original.unlink()
         else:
             (out / "guard-was-off.txt").write_text("off")
+        boost = self._resolve(GUARD_BOOST)  # off: after the runner, as the script does
+        if job.params["action"] == "disable" and boost.exists():
+            shutil.copyfile(boost, out / "guard-boost-before.txt")
+            return self._remove_boost(out, BOOST_STUCK_OFF)
         return True
+
+    def _guard_boost(self, out: Path, level: int) -> bool:
+        """The boost steps of a runner-guard job: write the level (or remove it with 0), checked."""
+        boost = self._resolve(GUARD_BOOST)
+        if boost.exists():
+            shutil.copyfile(boost, out / "guard-boost-before.txt")
+        if level:
+            boost.parent.mkdir(parents=True, exist_ok=True)
+            self._copy_text(str(level).encode(), boost)
+            if boost.read_bytes() != str(level).encode():
+                if self._remove_boost(out, BOOST_STUCK_WRITE, keep=True):
+                    (out / "copy-failed.txt").write_text("the boost did not write; the guard is on, "
+                                                         "without the boost")
+                return False
+        elif boost.exists():
+            return self._remove_boost(out, BOOST_STUCK_ON)
+        return True
+
+    def _remove_boost(self, out: Path, stuck: str, keep: bool = False) -> bool:
+        """Delete the boost file, checked; a stuck one stops the job (job._remove_boost)."""
+        boost = self._resolve(GUARD_BOOST)
+        if self._ce(boost).lower() not in self.stuck_files:
+            boost.unlink()
+            return True
+        if keep:
+            shutil.copyfile(boost, out / "guard-boost.txt")
+        (out / "copy-failed.txt").write_text(stuck)
+        return False
+
+    def _copy_text(self, data: bytes, target: Path) -> None:
+        """MortScript WriteFile; a broken target ends up truncated, like Copy (test knob)."""
+        if self._ce(target).lower() in self.broken_copies:
+            data = data[: len(data) // 2]
+        target.write_bytes(data)
 
     def _snapshot(self, out: Path) -> None:
         lines = []

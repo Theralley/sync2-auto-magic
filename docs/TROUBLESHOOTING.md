@@ -41,12 +41,34 @@ That brought SYNC back every time. Last resort: engine off, lock the car, wait 1
     itself all count as usable, so it never acts over them, nor on an app still starting.
   - It then sends the app WM_CLOSE. If nothing becomes usable within 2 s, it ends the app,
     and the launcher gives the screen back.
+  - **Written 2026-11-15, not yet in the car:** it also closes an app that has had no visible
+    window of its own for 5 s, whatever else is on the screen, in the same way. Here the app
+    counts as back only if its own window shows again. This closes the hole found on
+    2026-11-15: after Exit the installer's window came up within 2 s, so the screen was never
+    empty, the hidden AutoKit kept running, and SYNC's CarPlay button did nothing until SYNC
+    restarted. Its log line starts with `hidden|`. Only a window of the app's own starts the
+    5 s again: a window of something else that stops the first rule's close does not.
+  - Each close looks at the screen once more and sends WM_CLOSE only after that look found the
+    app still hidden, to the windows that look found. A close that cannot be done (no handle
+    for the app, or the system refuses the wait or the end) is never taken for an end: the
+    rule tries again once it holds again, and SYNC gets the screen back as below. The log
+    says `close|not possible`, `close|failed` or `terminate|refused`.
+  - Tapping the app's icon again while it runs, and SYNC's parking screen, show SYNC over the
+    app without hiding the app's window (read from the launcher's code), so neither rule
+    closes an app that is only behind SYNC.
   - If SYNC still stays hidden after that, the guard gives it back itself, using the
-    launcher's own steps.
+    launcher's own steps. It does so once for each freeze: once the screen is usable again, a
+    later freeze gets its own.
+  - If the guard cannot wait for the app's process, it keeps treating the app as running and
+    keeps watching. The log then says `error|cannot wait for the app` once, with the error.
   - SyncExtPack's launcher is recognised by its exact size. A damaged backup is rebuilt, and a
     launcher it does not recognise is never replaced.
   - It logs to `\SyncExtendedPack\_s2am\guard.log`; `s2am status` shows the last lines.
   - Undo: `s2am job runner-guard --off`.
+  - Optional, off unless asked for: `--boost` lets CarPlay's video run ahead while CarPlay is
+    alone on the screen ([PERFORMANCE.md](PERFORMANCE.md)). It does so only while the guard
+    holds a handle for AutoKit's process, which is how it knows when AutoKit has ended.
+    `--boost off` turns only that off; `--off` takes it away with the guard.
 - **History:** the first guard (7bf95ed) did nothing in the car, for two reasons found in the
   watch log: the app plugins pass the path with **forward slashes**
   (`/SyncExtendedPack/Apps/Media/AutoKit/AutoKit.exe`), which it did not split, so it never

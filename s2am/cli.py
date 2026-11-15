@@ -19,6 +19,7 @@
     s2am native build                            build the WinCE helpers (CeGCC in Docker)
     s2am job native-hello --serial S             prove compiled code runs on this SYNC 2
     s2am job runner-guard --serial S [--off]     fix the frozen screen after leaving an app
+    s2am job runner-guard --boost 251|off ...    more processor for CarPlay's video (optional, untried)
     s2am stick prepare /Volumes/STICK --job DIR  put that job on a stick
     s2am stick import /Volumes/STICK             read back what the car wrote
     s2am status --serial XXXXXXXX                apps, plugins and menu from the last report
@@ -36,8 +37,8 @@ from pathlib import Path
 
 from . import apps, autokit, bootstrap, diskcheck, native, pack, stick, theme, window
 from .container import REPO, ContainerError
-from .job import (AUTOKIT_CE, AUTOKIT_LANGS, AUTOKIT_MODULES, DRIVE_SECONDS, LOAD_SECONDS, REGISTRY_ROOTS,
-                  REGISTRY_WAIT_S,
+from .job import (AUTOKIT_CE, AUTOKIT_LANGS, AUTOKIT_MODULES, BOOST_LEVELS, DRIVE_SECONDS, LOAD_SECONDS,
+                  REGISTRY_ROOTS, REGISTRY_WAIT_S,
                   SCREENS, SERIAL, STARTUP_SCREENS, SWAP_KINDS, Job, autokit_lang_file, bundle_parts, stage)
 from .state import Store, diff, parse_inventory
 
@@ -373,6 +374,15 @@ def cmd_job(args) -> int:
             extra = {"s2amrun.exe": native.binary("s2amrun.exe")}
             if len(extra["s2amrun.exe"]) == stock:  # the job tells them apart by size
                 raise ValueError("the guard is exactly the size of the stock runner; change s2amrun.c")
+        if args.boost == "off":
+            params["boost"] = 0
+            print("boost off: the guard stays on; the app's threads keep the priorities it gives them")
+        elif args.boost:
+            params["boost"] = int(args.boost)
+            where = {251: "still below Ford's screens (250)", 250: "level with Ford's screens (250)"}
+            print(f"boost {args.boost}: while the app is alone on the screen, its threads at priority 252 "
+                  f"(AutoKit's video) run at {args.boost}, {where[params['boost']]}. Test calls, climate "
+                  "and the parking sensors with CarPlay open. Undo: --boost off (or --off for the whole guard)")
     elif args.kind == "theme":
         params, extra = theme.plan(Store(), args.serial, args.preset, args.source, args.restore, args.fetch)
         if params.get("restore"):
@@ -535,6 +545,12 @@ def _guard_on(entries) -> bool:
     return any(e.path.lower().endswith("\\tools\\syncappsrunner.orig.exe") for e in entries)
 
 
+def _guard_boost(report: Path | None) -> str | None:
+    """What the car's boost file held when the report was written (every inventory copies it)."""
+    path = report / "guard-boost.txt" if report else None
+    return path.read_text(errors="replace").strip() if path and path.is_file() else None
+
+
 def _verify_guard(store: Store, record: dict) -> str:
     """Check the runner guard's state after a runner-guard job, from its own report."""
     report = store.report(record["serial"], record["id"])
@@ -542,12 +558,26 @@ def _verify_guard(store: Store, record: dict) -> str:
     if not inventory or not inventory.is_file():
         return "not verified: the report has no inventory"
     on = _guard_on(parse_inventory(inventory.read_text(errors="replace")))
+    boost, now = record["params"].get("boost"), _guard_boost(report)
     if record["params"].get("action") == "enable":
         selftest = report / "guard-selftest.txt"
         seen = selftest.read_text(errors="replace").strip() if selftest.is_file() else "none"
-        return (f"verified: runner guard is on (self-test: {seen})" if on else
-                "NOT verified: the original runner was not kept, so the guard is not on")
-    return "verified: runner guard is off" if not on else "NOT verified: the guard is still on"
+        if not on:
+            return "NOT verified: the original runner was not kept, so the guard is not on"
+        if boost and now != str(boost):
+            return f"NOT verified: the guard is on, but its boost file holds {now!r}, not {boost}"
+        if boost == 0 and now is not None:
+            return f"NOT verified: the guard is on, but its boost file is still there ({now!r})"
+        verdict = f"verified: runner guard is on (self-test: {seen})"
+        if boost and "|priority 1" not in seen:
+            return verdict + f", boost {boost} written, but this SYNC lacks a thread function: it will not act"
+        if boost is None:  # the job left the boost as it was
+            return verdict + (f", boost {now} as before" if now else "")
+        return verdict + (f", boost {boost}" if boost else ", boost off")
+    if on:
+        return "NOT verified: the guard is still on"
+    return "verified: runner guard is off" if now is None else \
+        "NOT verified: the guard is off, but its boost file is still there"
 
 
 def _verify_menu(store: Store, record: dict) -> str:
@@ -613,8 +643,9 @@ def cmd_status(args) -> int:
     print(f"  menu: {', '.join(menu) or 'missing from the report (SyncApps.xml not copied)'}")
     print(f"  AutoKit audio modules: {autokit_variant(entries)}")
     print(f"  AutoKit video: {autokit_settings(store.report(args.serial, job_id), entries)}")
+    boost = _guard_boost(store.report(args.serial, job_id))
     print(f"  runner guard (fixes the freeze when leaving an app): "
-          f"{'on' if _guard_on(entries) else 'off'}")
+          f"{('on' + (f', boost {boost}' if boost else '')) if _guard_on(entries) else 'off'}")
     guard_log = store.report(args.serial, job_id) / "guard.log"
     if guard_log.is_file():
         lines = guard_log.read_text(errors="replace").strip().splitlines()
@@ -873,7 +904,13 @@ def parser() -> argparse.ArgumentParser:
     guard = job_sub.add_parser("runner-guard", parents=[common],
                                help="stop the frozen screen after leaving an app (keeps the stock "
                                     "runner for --off)")
-    guard.add_argument("--off", action="store_true", help="put the original runner back")
+    guard_mode = guard.add_mutually_exclusive_group()
+    guard_mode.add_argument("--off", action="store_true",
+                            help="put the original runner back (the boost goes with the guard)")
+    guard_mode.add_argument("--boost", choices=[*map(str, BOOST_LEVELS), "off"], metavar="LEVEL",
+                            help="also run the app's lowest-priority threads (AutoKit's video, 252) at "
+                                 "LEVEL (250 or 251) while it is alone on the screen; 'off' turns "
+                                 "only the boost off. Without it the boost stays as it is")
     guard.set_defaults(func=cmd_job)
     colours = job_sub.add_parser("theme", parents=[common],
                                  help="change SYNC's colours (Theme.XML and the four area gradients), "

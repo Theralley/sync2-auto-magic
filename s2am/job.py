@@ -38,6 +38,12 @@ MENU_XML = "\\8inchSkins\\Ford\\Sync\\Apps\\Info\\SyncApps\\SyncApps.xml"
 AUTOKIT_CE = "\\SyncExtendedPack\\Apps\\Media\\AutoKit"
 TOOLS_CE = "\\SyncExtendedPack\\Apps\\Tools"
 GUARD_LOG = "\\SyncExtendedPack\\_s2am\\guard.log"
+# The runner guard's boost (s2amrun.c): the level the app's threads at 252 run at while it is
+# alone on the screen. Absent = no boost. Every inventory copies it, so status can show it.
+GUARD_BOOST = "\\SyncExtendedPack\\_s2am\\guard-boost.txt"
+# 252 is AutoKit's video thread; Ford's Desktop.exe runs at 250. Never above it: a busy video there
+# could keep Ford's screens from ever showing the window that ends the boost.
+BOOST_LEVELS = (250, 251)
 DRIVE_SECONDS = 4 * 3600  # s2amdrive.exe and s2amwatch.exe stop by themselves after this
 LOAD_SECONDS = 1800  # logger --load: long enough for each screen and CarPlay in turn
 LOAD_DIR = "\\SyncExtendedPack\\_s2am\\load"  # logger --load writes here, so the stick can leave
@@ -219,6 +225,9 @@ def _inventory() -> list[str]:
         "EndIf",
         f"If (FileExists({_quote(GUARD_LOG)}))",
         f'  Copy({_quote(GUARD_LOG)}, out & "\\guard.log", TRUE)',
+        "EndIf",
+        f"If (FileExists({_quote(GUARD_BOOST)}))",
+        f'  Copy({_quote(GUARD_BOOST)}, out & "\\guard-boost.txt", TRUE)',
         "EndIf",
         *[line for name in AUTOKIT_LOGS for line in (  # AutoKit's own log
             f'If (FileExists({_quote(AUTOKIT_CE + chr(92) + name)}))',
@@ -522,14 +531,20 @@ def guard_script(job: Job) -> str:
     its self-test on the car. The stock runner is kept as SyncAppsRunner.orig.exe, and a
     damaged keep (say a power cut mid-copy) is rebuilt from the live runner when that is
     still the stock one. Only then is the guard copied over SyncAppsRunner.exe, checked by size.
-    Off: a good keep goes back. Neither runs while an app is open, since the runner's
-    file is in use then.
+    Off: a good keep goes back, and the boost file goes with it. Neither runs while an app
+    is open, since the runner's file is in use then.
+
+    ``boost`` (on only): a level from BOOST_LEVELS writes the guard's boost file once the
+    guard is in place, 0 removes it; without it the boost stays as it is.
     """
     action, stock = job.params.get("action"), job.params.get("stock_size")
+    boost = job.params.get("boost")
     if action not in ("enable", "disable"):
         raise ValueError(f"invalid runner guard action {action!r}")
     if not isinstance(stock, int) or not 1024 <= stock <= 1024 * 1024:
         raise ValueError(f"invalid size of the stock runner {stock!r}")
+    if boost is not None and (action != "enable" or isinstance(boost, bool) or boost not in (0, *BOOST_LEVELS)):
+        raise ValueError(f"invalid runner guard boost {boost!r}")
     runner, original = "tools & \"\\SyncAppsRunner.exe\"", "tools & \"\\SyncAppsRunner.orig.exe\""
     guard = f'{_quote(ce_path(job.job_dir))} & "\\s2amrun.exe"'
     lines = _header(job) + [
@@ -581,6 +596,8 @@ def guard_script(job: Job) -> str:
             *_stop("copy-failed.txt", "the guard did not copy; the original runner was put back", "  "),
             "EndIf",
         ]
+        if boost is not None:  # only once the guard is in place
+            lines += _boost_lines(boost)
     else:
         lines += [
             f"If (FileExists({original}))",
@@ -596,8 +613,61 @@ def guard_script(job: Job) -> str:
             "Else",
             '  WriteFile(out & "\\guard-was-off.txt", "the runner guard was not on")',
             "EndIf",
+            # After the runner, not before: --off must take the guard, and with it every effect
+            # of the boost, away even when the file is stuck. The stock runner never reads it.
+            f"If (FileExists({_quote(GUARD_BOOST)}))",
+            f'  Copy({_quote(GUARD_BOOST)}, out & "\\guard-boost-before.txt", TRUE)',
+            *_remove_boost(BOOST_STUCK_OFF, "  "),
+            "EndIf",
         ]
     return _script(lines + _inventory() + _footer(job))
+
+
+def _boost_lines(boost: int) -> list[str]:
+    """Set the guard's boost (``boost`` from BOOST_LEVELS) or take it away (0), checked on the
+    car. What was there before goes to the report as guard-boost-before.txt; the inventory
+    then copies what is there now. The guard reads the file each time it starts an app."""
+    bf = _quote(GUARD_BOOST)
+    if boost:
+        return [
+            f"If (FileExists({bf}))",
+            f'  Copy({bf}, out & "\\guard-boost-before.txt", TRUE)',
+            "EndIf",
+            'MkDir("\\SyncExtendedPack\\_s2am")',
+            f'WriteFile({bf}, "{boost}")',
+            f'If (ReadFile({bf}) ne "{boost}")',
+            *_remove_boost(BOOST_STUCK_WRITE, "  ", keep=True),
+            *_stop("copy-failed.txt", "the boost did not write; the guard is on, without the boost", "  "),
+            "EndIf",
+        ]
+    return [
+        f"If (FileExists({bf}))",
+        f'  Copy({bf}, out & "\\guard-boost-before.txt", TRUE)',
+        *_remove_boost(BOOST_STUCK_ON, "  "),
+        "EndIf",
+    ]
+
+
+# What each job says when the boost file will not go (MortScript's Delete reports nothing).
+BOOST_STUCK_ON = "the boost file could not be removed: the guard is on, and the boost stays on"
+BOOST_STUCK_WRITE = ("the boost did not write, and its file could not be removed: the guard is on, "
+                     "and uses the file (copied as guard-boost.txt) only if it holds 250 or 251")
+BOOST_STUCK_OFF = ("the guard is off (the original runner is in place), but its boost file could not be "
+                   "removed: it does nothing without the guard, but turning the guard on again "
+                   "without --boost would bring the boost back")
+
+
+def _remove_boost(stuck: str, indent: str, keep: bool = False) -> list[str]:
+    """Delete the boost file and stop with ``stuck`` if it is still there (``keep``: copy what
+    it holds to the report first)."""
+    bf = _quote(GUARD_BOOST)
+    return [
+        f"{indent}Delete({bf})",
+        f"{indent}If (FileExists({bf}))",
+        *([f'{indent}  Copy({bf}, out & "\\guard-boost.txt", TRUE)'] if keep else []),
+        *_stop("copy-failed.txt", stuck, indent + "  "),
+        f"{indent}EndIf",
+    ]
 
 
 def snapshot_script(job: Job) -> str:

@@ -17,7 +17,9 @@ sys.path.insert(0, str(ROOT))
 
 from s2am import apps, cli, mortscript, native, stick  # noqa: E402
 from s2am.fakecar import FakeCar  # noqa: E402
-from s2am.job import MENU_XML, TOOLS_CE, Job, guard_script  # noqa: E402
+from s2am.state import Store  # noqa: E402
+from s2am.job import (BOOST_LEVELS, BOOST_STUCK_OFF, BOOST_STUCK_ON, BOOST_STUCK_WRITE, GUARD_BOOST,  # noqa: E402
+                      MENU_XML, TOOLS_CE, Job, guard_script)
 
 UPSTREAM = ROOT.parent / "syncextpack"
 HAVE_UPSTREAM = (UPSTREAM / "FullPack").is_dir()
@@ -32,11 +34,27 @@ COMMANDS = ["/SyncExtendedPack/Apps/Media/AutoKit/AutoKit.exe",  # as AutoKitPlu
             '"/Storage Card/My Apps/App.exe" -x', "  App.exe arg"]
 
 
+def function(name):
+    """One C function of s2amrun.c, from its first line to its closing brace."""
+    start = re.search(rf"^\w[\w ]*?\**\b{name}\(", SOURCE, re.M).start()
+    return SOURCE[start:SOURCE.index("\n}\n", start) + 3]
+
+
+def build(work: Path, parts: list[str]) -> Path:
+    """Compile pieces of s2amrun.c with the Mac's compiler, as plain C; returns the program."""
+    (work / "part.c").write_text("\n".join(["#include <stdio.h>", "#include <stdlib.h>", "#include <string.h>",
+                                            "typedef int BOOL;", "#define TRUE 1", "#define FALSE 0",
+                                            *parts]))
+    subprocess.run(["cc", "-Wall", "-Wextra", "-Werror", "-o", str(work / "part"), str(work / "part.c")],
+                   check=True, capture_output=True)
+    return work / "part"
+
+
 class Source(unittest.TestCase):
     """The guard must repeat the stock runner's own steps; these come from its disassembly."""
 
     def test_gives_the_screen_back_like_the_stock_runner(self):
-        show = SOURCE[SOURCE.index("static void show_sync"):SOURCE.index("static BOOL close_app")]
+        show = function("show_sync")
         order = [show.index(s) for s in ('L"SYNC_DESKTOP_SHOW_UI"', "ShowWindow(desktop, SW_SHOW)",
                                          "SetForegroundWindow", 'L"show"', 'L"HandleShow"')]
         self.assertEqual(order, sorted(order))
@@ -47,38 +65,71 @@ class Source(unittest.TestCase):
         self.assertNotIn("SyncAppsRunnerMutex", SOURCE)  # the original must still see itself as first
 
     def test_never_closes_an_app_that_has_not_shown_a_window(self):
-        rule = re.search(r"hidden = \((.*?)\)", SOURCE).group(1)
-        self.assertIn("shown", rule)
+        for counter in ("hidden", "unseen"):
+            rule = re.search(rf"rules->{counter} = \((.*?)\) \?", SOURCE).group(1)
+            self.assertIn("rules->shown && app && !vis", rule)
 
-    def test_acts_only_when_nothing_usable_is_on_the_screen(self):
-        # both rules need the empty screen: no visible window but SYNC's shell background
-        self.assertIn("empty", re.search(r"hidden = \((.*?)\)", SOURCE).group(1))
-        self.assertIn("empty", re.search(r"gone = \((.*)\) \?", SOURCE).group(1))
+    def test_the_stuck_rule_acts_only_when_nothing_usable_is_on_the_screen(self):
+        # no visible window but SYNC's shell background, as before the hidden rule
+        self.assertIn("others == 0", re.search(r"rules->hidden = \((.*?)\) \?", SOURCE).group(1))
+        self.assertIn("!usable", re.search(r"gone = \((.*)\) \?", SOURCE).group(1))
+        self.assertIn("BOOL usable = !empty || ", function("restore_step"))
         self.assertIn("empty = !vis && scan.others == 0;", SOURCE)
-        close = SOURCE[SOURCE.index("static BOOL close_app"):SOURCE.index("/* The app's file name")]
-        self.assertLess(close.index("nothing_on_screen(pid)"), close.index("TerminateProcess"))
+
+    def test_the_hidden_rule_counts_only_the_apps_own_window(self):
+        # issue 2: the installer's window (or SYNC) on the screen must not keep a hidden app alive
+        self.assertNotIn("others", re.search(r"rules->unseen = \((.*?)\) \?", SOURCE).group(1))
+        self.assertIn('note("hidden", "no window of the app on the screen for 5 s, closing pid ", watched.pid);',
+                      SOURCE)
+        self.assertIn("#define HIDDEN_TICKS 5 ", SOURCE)  # the log line says 5 s
+
+    def test_both_closes_go_through_the_same_steps(self):
+        cases = SOURCE[SOURCE.index("switch (judge("):]
+        cases = cases[:cases.index("default:")]
+        self.assertLess(cases.index("case CLOSE_STUCK:"), cases.index("close_app(watched.process, watched.pid, FALSE)"))
+        self.assertLess(cases.index("case CLOSE_HIDDEN:"), cases.index("close_app(watched.process, watched.pid, TRUE)"))
+        self.assertEqual(cases.count("judge_after_close(&rules, outcome);"), 2)
+        # every look's outcome, a close or none, goes to the restore step (run in Restore)
+        loop = SOURCE[SOURCE.index("for (;;) {"):]
+        self.assertLess(loop.index("outcome = NOT_BACK;"), loop.index("switch (judge("))
+        self.assertLess(loop.index("default:"),
+                        loop.index("act = restore_step(&restore, app, vis, empty, outcome, runner_done);"))
+        self.assertNotIn("PostMessageW", function("scan_window"))  # a look only collects (review C)
 
     def test_the_background_is_the_one_measured_in_the_car(self):
         # s2amwatch, 2026-10-30: after AutoKit's Exit only mishell.exe's window stayed visible
         self.assertIn('#define BACKGROUND_CLASS L"DesktopExplorerWindow"', SOURCE)
 
     def test_a_new_app_instance_starts_with_a_clean_state(self):
-        # a quick relaunch after a terminate must not inherit "killed" (Codex review)
-        adopt = SOURCE[SOURCE.index("DWORD found = find_process(name, NULL);"):]
-        adopt = adopt[:adopt.index("app_process = pid ?")]
-        self.assertIn("if (found && found != pid)", adopt)
-        for reset in ("shown = killed = restored = FALSE;", "hidden = gone = 0;"):
+        # a quick relaunch after a terminate must not inherit "killed" (Codex review); follow_app()
+        # itself is run in Bookkeeping
+        adopt = SOURCE[SOURCE.index("if (follow_app(&watched, name)) {"):]
+        adopt = adopt[:adopt.index("app = watched.pid != 0;")]
+        for reset in ("judge_again(&rules);", "restore_again(&restore);"):
             self.assertIn(reset, adopt)
+        self.assertEqual(SOURCE.count("follow_app(&watched, name)"), 1)
+        # the boost's entries go only where the app's handle said it ended (review A)
+        self.assertEqual(SOURCE.count("boost_forget();"), 1)
+        follow = function("follow_app")
+        self.assertLess(follow.index("!= WAIT_OBJECT_0"), follow.index("boost_forget();"))
+        self.assertLess(follow.index("boost_forget();"), follow.index("find_process("))
+        again = function("judge_again")
+        fields = re.findall(r"(?:BOOL|int) (\w+);", re.search(r"typedef struct \{[^}]*\} Rules;", SOURCE).group())
+        self.assertEqual(fields, ["shown", "hidden", "unseen"])
+        for field in fields:
+            self.assertIn(f"rules->{field} =", again)  # every counter of both rules
 
     def test_keeps_watching_while_the_app_lives(self):
-        self.assertIn("if (runner_done && !app)", SOURCE)
+        # run in Restore; here only that the loop leaves on the step's word and nowhere else
+        loop = SOURCE[SOURCE.index("for (;;) {"):SOURCE.index("    if (watched.process)\n        CloseHandle")]
+        self.assertEqual(loop.count("break;  /*"), 1)
+        self.assertIn("if (act & STOP)\n            break;", loop)
+        self.assertIn("if (act & SHOW_SYNC) {", loop)
+        self.assertIn("show_sync();", loop[loop.index("if (act & SHOW_SYNC) {"):loop.index("if (act & STOP)")])
 
     @unittest.skipUnless(shutil.which("cc"), "needs a C compiler")
     def test_name_and_screen_rules_compiled_and_run(self):
         """app_name and usable() from s2amrun.c itself, built for the Mac and run."""
-        def function(name):
-            start = SOURCE.rindex("\n", 0, SOURCE.index(f" {name}(")) + 1
-            return SOURCE[start:SOURCE.index("\n}\n", start) + 3]
         background = re.search(r"#define BACKGROUND_CLASS .*", SOURCE).group()
         program = "\n".join([
             "#include <stdio.h>", "#include <wchar.h>", "typedef wchar_t WCHAR;", "typedef int BOOL;",
@@ -106,6 +157,1134 @@ class Source(unittest.TestCase):
         native.check((ROOT / "build" / "native" / "s2amrun.exe").read_bytes(), "s2amrun.exe")
 
 
+def define(name):
+    return re.search(rf"#define {name} .*", SOURCE).group()
+
+
+def declared(pattern):
+    return re.search(pattern, SOURCE).group()
+
+
+# Windows types and names as the host compiler needs them for pieces of s2amrun.c.
+WINDOWS = ["#include <stdint.h>", "#include <wchar.h>", "typedef uint32_t DWORD;", "typedef int32_t LONG;",
+           "typedef void *HANDLE;", "typedef wchar_t WCHAR;", "#define WINAPI",
+           "#define INVALID_HANDLE_VALUE ((HANDLE)(intptr_t)-1)", "#define WAIT_OBJECT_0 0",
+           "#define WAIT_TIMEOUT 258", "#define WAIT_FAILED 0xFFFFFFFF", "#define THREAD_SET_INFORMATION 0x20"]
+# ... and for the window scan.
+SCREEN = ["typedef void *HWND;", "typedef intptr_t LPARAM;", "typedef uintptr_t WPARAM;", "typedef unsigned UINT;",
+          "#define CALLBACK", "typedef BOOL (*WNDENUMPROC)(HWND, LPARAM);", "#define WM_CLOSE 0x0010"]
+
+# How a close went, by name, both ways (after the enum from s2amrun.c).
+OUTCOMES = r"""
+const char *outcome_name(int outcome)
+{
+    return outcome == APP_BACK ? "back" : outcome == OTHERS_BACK ? "others" : outcome == APP_ENDED ? "ended"
+         : outcome == APP_TERMINATED ? "terminated" : outcome == CLOSE_FAILED ? "failed" : "not back";
+}
+
+int outcome_of(const char *name)
+{
+    int outcome;
+    for (outcome = NOT_BACK; outcome <= CLOSE_FAILED; outcome++)
+        if (!strcmp(outcome_name(outcome), name))
+            return outcome;
+    abort();
+}
+"""
+
+
+@unittest.skipUnless(shutil.which("cc"), "needs a C compiler")
+class Rules(unittest.TestCase):
+    """judge() and judge_after_close() from s2amrun.c, built for the Mac, replay what the guard
+    saw in the car (guard.log). Each close goes as the test says: back (a window of the app shows),
+    others (only something else is on the screen again), ended, terminated or failed."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.work = Path(tempfile.mkdtemp())
+        cls.program = build(cls.work, [
+            define("STUCK_TICKS"), define("HIDDEN_TICKS"),
+            declared(r"typedef struct \{[^}]*\} Rules;"),
+            declared(r"enum \{ KEEP, CLOSE_STUCK, CLOSE_HIDDEN \};"),
+            declared(r"enum \{ NOT_BACK,[^}]*\};"), OUTCOMES,
+            function("judge"), function("judge_again"), function("judge_after_close"),
+            "int main(int argc, char **argv) {",
+            "    Rules rules;",
+            "    int app, vis, others, verdict, closes = 1;",
+            "    judge_again(&rules);",
+            '    while (scanf("%d %d %d", &app, &vis, &others) == 3) {',
+            "        verdict = judge(&rules, app, vis, others);",
+            '        printf("%s\\n", verdict == KEEP ? "keep" : verdict == CLOSE_STUCK ? "stuck" : "hidden");',
+            "        if (verdict != KEEP)  /* as WinMain does after each close */",
+            "            judge_after_close(&rules, closes < argc ? outcome_of(argv[closes++]) : APP_ENDED);",
+            "    }",
+            "    return 0;",
+            "}"])
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.work)
+
+    def replay(self, *runs, closes=()):
+        """Looks once a second: (app runs, a window of it shown, other usable windows), repeated."""
+        looks = [look for look, times in runs for _ in range(times)]
+        text = "".join(f"{app} {vis} {others}\n" for app, vis, others in looks)
+        out = subprocess.run([str(self.program), *closes], input=text,
+                             check=True, capture_output=True, text=True).stdout
+        verdicts = out.split()
+        self.assertEqual(len(verdicts), len(looks))
+        return [(i, v) for i, v in enumerate(verdicts) if v != "keep"]
+
+    def test_issue_2_the_installer_window_no_longer_keeps_a_hidden_autokit(self):
+        # 2026-11-15 (akcfg-9ccd): 2 looks with nothing usable after Exit, then the installer's
+        # window, then SYNC; the stuck rule never held and AutoKit kept running for minutes
+        acts = self.replay(((1, 0, 0), 2), ((1, 1, 0), 300), ((1, 0, 0), 2), ((1, 0, 1), 200))
+        self.assertEqual(acts, [(2 + 300 + 4, "hidden")])  # the 5th look without its window
+
+    def test_a_normal_exit_is_still_the_stuck_rule_after_3_s(self):
+        # the usual Exit in the same log: stuck 2 s after the hide, AutoKit gone 0.5 s later
+        self.assertEqual(self.replay(((1, 0, 0), 2), ((1, 1, 0), 10), ((1, 0, 0), 5)),
+                         [(2 + 10 + 2, "stuck")])
+
+    def test_a_starting_app_is_never_closed(self):
+        # Media.exe: no window of its own for 2-3 s, while something else is on the screen
+        self.assertEqual(self.replay(((1, 0, 0), 1), ((1, 0, 1), 30)), [])
+        self.assertEqual(self.replay(((1, 0, 0), 30)), [])
+
+    def test_sync_shown_over_the_app_never_closes_it(self):
+        # the second tap and the parking screen show SYNC over the app; its window stays visible
+        self.assertEqual(self.replay(((1, 1, 0), 3), ((1, 1, 1), 600), ((1, 1, 0), 3)), [])
+
+    def test_a_short_hide_starts_the_count_again(self):
+        self.assertEqual(self.replay(((1, 1, 0), 3), ((1, 0, 1), 4), ((1, 1, 0), 1), ((1, 0, 1), 4),
+                                     ((1, 1, 1), 1), ((1, 0, 0), 2), ((1, 1, 0), 1)), [])
+
+    def test_an_ended_app_is_left_to_the_restore_rule(self):
+        self.assertEqual(self.replay(((1, 1, 0), 3), ((0, 0, 0), 30), ((0, 0, 1), 30)), [])
+
+    def test_a_terminated_app_that_lingers_is_not_closed_every_few_seconds(self):
+        acts = self.replay(((1, 1, 0), 3), ((1, 0, 1), 60), closes=["terminated"])
+        self.assertEqual(acts, [(3 + 4, "hidden")])
+
+    def test_an_app_that_survives_the_close_hidden_is_closed_again(self):
+        # review point 1: a close that found the app back must not disarm the five-look rule
+        acts = self.replay(((1, 1, 0), 3), ((1, 0, 1), 60), closes=["back", "back", "terminated"])
+        self.assertEqual(acts, [(7, "hidden"), (12, "hidden"), (17, "hidden")])
+
+    def test_a_stuck_close_that_found_something_on_the_screen_leads_to_the_hidden_rule(self):
+        # the stuck rule's close left it because a window came up; the app itself stayed hidden,
+        # and its 3 looks without a window still count (review D): the 5th comes 2 looks later
+        acts = self.replay(((1, 1, 0), 3), ((1, 0, 0), 3), ((1, 0, 1), 20), closes=["others", "ended"])
+        self.assertEqual(acts, [(5, "stuck"), (7, "hidden")])
+
+    def test_something_coming_up_now_and_then_never_puts_the_hidden_rule_off(self):
+        # review D: 3 empty looks, a stuck close that something else stops, again and again; the
+        # app never shows its window, so the hidden rule closes it on its 5th look without one
+        cycle = (((1, 0, 0), 3), ((1, 0, 1), 1)) * 6
+        acts = self.replay(((1, 1, 0), 3), *cycle, closes=["others", "terminated"])
+        self.assertEqual(acts, [(5, "stuck"), (7, "hidden")])
+        # had each close found the app's own window instead, the count would start again each
+        # time: what the first version did for anything on the screen
+        acts = self.replay(((1, 1, 0), 3), *cycle, closes=["back"] * 6)
+        self.assertEqual(acts, [(5, "stuck"), (9, "stuck"), (13, "stuck"), (17, "stuck"), (21, "stuck"),
+                                (25, "stuck")])
+
+    def test_a_close_that_failed_is_tried_again_once_the_rule_holds_again(self):
+        # review B: no handle, a failed wait or a refused terminate is not an end; the app stays
+        # judged, and the rule that fired holds again after its 5 (or 3) looks, not on every look
+        acts = self.replay(((1, 1, 0), 3), ((1, 0, 1), 20), closes=["failed", "failed", "terminated"])
+        self.assertEqual(acts, [(7, "hidden"), (12, "hidden"), (17, "hidden")])
+        acts = self.replay(((1, 1, 0), 3), ((1, 0, 0), 10), closes=["failed", "terminated"])
+        self.assertEqual(acts, [(5, "stuck"), (8, "stuck")])
+
+
+@unittest.skipUnless(shutil.which("cc"), "needs a C compiler")
+class Restore(unittest.TestCase):
+    """restore_step() and restore_again() from s2amrun.c, built for the Mac: when the guard gives
+    SYNC the screen itself, and when it stops watching. One look per line, after the rules."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.work = Path(tempfile.mkdtemp())
+        cls.program = build(cls.work, [
+            define("STUCK_TICKS"),
+            declared(r"enum \{ NOT_BACK,[^}]*\};"), OUTCOMES,
+            declared(r"typedef struct \{[^}]*\} Restore;"),
+            declared(r"enum \{ SHOW_SYNC[^}]*\};"),
+            function("restore_again"), function("restore_step"),
+            r"""
+int main(void)
+{
+    Restore restore = {FALSE, FALSE, FALSE, 0};
+    char close[16];
+    int app, vis, empty, done, act;
+    while (scanf("%15s", close) == 1) {
+        if (!strcmp(close, "new")) {  /* another instance, as WinMain does */
+            restore_again(&restore);
+            continue;
+        }
+        if (scanf("%d %d %d %d", &app, &vis, &empty, &done) != 4)
+            return 1;
+        act = restore_step(&restore, app, vis, empty, strcmp(close, "none") ? outcome_of(close) : NOT_BACK, done);
+        printf("%s killed %d restored %d gone %d\n",
+               act == 0 ? "-" : act == SHOW_SYNC ? "show" : act == STOP ? "stop" : "show+stop",
+               restore.killed, restore.restored, restore.gone);
+        if (act & STOP)
+            return 0;  /* WinMain leaves the loop */
+    }
+    return 0;
+}
+"""])
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.work)
+
+    def watch(self, *runs):
+        """Looks: ((app runs, a window of it shows, nothing usable on the screen, the runner has
+        ended), this look's close: an outcome or "none"), repeated; or "new" for another instance.
+        Returns [(look, what it asked for)] and each look's (killed, restored, gone)."""
+        lines = []
+        for run in runs:
+            if run == "new":
+                lines.append("new\n")
+                continue
+            (app, vis, empty, done), close, times = run
+            lines += [f"{close} {app} {vis} {empty} {done}\n"] * times
+        out = subprocess.run([str(self.program)], input="".join(lines), check=True, capture_output=True,
+                             text=True).stdout.splitlines()
+        acts = [(i, line.split()[0]) for i, line in enumerate(out) if not line.startswith("-")]
+        states = [tuple(map(int, line.split()[2::2])) for line in out]
+        return acts, states
+
+    SHOWN = ((1, 1, 0, 0), "none")  # the app in front
+    HIDDEN = ((1, 0, 1, 0), "none")  # the app hidden, nothing usable on the screen
+    COVERED = ((1, 0, 0, 0), "none")  # the app hidden, SYNC (or anything usable) on the screen
+    FAILED = ((1, 0, 1, 0), "failed")  # the stuck close on such a look could not be done
+
+    def test_two_freezes_of_the_same_app_both_get_the_screen_back(self):
+        # review round 3: failed close, SYNC gets the screen, the app shows its window again,
+        # then another freeze with a failed close; the second restore was blocked for good
+        acts, states = self.watch((*self.SHOWN, 3), (*self.HIDDEN, 2), (*self.FAILED, 1), (*self.HIDDEN, 2),
+                                  (*self.COVERED, 2), (*self.SHOWN, 3),
+                                  (*self.HIDDEN, 2), (*self.FAILED, 1), (*self.HIDDEN, 3))
+        self.assertEqual(acts, [(7, "show"), (17, "show")])  # 3 looks after each failed close
+        self.assertEqual(states[8], (1, 0, 0))  # SYNC on the screen: re-armed, the failure stays
+        self.assertEqual(states[10], (0, 0, 0))  # the app's window: the failure is over
+        self.assertEqual(states[-1], (1, 1, 4))  # once per freeze: not again while it lasts
+
+    def test_a_restore_that_did_not_take_is_not_repeated(self):
+        # the screen stayed empty after show_sync: no second one every few seconds, whatever
+        # the closes tried in the meantime came to, as long as none of them saw the app back
+        acts, _ = self.watch((*self.SHOWN, 3), (*self.FAILED, 1), (*self.HIDDEN, 20))
+        self.assertEqual(acts, [(5, "show")])
+        acts, _ = self.watch((*self.SHOWN, 3), (*self.FAILED, 1), (*self.HIDDEN, 2),
+                             (*self.FAILED, 1), (*self.HIDDEN, 4), (*self.FAILED, 1), (*self.HIDDEN, 4),
+                             (self.HIDDEN[0], "terminated", 1), (*self.HIDDEN, 4))
+        self.assertEqual(acts, [(5, "show")])
+
+    def test_a_close_that_found_the_app_back_re_arms_the_restore(self):
+        # review round 4: a show_sync without effect, then a close retry whose own look found the
+        # app back, on a look that began empty; the window goes again before the next look, and
+        # the next freeze must get its own restore
+        for close in ("back", "others"):
+            acts, states = self.watch((*self.SHOWN, 3), (*self.FAILED, 1), (*self.HIDDEN, 4),
+                                      (self.HIDDEN[0], close, 1),
+                                      (*self.HIDDEN, 1), (*self.FAILED, 1), (*self.HIDDEN, 3))
+            self.assertEqual(acts, [(5, "show"), (12, "show")], close)
+            self.assertEqual(states[8], (0, 0, 0), close)  # re-armed, nothing gone, nothing failed
+
+    def test_a_window_of_the_app_ends_what_a_failed_close_left(self):
+        _, states = self.watch((*self.SHOWN, 3), (*self.FAILED, 1), (*self.SHOWN, 1), (*self.HIDDEN, 2))
+        self.assertEqual(states[3], (1, 0, 1))
+        self.assertEqual(states[4:], [(0, 0, 0)] * 3)  # an empty screen alone is left to the rules
+
+    def test_closes_that_ended_or_found_the_app_back_leave_nothing_behind(self):
+        for close in ("back", "others", "ended"):
+            _, states = self.watch((*self.SHOWN, 3), (*self.FAILED, 1), (self.HIDDEN[0], close, 1))
+            self.assertEqual(states[-1][0], 0, close)
+        _, states = self.watch((*self.SHOWN, 3), (self.HIDDEN[0], "terminated", 1))
+        self.assertEqual(states[-1], (1, 0, 1))
+
+    def test_another_instance_starts_with_nothing_left_over(self):
+        acts, states = self.watch((*self.SHOWN, 3), (*self.FAILED, 1), (*self.HIDDEN, 2), "new",
+                                  (*self.HIDDEN, 2))
+        self.assertEqual(acts, [(5, "show")])
+        self.assertEqual(states[-2:], [(0, 0, 0), (0, 0, 0)])
+
+    def test_keeps_watching_while_the_app_lives(self):
+        acts, _ = self.watch((*self.SHOWN, 3), ((1, 1, 0, 1), "none", 20), ((1, 0, 0, 1), "none", 20))
+        self.assertEqual(acts, [])
+
+    def test_the_exits(self):
+        # never started: the runner ended and the app never ran
+        self.assertEqual(self.watch(((0, 0, 1, 0), "none", 5), ((0, 0, 1, 1), "none", 1))[0], [(5, "stop")])
+        # back to normal: the app ended and the runner gave SYNC the screen
+        self.assertEqual(self.watch((*self.SHOWN, 3), ((0, 0, 0, 1), "none", 1))[0], [(3, "stop")])
+        # repaired: the app and the runner ended, SYNC stayed hidden
+        self.assertEqual(self.watch((*self.SHOWN, 3), ((0, 0, 1, 1), "none", 5))[0], [(5, "show+stop")])
+        # the app ended first; the runner later, after the guard had given SYNC the screen
+        self.assertEqual(self.watch((*self.SHOWN, 3), ((0, 0, 1, 0), "none", 4), ((0, 0, 1, 1), "none", 1))[0],
+                         [(5, "show"), (7, "stop")])
+        # the app would not end and SYNC got the screen; then it ended, and so did the runner
+        self.assertEqual(self.watch((*self.SHOWN, 3), (*self.FAILED, 1), (*self.HIDDEN, 2),
+                                    ((0, 0, 1, 1), "none", 1))[0], [(5, "show"), (6, "stop")])
+
+    def test_always_stops_within_3_looks_once_the_app_and_the_runner_have_ended(self):
+        # what "given up" used to guard: the restore comes first, so no other limit is needed
+        befores = [(), ((*self.SHOWN, 3),), ((*self.SHOWN, 3), (*self.FAILED, 1)),
+                   ((*self.SHOWN, 3), (*self.FAILED, 1), (*self.HIDDEN, 2)),
+                   ((*self.SHOWN, 3), (*self.FAILED, 1), (*self.HIDDEN, 2), (*self.COVERED, 1)),
+                   ((*self.SHOWN, 3), ((0, 0, 1, 0), "none", 2))]
+        for before in befores:
+            start = sum(run[2] for run in before)
+            for empty in (0, 1):
+                acts, _ = self.watch(*before, ((0, 0, empty, 1), "none", 10))
+                stops = [i for i, act in acts if "stop" in act]
+                self.assertTrue(stops, (before, empty))
+                self.assertLess(stops[0] - start, 3 if empty else 1, (before, empty))
+
+
+SENT = "close|sent WM_CLOSE to pid "
+OWN_BACK = "recovered|the app shows a window again, leaving pid "
+OTHERS_BACK = "recovered|something is on the screen again, leaving pid "
+
+
+@unittest.skipUnless(shutil.which("cc"), "needs a C compiler")
+class Close(unittest.TestCase):
+    """close_app(), came_back() and the window scan itself (scan_window, scan_screen, usable) from
+    s2amrun.c, over a scripted screen and process: EnumWindows and the window calls, the waits and
+    the terminate are fakes."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.work = Path(tempfile.mkdtemp())
+        cls.program = build(cls.work, [
+            *WINDOWS, *SCREEN, define("CLOSE_WAIT_MS"), define("CLOSE_POLL_MS"), define("MAX_WINDOWS"),
+            define("BACKGROUND_CLASS"),
+            declared(r"typedef struct \{[^}]*\} WindowScan;"),
+            declared(r"enum \{ NOT_BACK,[^}]*\};"), OUTCOMES,
+            r"""
+/* One look per EnumWindows, from the command line, one letter per window in the order the
+   system lists them: A/a a window of the app (pid 42) shown/hidden, O/o another program's,
+   B SYNC's shell background. Past the last look the last one stays. Window n of look l is
+   the handle l*100+n+1. */
+static char **looks;
+static int nlooks, looked = -1, terminates;
+static const char *waits;  /* per wait: t timeout, e ended, f failed; then timeouts */
+
+static char kind(HWND window)
+{
+    intptr_t at = (intptr_t)window - 1;
+    return looks[at / 100][at % 100];
+}
+
+static BOOL EnumWindows(WNDENUMPROC callback, LPARAM param)
+{
+    int n;
+    if (looked < nlooks - 1)
+        looked++;
+    for (n = 0; looks[looked][n]; n++)
+        if (!callback((HWND)(intptr_t)(looked * 100 + n + 1), param))
+            break;
+    return TRUE;
+}
+
+static BOOL IsWindowVisible(HWND window)
+{
+    return kind(window) == 'A' || kind(window) == 'O' || kind(window) == 'B';
+}
+
+static DWORD GetWindowThreadProcessId(HWND window, DWORD *pid)
+{
+    *pid = kind(window) == 'A' || kind(window) == 'a' ? 42 : 7;
+    return 1;
+}
+
+static int GetClassNameW(HWND window, WCHAR *name, int size)
+{
+    (void)size;
+    wcscpy(name, kind(window) == 'B' ? BACKGROUND_CLASS : L"Other");
+    return (int)wcslen(name);
+}
+
+static BOOL PostMessageW(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
+{
+    intptr_t at = (intptr_t)window - 1;
+    (void)wparam; (void)lparam;
+    printf("%s to %d.%d\n", message == WM_CLOSE ? "WM_CLOSE" : "?", (int)(at / 100), (int)(at % 100));
+    return TRUE;
+}
+
+static DWORD WaitForSingleObject(HANDLE process, DWORD ms)
+{
+    char next = *waits ? *waits++ : 't';
+    (void)process; (void)ms;
+    return next == 'e' ? WAIT_OBJECT_0 : next == 'f' ? WAIT_FAILED : WAIT_TIMEOUT;
+}
+
+static BOOL TerminateProcess(HANDLE process, DWORD code)
+{
+    (void)process; (void)code;
+    return terminates;
+}
+
+static void note(const char *event, const char *detail, unsigned long value)
+{
+    (void)value;
+    printf("%s|%s\n", event, detail ? detail : "");
+}
+""",
+            function("usable"), function("scan_window"), function("scan_screen"), function("came_back"),
+            function("close_app"),
+            r"""
+int main(int argc, char **argv)
+{
+    /* own, the waits, a handle (1) or none (0), the terminate works (1) or not (0), the looks */
+    int outcome;
+    waits = argv[2];
+    terminates = atoi(argv[4]);
+    looks = argv + 5;
+    nlooks = argc - 5;
+    outcome = close_app(atoi(argv[3]) ? (HANDLE)1 : NULL, 42, atoi(argv[1]));
+    printf("%s\n", outcome_name(outcome));
+    return 0;
+}
+"""])
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.work)
+
+    def close(self, *looks, own=True, waits="", handle=True, terminates=True):
+        return subprocess.run([str(self.program), str(int(own)), waits, str(int(handle)), str(int(terminates)),
+                               *looks], check=True, capture_output=True, text=True).stdout.splitlines()
+
+    def test_a_window_of_the_app_shown_in_the_closing_look_gets_no_wm_close(self):
+        # review C: a hidden window listed before the shown one used to get WM_CLOSE on the spot
+        self.assertEqual(self.close("aA"), [OWN_BACK, "back"])
+        self.assertEqual(self.close("Aa"), [OWN_BACK, "back"])
+        self.assertEqual(self.close("OaA", own=False), [OWN_BACK, "back"])
+
+    def test_wm_close_goes_to_each_window_of_the_closing_look_and_nothing_else(self):
+        # the hidden rule, whatever else is on the screen: SYNC, the installer, the background
+        self.assertEqual(self.close("OaBa"), ["WM_CLOSE to 0.1", "WM_CLOSE to 0.3", SENT, "terminate|pid ",
+                                              "terminated"])
+        self.assertEqual(self.close("Oa", waits="te"), ["WM_CLOSE to 0.1", SENT, "closed|pid ", "ended"])
+
+    def test_counts_as_back_only_when_its_own_window_shows(self):
+        self.assertEqual(self.close("Oa", "Oa", "OA"), ["WM_CLOSE to 0.1", SENT, OWN_BACK, "back"])
+
+    def test_the_stuck_close_stops_for_anything_usable_but_the_background(self):
+        self.assertEqual(self.close("OBa", own=False), [OTHERS_BACK, "others"])  # nothing sent
+        self.assertEqual(self.close("Ba", "Ba", "BaO", own=False), ["WM_CLOSE to 0.1", SENT, OTHERS_BACK, "others"])
+        self.assertEqual(self.close("oBa", own=False), ["WM_CLOSE to 0.2", SENT, "terminate|pid ", "terminated"])
+
+    def test_a_close_that_cannot_be_done_is_never_an_end(self):
+        # review B: each of these used to read as "ended", which disarmed the rules
+        self.assertEqual(self.close("a", handle=False), ["close|not possible, no handle for pid ", "failed"])
+        self.assertEqual(self.close("a", waits="f"), ["WM_CLOSE to 0.0", SENT,
+                                                      "close|failed, could not wait for pid ", "failed"])
+        self.assertEqual(self.close("a", waits="tf"), ["WM_CLOSE to 0.0", SENT,
+                                                       "close|failed, could not wait for pid ", "failed"])
+        self.assertEqual(self.close("a", terminates=False), ["WM_CLOSE to 0.0", SENT, "terminate|refused for pid ",
+                                                             "failed"])
+
+    def test_keeps_as_many_windows_as_fit(self):
+        out = self.close("a" * 40, waits="e")
+        self.assertEqual(sum(line.startswith("WM_CLOSE to 0.") for line in out), int(define("MAX_WINDOWS").split()[2]))
+        self.assertEqual(out[-1], "ended")
+
+
+class Boost(unittest.TestCase):
+    """The optional boost: what it may touch, and that without its file nothing of it runs."""
+
+    def test_the_file_and_levels_match_the_job(self):
+        self.assertEqual(BOOST_LEVELS, (250, 251))  # never above Ford's screens (Desktop.exe, 250)
+        self.assertIn(f'#define BOOST_PATH L"{GUARD_BOOST.replace(chr(92), chr(92) * 2)}"', SOURCE)
+        self.assertIn(f"#define BOOST_HIGHEST {min(BOOST_LEVELS)}\n", SOURCE)
+        self.assertIn(f"#define BOOST_LOWEST {max(BOOST_LEVELS)}\n", SOURCE)
+        self.assertIn("#define BOOST_FROM 252 ", SOURCE)
+
+    def test_without_the_file_nothing_of_the_boost_runs(self):
+        # run in StartBoost; here only where WinMain calls it
+        self.assertIn("static int boost_level;", SOURCE)  # 0 until the file names a level
+        self.assertIn("    if (watching)\n        start_boost();", SOURCE)  # never in a passing instance
+        self.assertEqual(SOURCE.count("boost(&watched, "), 1)
+        self.assertIn("if (!boost_level || !app->process)\n        return;", function("boost"))
+
+    def test_boosts_only_while_the_app_is_alone_and_before_either_rule(self):
+        loop = SOURCE[SOURCE.index("for (;;) {"):]
+        self.assertLess(loop.index("follow_app(&watched, name)"), loop.index("boost(&watched, "))
+        self.assertLess(loop.index("boost(&watched, vis && scan.others == 0)"), loop.index("switch (judge("))
+
+    def test_the_guard_stays_ahead_of_what_it_raises(self):
+        start = function("start_boost")
+        self.assertIn("set_priority(GetCurrentThread(), boost_level - 1)", start)
+        self.assertLess(start.index("boost_level - 1"), start.index('note("boost", "on:'))
+        self.assertIn("boost_level = 0;", start[start.index("boost_level - 1"):])  # refused: off
+
+    def test_sets_priorities_only_through_held_handles_and_on_itself(self):
+        calls = re.findall(r"set_priority\(((?:[^()]|\([^()]*\))*)\)", SOURCE)
+        self.assertEqual(sorted(calls), ["GetCurrentThread(), boost_level - 1",
+                                         "boosted[i].thread, BOOST_FROM", "boosted[i].thread, boost_level"])
+
+    def test_imports_nothing_new_by_name(self):
+        for name in ("OpenThread", "CeSetThreadPriority", "Thread32First", "Thread32Next"):
+            self.assertIn(f'L"{name}")', SOURCE)  # looked up at run time, like toolhelp
+
+    @unittest.skipUnless(shutil.which("cc"), "needs a C compiler")
+    def test_reads_only_250_and_251_from_the_file(self):
+        work = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, work)
+        program = build(work, [define("BOOST_HIGHEST"), define("BOOST_LOWEST"),
+                               function("is_blank"), function("boost_level_of"),
+                               "int main(int argc, char **argv) {",
+                               "    int i;",
+                               "    for (i = 1; i < argc; i++)",
+                               '        printf("%d\\n", boost_level_of(argv[i], (int)strlen(argv[i])));',
+                               "    return 0;", "}"])
+        cases = {"250": 250, "251": 251, "250\r\n": 250, " 251 ": 251, "\t250\n": 250, "249": 0,
+                 "252": 0, "248": 0, "25": 0, "2500": 0, "0250": 0, "250x": 0, "x250": 0, "-250": 0,
+                 "": 0, "2 50": 0, "on": 0}
+        out = subprocess.run([str(program), *cases], check=True, capture_output=True, text=True).stdout
+        self.assertEqual(dict(zip(cases, map(int, out.split()))), cases)
+
+
+@unittest.skipUnless(shutil.which("cc"), "needs a C compiler")
+class ThreadList(unittest.TestCase):
+    """read_threads() from s2amrun.c over a scripted toolhelp list: a failed list is not an empty one."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.work = Path(tempfile.mkdtemp())
+        cls.program = build(cls.work, [
+            *WINDOWS, define("TH32CS_SNAPPROCESS"), define("TH32CS_SNAPTHREAD"), define("TH32CS_SNAPNOHEAPS"),
+            declared(r"typedef struct \{[^}]*\} ThreadEntry;"),
+            declared(r"typedef struct \{[^}]*\} Listed;"),
+            "static DWORD owners[16]; static int threads, at, no_snapshot, no_first;",
+            "static HANDLE snapshot(DWORD flags, DWORD pid)",
+            "{ (void)flags; (void)pid; at = 0; return no_snapshot ? INVALID_HANDLE_VALUE : (HANDLE)1; }",
+            "static BOOL next_thread(HANDLE list, ThreadEntry *entry)",
+            "{ (void)list; if (at >= threads) return FALSE; entry->th32ThreadID = 100 + at;",
+            "  entry->th32OwnerProcessID = owners[at]; entry->tpBasePri = 252; at++; return TRUE; }",
+            "static BOOL first_thread(HANDLE list, ThreadEntry *entry)",
+            "{ return no_first ? FALSE : next_thread(list, entry); }",
+            "static BOOL close_snapshot(HANDLE list) { (void)list; return TRUE; }",
+            function("read_threads"),
+            "int main(int argc, char **argv) {",
+            "    Listed list[4];",
+            "    int i, count;",
+            "    no_snapshot = atoi(argv[1]);",
+            "    no_first = atoi(argv[2]);",
+            "    for (i = 3; i < argc; i++)",
+            "        owners[threads++] = (DWORD)atoi(argv[i]);",
+            "    count = read_threads(7, list, 4);",
+            '    printf("%d", count);',
+            "    for (i = 0; i < count; i++)",
+            '        printf(" %u", (unsigned)list[i].id);',
+            '    printf("\\n");',
+            "    return 0;",
+            "}"])
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.work)
+
+    def read(self, *owners, no_snapshot=0, no_first=0):
+        return subprocess.run([str(self.program), str(no_snapshot), str(no_first), *map(str, owners)],
+                              check=True, capture_output=True, text=True).stdout.split()
+
+    def test_lists_only_the_apps_threads(self):
+        self.assertEqual(self.read(7, 3, 7, 9), ["2", "100", "102"])
+
+    def test_a_list_that_could_not_be_taken_is_no_list(self):
+        # review point 2: "not taken" must never read as "the thread has ended"
+        self.assertEqual(self.read(7, no_snapshot=1), ["-1"])
+        self.assertEqual(self.read(7, no_first=1), ["-1"])
+        self.assertEqual(self.read(3, 9), ["-1"])  # a running app has a thread
+        self.assertEqual(self.read(7, 7, 7, 7, 7), ["-1"])  # more than fit: nothing is decided
+
+
+@unittest.skipUnless(shutil.which("cc"), "needs a C compiler")
+class ProcessList(unittest.TestCase):
+    """find_process() from s2amrun.c over a scripted toolhelp list: no list is not "not running"."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.work = Path(tempfile.mkdtemp())
+        cls.program = build(cls.work, [
+            *WINDOWS, "#define MAX_PATH 260", "#define _wcsicmp wcscasecmp",
+            define("TH32CS_SNAPPROCESS"), define("TH32CS_SNAPNOHEAPS"),
+            declared(r"typedef struct \{[^}]*\} ProcessEntry;"),
+            r"""
+static char **names;
+static int nnames, at, no_snapshot, no_first;
+
+static HANDLE snapshot(DWORD flags, DWORD pid)
+{
+    (void)flags; (void)pid;
+    at = 0;
+    return no_snapshot ? INVALID_HANDLE_VALUE : (HANDLE)1;
+}
+
+static BOOL next_process(HANDLE list, ProcessEntry *entry)
+{
+    (void)list;
+    if (at >= nnames)
+        return FALSE;
+    mbstowcs(entry->szExeFile, names[at], MAX_PATH);
+    entry->th32ProcessID = 100 + at++;
+    return TRUE;
+}
+
+static BOOL first_process(HANDLE list, ProcessEntry *entry)
+{
+    return no_first ? FALSE : next_process(list, entry);
+}
+
+static BOOL close_snapshot(HANDLE list) { (void)list; return TRUE; }
+""",
+            function("find_process"),
+            r"""
+int main(int argc, char **argv)
+{
+    DWORD pid = 99;
+    int count = -1;
+    BOOL listed;
+    no_snapshot = atoi(argv[1]);
+    no_first = atoi(argv[2]);
+    names = argv + 3;
+    nnames = argc - 3;
+    listed = find_process(L"AutoKit.exe", &pid, &count);
+    printf("%d %u %d\n", listed, (unsigned)pid, count);
+    return 0;
+}
+"""])
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.work)
+
+    def find(self, *names, no_snapshot=0, no_first=0):
+        """(a list was taken, the pid found, processes counted)"""
+        out = subprocess.run([str(self.program), str(no_snapshot), str(no_first), *names], check=True,
+                             capture_output=True, text=True).stdout
+        return tuple(map(int, out.split()))
+
+    def test_finds_the_first_instance_by_file_name_in_any_case(self):
+        self.assertEqual(self.find("nk.exe", "autokit.EXE", "AutoKit.exe"), (1, 101, 3))
+        self.assertEqual(self.find("nk.exe", "Media.exe"), (1, 0, 2))  # listed, and not running
+
+    def test_a_list_that_could_not_be_taken_says_nothing(self):
+        # review A: a failed lookup must not read as "the app has ended"
+        self.assertEqual(self.find("AutoKit.exe", no_snapshot=1), (0, 0, 0))
+        self.assertEqual(self.find("AutoKit.exe", no_first=1), (0, 0, 0))
+
+
+@unittest.skipUnless(shutil.which("cc"), "needs a C compiler")
+class StartBoost(unittest.TestCase):
+    """start_boost() and boost() from s2amrun.c, the real thread list included, over fakes for the
+    file, toolhelp and the thread functions: without a valid file there is no thread list and no
+    priority call at all."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.work = Path(tempfile.mkdtemp())
+        names = ("put_uint", "put_text", "is_blank", "boost_level_of", "read_threads", "note_thread", "listed_at",
+                 "drop", "boost_settle", "boost_open", "boost_raise", "boost_report", "boost", "start_boost")
+        cls.program = build(cls.work, [
+            *WINDOWS, define("BOOST_PATH"), define("BOOST_FROM"), define("BOOST_HIGHEST"), define("BOOST_LOWEST"),
+            define("MAX_BOOSTED"), define("MAX_LISTED"), define("TH32CS_SNAPPROCESS"), define("TH32CS_SNAPTHREAD"),
+            define("TH32CS_SNAPNOHEAPS"),
+            "#define GENERIC_READ 0x80000000", "#define FILE_SHARE_READ 1", "#define OPEN_EXISTING 3",
+            "#define FILE_ATTRIBUTE_NORMAL 0x80",
+            declared(r"typedef struct \{[^}]*\} ThreadEntry;"),
+            declared(r"typedef struct \{[^}]*\} Listed;"),
+            declared(r"enum \{ LEFT, OPENED, RAISED \};"),
+            declared(r"typedef struct \{(?:[^}]|\*/)*?\} Boosted;"),
+            declared(r"typedef struct \{[^}]*\} Watched;"),
+            declared(r"static int boost_level;"), declared(r"static Boosted boosted\[MAX_BOOSTED\];"),
+            declared(r"static int boosted_count;"),
+            r"""
+#define OWN ((HANDLE)4000)
+#define THREAD ((HANDLE)5000)
+static const char *content;  /* the boost file's text; NULL: there is none */
+static int functions = 1, own_allowed = 1, snapshots, sets, at, real = 252;
+
+static HANDLE CreateFileW(const WCHAR *path, DWORD access, DWORD share, void *security, DWORD disposition,
+                          DWORD attributes, HANDLE template_file)
+{
+    (void)path; (void)access; (void)share; (void)security; (void)disposition; (void)attributes;
+    (void)template_file;
+    return content ? (HANDLE)2000 : INVALID_HANDLE_VALUE;
+}
+
+static BOOL ReadFile(HANDLE file, void *buffer, DWORD size, DWORD *got, void *overlapped)
+{
+    (void)file; (void)overlapped;
+    *got = (DWORD)strlen(content) < size ? (DWORD)strlen(content) : size;
+    memcpy(buffer, content, *got);
+    return TRUE;
+}
+
+static BOOL CloseHandle(HANDLE handle) { (void)handle; return TRUE; }
+static HANDLE GetCurrentThread(void) { return OWN; }
+static BOOL load_priority(void) { return functions; }
+
+static HANDLE snapshot(DWORD flags, DWORD pid)
+{
+    (void)flags; (void)pid;
+    snapshots++;
+    at = 0;
+    return (HANDLE)3000;
+}
+
+static BOOL next_thread(HANDLE list, ThreadEntry *entry)
+{
+    (void)list;
+    if (at++ > 0)
+        return FALSE;
+    entry->th32ThreadID = 10;  /* the app's one thread, at 252 until it is raised */
+    entry->th32OwnerProcessID = 7;
+    entry->tpBasePri = real;
+    return TRUE;
+}
+
+static BOOL first_thread(HANDLE list, ThreadEntry *entry) { return next_thread(list, entry); }
+static BOOL close_snapshot(HANDLE list) { (void)list; return TRUE; }
+static HANDLE open_thread(DWORD access, BOOL inherit, DWORD id) { (void)access; (void)inherit; (void)id; return THREAD; }
+
+static BOOL set_priority(HANDLE thread, int priority)
+{
+    sets++;
+    printf("set %s %d\n", thread == OWN ? "guard" : "thread", priority);
+    if (thread == OWN)
+        return own_allowed;
+    real = priority;
+    return TRUE;
+}
+
+static void note(const char *event, const char *detail, unsigned long value)
+{
+    printf("log %s%s", event, detail ? "|" : "\n");
+    if (detail)
+        printf("%s%lu\n", detail, value);
+}
+""",
+            *(function(name) for name in names),
+            r"""
+int main(int argc, char **argv)
+{
+    /* the file's text ("-": none), the thread functions there (1/0), the guard's own change
+       allowed (1/0); then three looks alone on the screen and one not */
+    Watched app;
+    int i;
+    (void)argc;
+    content = strcmp(argv[1], "-") ? argv[1] : NULL;
+    functions = atoi(argv[2]);
+    own_allowed = atoi(argv[3]);
+    app.pid = 7;
+    app.process = (HANDLE)1007;
+    start_boost();
+    for (i = 0; i < 4; i++)
+        boost(&app, i < 3);
+    printf("level %d snapshots %d sets %d\n", boost_level, snapshots, sets);
+    return 0;
+}
+"""])
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.work)
+
+    def start(self, content, functions=True, own_allowed=True):
+        return subprocess.run([str(self.program), content, str(int(functions)), str(int(own_allowed))], check=True,
+                              capture_output=True, text=True).stdout.splitlines()
+
+    def test_without_the_file_nothing_of_the_boost_runs(self):
+        self.assertEqual(self.start("-"), ["level 0 snapshots 0 sets 0"])  # not even a log line
+
+    def test_a_file_without_250_or_251_turns_it_off(self):
+        for content in ("249", "252", "on", ""):
+            self.assertEqual(self.start(content), ["log boost|off: the boost file holds neither 250 nor 251",
+                                                   "level 0 snapshots 0 sets 0"])
+
+    def test_a_system_without_the_thread_functions_or_that_refuses_the_guard_turns_it_off(self):
+        off = "log boost|off: the thread functions are missing or refused"
+        self.assertEqual(self.start("251", functions=False), [off, "level 0 snapshots 0 sets 0"])
+        self.assertEqual(self.start("251", own_allowed=False), ["set guard 250", off, "level 0 snapshots 0 sets 1"])
+
+    def test_with_the_file_the_guard_goes_first_then_the_apps_thread(self):
+        out = self.start("251\r\n")
+        self.assertEqual(out[:2], ["set guard 250",
+                                   "log boost|on: while the app is alone on the screen, its threads at 252 run at 251"])
+        self.assertEqual([line for line in out if line.startswith("set thread ")], ["set thread 251", "set thread 252"])
+        self.assertEqual(out[-1], "level 251 snapshots 6 sets 3")
+
+
+@unittest.skipUnless(shutil.which("cc"), "needs a C compiler")
+class Bookkeeping(unittest.TestCase):
+    """follow_app(), boost() and its steps from s2amrun.c, one look at a time as WinMain runs them,
+    over a fake kernel: the app's process (its list entry, its handle and that handle's wait),
+    threads with a real priority, a thread list that may or may not show a change, OpenThread,
+    CeSetThreadPriority, handles."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.work = Path(tempfile.mkdtemp())
+        names = ("put_uint", "put_text", "note_thread", "listed_at", "drop", "boost_settle", "boost_open",
+                 "boost_raise", "boost_report", "boost_forget", "boost", "follow_app")
+        cls.program = build(cls.work, [
+            *WINDOWS, define("BOOST_FROM"), define("MAX_BOOSTED"), define("MAX_LISTED"),
+            declared(r"typedef struct \{[^}]*\} Listed;"),
+            declared(r"enum \{ LEFT, OPENED, RAISED \};"),
+            declared(r"typedef struct \{(?:[^}]|\*/)*?\} Boosted;"),
+            declared(r"typedef struct \{[^}]*\} Watched;"),
+            declared(r"static int boost_level;"), declared(r"static Boosted boosted\[MAX_BOOSTED\];"),
+            declared(r"static int boosted_count;"),
+            r"""
+#define MAXT 64
+static struct { DWORD id; int real, listed, alive, handles, refuse, noopen, vanish; } T[MAXT];
+static int nT, reflects = 1, fail_reads, reads;
+
+/* The app's process: pid 7, then 8 after a relaunch. A handle is 1000 + the pid it was opened
+   for, and is signalled once that instance has ended. */
+static struct { DWORD pid; int alive, handles, no_list, no_open, wait_fails; } P = {7, 1, 0, 0, 0, 0};
+static Watched watched;
+
+static BOOL find_process(const WCHAR *name, DWORD *pid, int *count)
+{
+    (void)name; (void)count;
+    *pid = 0;
+    if (P.no_list)
+        return FALSE;
+    *pid = P.alive ? P.pid : 0;
+    return TRUE;
+}
+
+static HANDLE OpenProcess(DWORD access, BOOL inherit, DWORD pid)
+{
+    (void)access; (void)inherit;
+    if (P.no_open || !P.alive || pid != P.pid)
+        return NULL;
+    P.handles++;
+    return (HANDLE)(intptr_t)(1000 + pid);
+}
+
+static DWORD WaitForSingleObject(HANDLE process, DWORD ms)
+{
+    (void)ms;
+    if (P.wait_fails)
+        return WAIT_FAILED;
+    return P.alive && (intptr_t)process - 1000 == (intptr_t)P.pid ? WAIT_TIMEOUT : WAIT_OBJECT_0;
+}
+
+static DWORD GetLastError(void) { return 6; }  /* ERROR_INVALID_HANDLE */
+
+static int find(DWORD id)
+{
+    int i;
+    for (i = 0; i < nT; i++)
+        if (T[i].id == id)
+            return i;
+    return -1;
+}
+
+static int read_threads(DWORD pid, Listed *list, int size)
+{
+    int i, count = 0;
+    (void)pid;
+    if (fail_reads & (1 << ++reads))
+        return -1;
+    for (i = 0; i < nT && count < size; i++)
+        if (T[i].alive) {
+            list[count].id = T[i].id;
+            list[count].priority = T[i].listed;
+            count++;
+        }
+    return count > 0 ? count : -1;
+}
+
+static HANDLE fake_open(DWORD access, BOOL inherit, DWORD id)
+{
+    int i = find(id);
+    (void)access; (void)inherit;
+    if (i < 0 || !T[i].alive || T[i].noopen)
+        return NULL;
+    T[i].handles++;
+    printf("open %u\n", (unsigned)id);
+    if (T[i].vanish)
+        T[i].alive = 0;  /* it ends right after it was opened */
+    return (HANDLE)(intptr_t)(i + 1);
+}
+
+static BOOL fake_set(HANDLE thread, int priority)
+{
+    int i = (int)(intptr_t)thread - 1;
+    printf("set %u %d\n", (unsigned)T[i].id, priority);
+    if (T[i].refuse)
+        return FALSE;
+    T[i].real = priority;
+    if (reflects)
+        T[i].listed = priority;
+    return TRUE;
+}
+
+static BOOL CloseHandle(HANDLE handle)
+{
+    if ((intptr_t)handle >= 1000)
+        P.handles--;
+    else
+        T[(intptr_t)handle - 1].handles--;
+    return TRUE;
+}
+
+static void note(const char *event, const char *detail, unsigned long value)
+{
+    if (detail)
+        printf("log %s|%s%lu\n", event, detail, value);
+    else
+        printf("log %s\n", event);
+}
+
+typedef HANDLE (*OpenThreadFn)(DWORD, BOOL, DWORD);
+typedef BOOL (*SetPriorityFn)(HANDLE, int);
+static OpenThreadFn open_thread = fake_open;
+static SetPriorityFn set_priority = fake_set;
+""",
+            *(function(name) for name in names),
+            r"""
+int main(void)
+{
+    char word[16];
+    unsigned id;
+    int value, i, renewed;
+    while (scanf("%15s", word) == 1) {
+        if (!strcmp(word, "thread") && scanf("%u %d", &id, &value) == 2) {
+            T[nT].id = id; T[nT].real = T[nT].listed = value; T[nT].alive = 1; nT++;
+        } else if (!strcmp(word, "exit")) {  /* the app's process ends, and its threads with it */
+            P.alive = 0;
+            for (i = 0; i < nT; i++)
+                T[i].alive = 0;
+        } else if (!strcmp(word, "launch")) {  /* a new instance */
+            P.pid++;
+            P.alive = 1;
+        } else if (!strcmp(word, "nolist") && scanf("%d", &value) == 1) {
+            P.no_list = value;  /* the process list cannot be taken */
+        } else if (!strcmp(word, "noopenapp") && scanf("%d", &value) == 1) {
+            P.no_open = value;
+        } else if (!strcmp(word, "waitfails") && scanf("%d", &value) == 1) {
+            P.wait_fails = value;
+        } else if (!strcmp(word, "end") && scanf("%u", &id) == 1) {
+            T[find(id)].alive = 0;
+        } else if (!strcmp(word, "app") && scanf("%u %d", &id, &value) == 2) {
+            T[find(id)].real = T[find(id)].listed = value;  /* the app sets it itself */
+        } else if (!strcmp(word, "reflect") && scanf("%d", &value) == 1) {
+            reflects = value;
+        } else if (!strcmp(word, "refuse") && scanf("%u %d", &id, &value) == 2) {
+            T[find(id)].refuse = value;
+        } else if (!strcmp(word, "noopen") && scanf("%u %d", &id, &value) == 2) {
+            T[find(id)].noopen = value;
+        } else if (!strcmp(word, "vanish") && scanf("%u", &id) == 1) {
+            T[find(id)].vanish = 1;
+        } else if (!strcmp(word, "failread") && scanf("%d", &value) == 1) {
+            fail_reads |= 1 << value;  /* that list of the next look fails */
+        } else if (!strcmp(word, "level") && scanf("%d", &value) == 1) {
+            boost_level = value;
+        } else if (!strcmp(word, "look") && scanf("%d", &value) == 1) {  /* as WinMain, alone or not */
+            reads = 0;
+            renewed = follow_app(&watched, L"AutoKit.exe");
+            printf("app %u held %d%s\n", (unsigned)watched.pid, watched.process != NULL, renewed ? " new" : "");
+            boost(&watched, value);
+            fail_reads = 0;
+        } else if (!strcmp(word, "show")) {
+            for (i = 0; i < nT; i++)
+                printf("thread %u real %d handles %d\n", (unsigned)T[i].id, T[i].real, T[i].handles);
+            printf("entries %d\n", boosted_count);
+            printf("process handles %d\n", P.handles);
+        }
+        fflush(stdout);
+    }
+    return 0;
+}
+"""])
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.work)
+
+    def run_kernel(self, script):
+        """Runs the commands; returns the output of each "look" and "show" in turn."""
+        out = subprocess.run([str(self.program)], input="level 251\n" + script, check=True,
+                             capture_output=True, text=True).stdout
+        return out.splitlines()
+
+    def state(self, lines):
+        """The last "show": {thread: (real priority, open handles)}, and the number of entries."""
+        start = max(i for i, line in enumerate(lines) if line.startswith("thread ")
+                    and (i == 0 or not lines[i - 1].startswith("thread ")))
+        threads = {}
+        for line in lines[start:]:
+            if line.startswith("entries "):
+                return threads, int(line.split()[1])
+            _, tid, _, real, _, handles = line.split()
+            threads[int(tid)] = (int(real), int(handles))
+        raise AssertionError(lines)
+
+    def logs(self, lines):
+        return [line[4:] for line in lines if line.startswith("log ")]
+
+    def test_raises_the_apps_252_threads_while_alone_and_puts_them_back(self):
+        lines = self.run_kernel("thread 10 252\nthread 11 251\nthread 12 252\nlook 1\nshow\n")
+        self.assertEqual(self.state(lines), ({10: (251, 1), 11: (251, 0), 12: (251, 1)}, 2))
+        self.assertEqual(self.logs(lines), ["boost|thread 12 from 252 to 251", "boost|thread 10 from 252 to 251",
+                                            "boost|thread 10 listed at 251 after the change",
+                                            "boost|thread 12 listed at 251 after the change"])
+        lines = self.run_kernel("thread 10 252\nthread 11 251\nthread 12 252\nlook 1\nlook 1\nlook 1\n"
+                                "look 0\nshow\nlook 0\n")
+        self.assertEqual(self.state(lines), ({10: (252, 0), 11: (251, 0), 12: (252, 0)}, 0))
+        self.assertEqual(len(self.logs(lines)), 4 + 2)  # each change once; nothing on the extra looks
+        self.assertEqual(sum(line.startswith("open ") for line in lines), 2)
+
+    def test_puts_back_a_thread_whose_list_never_shows_the_change(self):
+        # review point 6: if the list keeps showing 252, the thread still goes back
+        lines = self.run_kernel("reflect 0\nthread 10 252\nlook 1\nshow\nlook 1\nlook 0\nshow\n")
+        self.assertIn("boost|thread 10 listed at 252 after the change", self.logs(lines))
+        self.assertEqual(sum(line.startswith("set 10 251") for line in lines), 1)  # not raised twice
+        self.assertEqual(self.state(lines), ({10: (252, 0)}, 0))
+
+    def test_leaves_a_priority_the_app_set_itself(self):
+        lines = self.run_kernel("thread 10 252\nlook 1\napp 10 248\nlook 0\nshow\n")
+        self.assertIn("boost|thread 10 left as the app set it, at 248", self.logs(lines))
+        self.assertEqual(self.state(lines), ({10: (248, 0)}, 0))
+
+    def test_a_way_back_that_fails_is_tried_again_on_every_look(self):
+        # review point 2: a refused restore is not forgotten
+        lines = self.run_kernel("thread 10 252\nlook 1\nrefuse 10 1\nlook 0\nlook 0\nshow\n"
+                                "refuse 10 0\nlook 0\nshow\n")
+        self.assertEqual(self.logs(lines).count("boost|thread 10 would not go back from 251"), 1)
+        self.assertEqual(sum(line == "set 10 252" for line in lines), 3)
+        self.assertIn("boost|thread 10 from 251 to 252", self.logs(lines))
+        self.assertEqual(self.state(lines), ({10: (252, 0)}, 0))
+
+    def test_without_a_list_nothing_is_decided(self):
+        # review point 2: a failed list keeps every raised thread for the next look
+        lines = self.run_kernel("thread 10 252\nlook 1\nfailread 1\nlook 0\nshow\n")
+        self.assertEqual(self.state(lines), ({10: (251, 1)}, 1))
+        lines = self.run_kernel("thread 10 252\nlook 1\nfailread 1\nlook 0\nlook 0\nshow\n")
+        self.assertEqual(self.state(lines), ({10: (252, 0)}, 0))
+
+    def test_ended_threads_free_their_places(self):
+        # review point 4: 32 threads that would not open, then end; a new video thread still goes up
+        setup = "".join(f"thread {n} 252\nnoopen {n} 1\n" for n in range(1, 33))
+        lines = self.run_kernel(setup + "look 1\nshow\n")
+        self.assertEqual(self.state(lines)[1], 32)
+        ends = "".join(f"end {n}\n" for n in range(1, 33))
+        lines = self.run_kernel(setup + "look 1\n" + ends + "thread 100 252\nlook 1\nshow\n")
+        self.assertEqual(self.state(lines)[0][100], (251, 1))
+        self.assertEqual(self.state(lines)[1], 1)
+
+    def test_a_raised_thread_that_ends_lets_go_of_its_handle(self):
+        lines = self.run_kernel("thread 10 252\nthread 11 251\nlook 1\nend 10\nlook 1\nshow\n")
+        self.assertEqual(self.state(lines), ({10: (251, 0), 11: (251, 0)}, 0))
+
+    def test_holds_each_raised_thread_and_puts_it_back_through_that_handle(self):
+        # review point 5: no second OpenThread by id on the way back
+        lines = self.run_kernel("thread 10 252\nlook 1\nshow\nlook 0\nshow\n")
+        self.assertEqual(sum(line.startswith("open ") for line in lines), 1)
+        self.assertEqual(self.state(lines), ({10: (252, 0)}, 0))
+        first = lines[:lines.index("entries 1") + 1]
+        self.assertEqual(self.state(first), ({10: (251, 1)}, 1))
+
+    def test_raises_nothing_without_a_second_list(self):
+        lines = self.run_kernel("thread 10 252\nfailread 2\nlook 1\nshow\nlook 1\nshow\n")
+        first = lines[:lines.index("entries 0") + 1]
+        self.assertEqual(self.state(first), ({10: (252, 0)}, 0))
+        self.assertEqual(self.state(lines), ({10: (251, 1)}, 1))
+
+    def test_never_sets_a_thread_that_ended_after_it_was_opened(self):
+        # its id is not the app's any more: the second list must show it in the app at 252
+        lines = self.run_kernel("thread 10 252\nthread 11 251\nvanish 10\nlook 1\nshow\n")
+        self.assertFalse([line for line in lines if line.startswith("set ")])
+        self.assertEqual(self.state(lines), ({10: (252, 0), 11: (251, 0)}, 0))
+
+    def test_a_refused_raise_waits_until_the_app_is_alone_again(self):
+        lines = self.run_kernel("thread 10 252\nrefuse 10 1\nlook 1\nlook 1\nshow\nrefuse 10 0\n"
+                                "look 0\nlook 1\nshow\n")
+        self.assertEqual(self.logs(lines).count("boost|thread 10 would not change from 252"), 1)
+        self.assertEqual(self.state(lines), ({10: (251, 1)}, 1))
+
+    def test_reports_the_list_on_the_next_look_when_its_own_failed(self):
+        lines = self.run_kernel("thread 10 252\nfailread 3\nlook 1\nshow\nlook 1\n")
+        logs = self.logs(lines)
+        self.assertEqual(logs.count("boost|thread 10 listed at 251 after the change"), 1)
+        self.assertLess(lines.index("entries 1"), lines.index("log boost|thread 10 listed at 251 after the change"))
+
+    def apps(self, lines):
+        """What each look made of the app's process: "<pid> held <0/1>[ new]"."""
+        return [line[4:] for line in lines if line.startswith("app ")]
+
+    def process_handles(self, lines):
+        return int([line for line in lines if line.startswith("process handles ")][-1].split()[2])
+
+    def test_forgets_every_handle_once_the_apps_handle_says_it_ended(self):
+        lines = self.run_kernel("thread 10 252\nthread 12 252\nlook 1\nexit\nlook 1\nshow\n")
+        self.assertEqual(self.state(lines), ({10: (251, 0), 12: (251, 0)}, 0))
+        self.assertEqual(self.apps(lines), ["7 held 1 new", "0 held 0"])
+        self.assertEqual(self.process_handles(lines), 0)
+        # ended, and the list fails on the same look: the handle said so, the list is not needed
+        lines = self.run_kernel("thread 10 252\nlook 1\nexit\nnolist 1\nlook 1\nshow\n")
+        self.assertEqual(self.state(lines), ({10: (251, 0)}, 0))
+        self.assertEqual(self.apps(lines), ["7 held 1 new", "0 held 0"])
+
+    def test_a_list_that_fails_never_drops_raised_threads(self):
+        # review A: while the guard holds the app's handle, no failed lookup can say it ended
+        lines = self.run_kernel("thread 10 252\nlook 1\nnolist 1\nlook 1\nlook 0\nshow\n")
+        self.assertEqual(self.apps(lines), ["7 held 1 new", "7 held 1", "7 held 1"])
+        self.assertIn("boost|thread 10 from 251 to 252", self.logs(lines))
+        self.assertEqual(self.state(lines), ({10: (252, 0)}, 0))
+        self.assertEqual(self.process_handles(lines), 1)
+
+    def test_a_wait_that_fails_keeps_the_app_and_what_was_raised(self):
+        lines = self.run_kernel("thread 10 252\nlook 1\nwaitfails 1\nnolist 1\nlook 1\nlook 1\nshow\n"
+                                "waitfails 0\nnolist 0\nlook 0\nshow\n")
+        first = lines[:lines.index("entries 1") + 1]
+        self.assertEqual(self.state(first), ({10: (251, 1)}, 1))
+        self.assertEqual(self.apps(lines), ["7 held 1 new", "7 held 1", "7 held 1", "7 held 1"])
+        self.assertEqual(self.state(lines), ({10: (252, 0)}, 0))
+
+    def test_a_wait_that_fails_is_logged_once_with_the_error(self):
+        # review round 3: it keeps the guard watching, so a car log must show it; once per stretch
+        told = "error|cannot wait for the app, it counts as running, error 6"
+        lines = self.run_kernel("look 1\nwaitfails 1\nlook 1\nlook 1\nlook 1\nwaitfails 0\nlook 1\n"
+                                "waitfails 1\nlook 1\nlook 1\n")
+        self.assertEqual(self.logs(lines).count(told), 2)
+        self.assertEqual(self.apps(lines), ["7 held 1 new"] + ["7 held 1"] * 6)
+
+    def test_without_a_handle_for_the_app_nothing_is_raised(self):
+        # review A: the app's end could not be told, so nothing may be held for it
+        lines = self.run_kernel("noopenapp 1\nthread 10 252\nlook 1\nlook 1\nshow\n")
+        self.assertFalse([line for line in lines if line.startswith(("open ", "set "))])
+        self.assertEqual(self.state(lines), ({10: (252, 0)}, 0))
+        self.assertEqual(self.apps(lines), ["7 held 0 new", "7 held 0"])
+        # the handle is asked for again on each look; once it opens, the boost runs
+        lines = self.run_kernel("noopenapp 1\nthread 10 252\nlook 1\nnoopenapp 0\nlook 1\nshow\n")
+        self.assertEqual(self.apps(lines), ["7 held 0 new", "7 held 1"])
+        self.assertEqual(self.state(lines), ({10: (251, 1)}, 1))
+
+    def test_a_list_that_fails_leaves_the_last_answer(self):
+        # no handle: a failed list says neither "ended" nor "another instance"
+        lines = self.run_kernel("noopenapp 1\nlook 1\nnolist 1\nlook 1\nexit\nlook 1\nnolist 0\nlook 1\n")
+        self.assertEqual(self.apps(lines), ["7 held 0 new", "7 held 0", "7 held 0", "0 held 0"])
+
+    def test_a_relaunch_starts_over_with_the_new_instance(self):
+        lines = self.run_kernel("thread 10 252\nlook 1\nexit\nlaunch\nthread 20 252\nlook 1\nshow\n")
+        self.assertEqual(self.apps(lines), ["7 held 1 new", "8 held 1 new"])
+        self.assertEqual(self.state(lines), ({10: (251, 0), 20: (251, 1)}, 1))
+        self.assertEqual(self.process_handles(lines), 1)  # the old instance's handle is closed
+
+
 class Script(unittest.TestCase):
     def test_both_actions_pass_the_car_rules(self):
         for action in ("enable", "disable"):
@@ -119,6 +1298,58 @@ class Script(unittest.TestCase):
         script = guard_script(Job(SERIAL, "guard", params={"action": "enable", **PARAMS}))
         self.assertLess(script.index("--s2am-selftest"), script.index("Copy("))
         self.assertLess(script.index('ProcExists("SyncAppsRunner.exe")'), script.index("RunWait("))
+
+    def script(self, **params):
+        return guard_script(Job(SERIAL, "guard", params={**PARAMS, **params}))
+
+    def test_boost_is_written_and_checked_once_the_guard_is_in_place(self):
+        for level in BOOST_LEVELS:
+            script = self.script(action="enable", boost=level)
+            mortscript.check(script)
+            written = script.index(f'WriteFile("{GUARD_BOOST}", "{level}")')
+            self.assertLess(script.index('"\\s2amrun.exe", tools & "\\SyncAppsRunner.exe"'), written)
+            self.assertLess(written, script.index(f'If (ReadFile("{GUARD_BOOST}") ne "{level}")'))
+            self.assertIn("the boost did not write; the guard is on, without the boost", script)
+
+    def test_boost_off_removes_only_the_boost(self):
+        script = self.script(action="enable", boost=0)
+        mortscript.check(script)
+        self.assertIn(f'  Delete("{GUARD_BOOST}")', script)
+        self.assertNotIn(f'WriteFile("{GUARD_BOOST}"', script)
+        self.assertIn(BOOST_STUCK_ON, script)
+
+    def test_without_boost_the_file_is_left_as_it_is(self):
+        script = self.script(action="enable")
+        self.assertNotIn(f'WriteFile("{GUARD_BOOST}"', script)
+        self.assertNotIn(f'Delete("{GUARD_BOOST}")', script)
+
+    def test_off_takes_the_boost_with_it(self):
+        script = self.script(action="disable")
+        mortscript.check(script)
+        self.assertLess(script.index("Delete(tools & \"\\SyncAppsRunner.orig.exe\")"),
+                        script.index(f'Delete("{GUARD_BOOST}")'))
+
+    def test_a_boost_that_did_not_write_is_removed_and_the_removal_checked(self):
+        script = self.script(action="enable", boost=250)
+        tail = script[script.index(f'If (ReadFile("{GUARD_BOOST}") ne "250")'):]
+        order = [tail.index(s) for s in (f'Delete("{GUARD_BOOST}")', f'If (FileExists("{GUARD_BOOST}"))',
+                                         BOOST_STUCK_WRITE, "the guard is on, without the boost")]
+        self.assertEqual(order, sorted(order))
+
+    def test_off_checks_the_boost_is_gone_once_the_stock_runner_is_back(self):
+        # a stuck file must not stop --off: without the guard it does nothing (reported)
+        script = self.script(action="disable")
+        order = [script.index(s) for s in ('Copy(tools & "\\SyncAppsRunner.orig.exe", tools & "\\SyncAppsRunner.exe"',
+                                           f'Delete("{GUARD_BOOST}")', BOOST_STUCK_OFF, "inv = out")]
+        self.assertEqual(order, sorted(order))
+
+    def test_refuses_any_other_boost(self):
+        for bad in ({"action": "enable", "boost": 252}, {"action": "enable", "boost": 249},
+                    {"action": "enable", "boost": 248},
+                    {"action": "enable", "boost": "250"}, {"action": "enable", "boost": True},
+                    {"action": "disable", "boost": 250}, {"action": "disable", "boost": 0}):
+            with self.subTest(bad), self.assertRaises(ValueError):
+                self.script(**bad)
 
 
 @unittest.skipUnless(HAVE_UPSTREAM, "syncextpack fixtures not present")
@@ -223,6 +1454,91 @@ class Loop(unittest.TestCase):
         self.car.put("\\SyncExtendedPack\\_s2am\\guard.log", b"0|start|AutoKit.exe\r\n5|stuck|x1\r\n")
         self.run_job("inventory")
         self.assertIn("5|stuck|x1", self.status())
+
+    def boost_file(self):
+        path = self.car._resolve(GUARD_BOOST)
+        return path.read_bytes() if path.exists() else None
+
+    def test_boost_on_then_off_keeps_the_guard(self):
+        imported = self.run_job("runner-guard", "--boost", "250")
+        self.assertIn("verified: runner guard is on (self-test: s2amrun ok", imported)
+        self.assertIn("priority 1), boost 250", imported)
+        self.assertEqual(self.boost_file(), b"250")
+        self.assertEqual(self.runner(), GUARD)
+        self.assertIn("runner guard (fixes the freeze when leaving an app): on, boost 250", self.status())
+
+        self.assertIn("boost 250 as before", self.run_job("runner-guard"))  # turned on again: it stays
+        self.assertEqual(self.boost_file(), b"250")
+
+        imported = self.run_job("runner-guard", "--boost", "off")
+        self.assertIn("verified: runner guard is on", imported)
+        self.assertIn(", boost off", imported)
+        self.assertIsNone(self.boost_file())
+        self.assertEqual(self.runner(), GUARD)
+        self.assertIn("runner guard (fixes the freeze when leaving an app): on\n", self.status())
+
+    def test_off_removes_the_boost_too(self):
+        self.run_job("runner-guard", "--boost", "251")
+        imported = self.run_job("runner-guard", "--off")
+        self.assertIn("verified: runner guard is off", imported)
+        self.assertIsNone(self.boost_file())
+        self.assertEqual(self.runner(), STOCK)
+        self.assertIn("runner guard (fixes the freeze when leaving an app): off", self.status())
+
+    def test_a_car_without_the_thread_functions_is_told(self):
+        self.car.thread_priority = False
+        imported = self.run_job("runner-guard", "--boost", "250")
+        self.assertIn("boost 250 written, but this SYNC lacks a thread function: it will not act", imported)
+
+    def test_a_boost_that_does_not_write_fails_and_leaves_none(self):
+        self.car.broken_copies.add(GUARD_BOOST.lower())
+        self.assertIn("failed", self.run_job("runner-guard", "--boost", "250"))
+        self.assertIsNone(self.boost_file())
+        self.assertEqual(self.runner(), GUARD)  # the guard itself is on, without the boost
+
+    def marker(self, imported):
+        report = Store().report(SERIAL, imported.split(":")[0])
+        return (report / "copy-failed.txt").read_text()
+
+    def test_off_with_a_stuck_boost_file_still_takes_the_guard_away(self):
+        self.run_job("runner-guard", "--boost", "251")
+        self.car.stuck_files.add(GUARD_BOOST.lower())
+        imported = self.run_job("runner-guard", "--off")
+        self.assertIn("failed", imported)
+        self.assertEqual(self.marker(imported), BOOST_STUCK_OFF)
+        self.assertEqual(self.runner(), STOCK)  # off: the stock runner never reads the file
+        self.assertIsNone(self.runner("SyncAppsRunner.orig.exe"))
+        self.assertEqual(self.boost_file(), b"251")
+
+    def test_boost_off_with_a_stuck_file_says_the_boost_stays(self):
+        self.run_job("runner-guard", "--boost", "251")
+        self.car.stuck_files.add(GUARD_BOOST.lower())
+        imported = self.run_job("runner-guard", "--boost", "off")
+        self.assertIn("failed", imported)
+        self.assertEqual(self.marker(imported), BOOST_STUCK_ON)
+        self.assertEqual(self.runner(), GUARD)
+        self.assertEqual(self.boost_file(), b"251")
+
+    def test_a_boost_that_neither_writes_nor_goes_is_reported(self):
+        self.run_job("runner-guard", "--boost", "251")
+        self.car.broken_copies.add(GUARD_BOOST.lower())
+        self.car.stuck_files.add(GUARD_BOOST.lower())
+        imported = self.run_job("runner-guard", "--boost", "250")
+        self.assertIn("failed", imported)
+        self.assertEqual(self.marker(imported), BOOST_STUCK_WRITE)
+        left = Store().report(SERIAL, imported.split(":")[0]) / "guard-boost.txt"
+        self.assertEqual(left.read_bytes(), self.boost_file())  # what the guard will find
+        self.assertEqual(self.runner(), GUARD)
+
+    def test_boost_and_off_cannot_be_combined(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            cli.main(["job", "runner-guard", "--off", "--boost", "250", "--serial", SERIAL, "--no-pack",
+                      "--work", str(self.tmp / "both")])
+
+    def test_level_249_is_not_offered(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            cli.main(["job", "runner-guard", "--boost", "249", "--serial", SERIAL, "--no-pack",
+                      "--work", str(self.tmp / "high")])
 
 
 if __name__ == "__main__":

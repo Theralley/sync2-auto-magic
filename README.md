@@ -59,7 +59,10 @@ Tested in a real car: a **2016 Ford Mondeo Mk5, 8" SYNC 2, software 3.10 (EU)**,
 - **After Exit, CarPlay sometimes cannot be started again** until SYNC is restarted. Seen
   2026-11-14 and 2026-11-15. AutoKit is then still running, hidden: the runner guard closes a
   hidden AutoKit only while nothing else is on the screen, and another window got there first
-  (on 2026-11-15, the installer's, 1 s after Exit). Workaround: restart SYNC
+  (on 2026-11-15, the installer's, 1 s after Exit). A fix is written but not yet in the car: the
+  guard also closes an app whose own window has been gone for 5 s, whatever else is on the
+  screen. It reaches the car with the next `s2am job runner-guard` stick. Until then, restart
+  SYNC, and wait a few seconds after Exit before inserting a stick
   ([P1-TESTLOG.md](docs/P1-TESTLOG.md), 2026-11-15).
 - The parking sensors' pop-up does not appear while AutoKit is open. Leave AutoKit before
   reversing ([TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)). A reverse camera is untested: the
@@ -238,6 +241,8 @@ python3 -m s2am native build                                         # build the
 python3 -m s2am job native-hello --serial YOURSERIAL                 # prove compiled code runs on your SYNC 2
 python3 -m s2am job runner-guard --serial YOURSERIAL                 # fix: no frozen screen after leaving an app
 python3 -m s2am job runner-guard --off --serial YOURSERIAL           # put SyncExtPack's original launcher back
+python3 -m s2am job runner-guard --boost 251 --serial YOURSERIAL     # untried: more processor for CarPlay's video
+python3 -m s2am job runner-guard --boost off --serial YOURSERIAL     # the guard stays, the boost goes
 python3 -m s2am job logger --native --serial YOURSERIAL              # also record AutoKit's window messages
 python3 -m s2am job logger --drive --serial YOURSERIAL               # while you drive, up to 4 h: load, files, Ford's screens
 python3 tools/make_test_videos.py OUTFOLDER                          # test videos for the Video Player (needs ffmpeg, Pillow)
