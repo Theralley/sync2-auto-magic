@@ -301,6 +301,7 @@ Search **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** for the exact word
 | Problem | What to do |
 |---|---|
 | **Touchscreen frozen** after closing AutoKit | Install the runner guard (`s2am job runner-guard`); it fixes this, verified in the car. To recover now: switch the car off and open and close the driver's door. The soft reset (**power/volume knob + Seek-Up** ⏭, about 10 s) worked once but not after this freeze. Nothing is uninstalled either way. |
+| **Nothing happens** when a stick goes in right after starting the car or restarting SYNC | SYNC was not ready. Pull the stick out, wait until SYNC has finished starting, and insert it again. |
 | **A job stick shows a MortScript error** | Take a photo of it, tap OK and import the stick. `s2am` checks every script against the car's MortScript rules before it builds a stick ([docs/MORTSCRIPT.md](docs/MORTSCRIPT.md)). |
 | **CarPlay shows but there is no sound** | That is exactly what this project is testing. Please [open an issue](https://github.com/Theralley/sync2-auto-magic/issues) and include your SYNC version. |
 | **Undo the sound fix** | Open Total Commander (it is in *Apps*) and go to `\SyncExtendedPack\Apps\Media\AutoKit\`. Rename the `*.orig` files back to their original names. |

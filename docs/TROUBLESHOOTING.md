@@ -177,6 +177,9 @@ That brought SYNC back every time. Last resort: engine off, lock the car, wait 1
 - **Fix:** see the entry above. Build a fresh job; never re-use the old install.bin.
 
 ### Nothing happens when the job stick is inserted
+- **Inserted right after SYNC started?** If the stick goes in too soon after starting the car or
+  restarting SYNC, SYNC does not pick it up. Pull it out, wait until SYNC has finished starting,
+  and insert it again. Reported by the car's owner, 2026-11-15; how long SYNC needs is not measured.
 - **Cause:** the car has no SyncExtPack UpdateService (job sticks need it), or the stick's
   `install.bin` was already used and renamed to `installed.bin`.
 - **Check:** `s2am stick import` (pending, or processed?). Is `SyncExtPack/install.bin` on the stick?
