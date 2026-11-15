@@ -732,3 +732,26 @@ within those 2 s.** The same hole may be behind 2026-11-14, when CarPlay did not
 switching to the radio; that is not checked. Fix to build: close an AutoKit that has been hidden
 for a few seconds whatever else is on the screen. Until then: restart SYNC, and wait a few
 seconds after Exit before inserting a stick.
+
+**Third run, `akcfg-27c1`, 10:27-10:33: 10 frames per second changes the load figures by nothing.**
+28 samples with AutoKit: 99% in total, AutoKit 58%, `Desktop.exe` 18%, kernel 18%. The owner
+felt it "a little bit better", and heard Spotify go quiet for moments when switching between
+Maps and Spotify and when tapping.
+
+Three settings, the same 58%. So that figure is not what decoding costs: AutoKit's decoding
+thread runs at the lowest priority in the system (252) and takes **whatever is left** after
+`Desktop.exe` (250) and the kernel. The processor is short, and AutoKit is the one that goes
+without. What follows from that:
+
+- every percent taken from Ford's screens or the kernel goes straight to CarPlay;
+- raising the decoding thread above `Desktop.exe` while CarPlay is in front would give CarPlay
+  first claim. That needs no kernel code (`OpenThread` is there) and ends with a restart;
+- the owner's idea, to quiet SYNC's own screens while CarPlay runs, is the same lever. Climate,
+  calls and the parking sensors' pop-up must keep working, so nothing is suspended outright.
+
+The installer ran twice after the restart (the log lists four runs in all, the first a refusal).
+The second only fetched the logs, as designed.
+
+**On the red stick now:** `akcfg-9ccd`, 640,384 at 10 a second, measuring. Whether AutoKit
+accepts a smaller picture is not known. The build window closed at 09:35 UTC; nothing new can be
+built before 2026-11-17 21:35 UTC.
