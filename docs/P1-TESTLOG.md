@@ -689,3 +689,28 @@ system's error). Rehearsed on a simulated car that already has hardware decoding
 second visit, and a visit with AutoKit running. `akcfg-bbd6`, built a minute earlier with the old
 logger, is not on any stick. The undo is still `akcfg-da1b` on the no-name stick, unused. Both
 install only until 2026-11-17 09:35 UTC.
+
+**Second run the same morning, `akcfg-f021`, 10:08-10:18: hardware decoding changes nothing.**
+The first recording was short because SYNC had been restarted by hand. This one covers a drive
+with Maps: 55 samples, 50 of them with AutoKit running.
+
+| | Software, 2026-11-14 | `usehwdec`, 2026-11-15 |
+|---|---|---|
+| Processor in total | 100% | 99% |
+| AutoKit | 58% | 58% |
+| Kernel | 19% | 19% |
+| `Desktop.exe` | 16% | 16% |
+
+It is still one AutoKit thread at priority 252 taking 47-57%. So `usehwdec` is either ignored on
+this chip or falls back to software. The owner felt no difference either, and saw the map lag
+behind the car and then jump to catch up.
+
+- Clock: 599-600 MHz in all but a few samples; the low ones (down to 376) are timing loops that
+  were interrupted under full load, not a slower clock.
+- Power chip: `trial 1193`. `pmicSdk_mc13892.dll` does not load into an ordinary program (system
+  error 193), so the core voltage needs kernel-mode code.
+
+**Next, on the red stick:** `akcfg-27c1`, 10 frames per second with software decoding, measuring.
+Also built before the build window closed, on no stick: `akcfg-fd7f` (10 fps, `usehwdec`),
+`akcfg-d4c7` (640,384,15) and `akcfg-9ccd` (640,384,10). Whether AutoKit accepts a smaller
+picture is not known.
