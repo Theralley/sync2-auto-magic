@@ -1140,6 +1140,7 @@ def bundle_script(job: Job) -> str:
 
 # Where SYNC keeps its Bluetooth, call and audio settings (and the rest of the system's)
 REGISTRY_ROOTS = ("HKLM\\Software", "HKLM\\Comm", "HKLM\\Drivers", "HKLM\\Audio", "HKLM\\System", "HKCU\\")
+CLOCK_ROOTS = ("HKLM\\Drivers", "HKLM\\Services", "HKLM\\System", "HKLM\\Init", "HKLM\\Platform")
 REGISTRY_ROOT = re.compile(r"HK(LM|CU)\\([A-Za-z0-9_][A-Za-z0-9_.-]*(\\[A-Za-z0-9_][A-Za-z0-9_.-]*)*)?")
 REGISTRY_WAIT_S = 90
 
@@ -1149,13 +1150,18 @@ def registry_script(job: Job) -> str:
     key and value under each root down to ``depth`` levels; secrets (a paired phone's link key,
     PINs) are not copied. The job waits for it at most REGISTRY_WAIT_S seconds, so a stuck read
     cannot hold up the car, then reports as usual. ``fetch`` adds read-only copies of car files."""
+    return _script(_header(job) + registry_lines(job) + _inventory() + _footer(job))
+
+
+def registry_lines(job: Job) -> list[str]:
+    """The registry capture shared by standalone and combined clock diagnostics."""
     roots, depth = job.params.get("roots") or [], job.params.get("depth")
     if not 1 <= len(roots) <= 12 or any(not isinstance(r, str) or not REGISTRY_ROOT.fullmatch(r) for r in roots):
         raise ValueError(f"invalid registry roots {roots!r}")
     if not isinstance(depth, int) or isinstance(depth, bool) or not 0 <= depth <= 8:
         raise ValueError(f"invalid registry depth {depth!r}")
     folder = _quote(ce_path(job.job_dir))
-    lines = _header(job) + [
+    lines = [
         "n = 0",
         'If (FileExists(out & "\\registry-done.txt"))',  # a run cut short after the copy: keep it
         f"  n = {REGISTRY_WAIT_S}",
@@ -1171,7 +1177,7 @@ def registry_script(job: Job) -> str:
         "  EndIf",
         "EndWhile",
     ]
-    return _script(lines + _fetch(job) + _inventory() + _footer(job))
+    return lines + _fetch(job)
 
 
 def hello_script(job: Job) -> str:
@@ -1184,7 +1190,12 @@ def hello_script(job: Job) -> str:
 
 def pmic_script(job: Job) -> str:
     """One passive snapshot through PMI1; a failed/unfinished read is not a voltage result."""
-    lines = _header(job) + [
+    return _script(_header(job) + pmic_lines(job) + _inventory() + _footer(job))
+
+
+def pmic_lines(job: Job) -> list[str]:
+    """The fixed PMIC capture shared by standalone and combined clock diagnostics."""
+    return [
         "n = 0",
         'If (FileExists(out & "\\pmic-done.txt"))',
         "  n = 15",  # keep a finished snapshot if the overall job was interrupted afterwards
@@ -1200,7 +1211,11 @@ def pmic_script(job: Job) -> str:
         "  EndIf",
         "EndWhile",
     ]
-    return _script(lines + _inventory() + _footer(job))
+
+
+def clock_script(job: Job) -> str:
+    """One install collects PMIC presets and driver registry, with no reboot or settings change."""
+    return _script(_header(job) + pmic_lines(job) + registry_lines(job) + _inventory() + _footer(job))
 
 
 SCRIPTS = {
@@ -1223,6 +1238,7 @@ SCRIPTS = {
     "bundle": bundle_script,
     "reg": registry_script,
     "pmic": pmic_script,
+    "clock": clock_script,
 }
 MENU_CHANGING = ("rm", "undo", "inst")  # SYNC reads SyncApps.xml at start, so these restart it
 RESTARTING = MENU_CHANGING + SKIN_SWAPS + ("bundle",)  # and its theme, Apps menu and screens

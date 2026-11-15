@@ -39,7 +39,7 @@ from pathlib import Path
 from . import apps, autokit, bootstrap, decoder, diskcheck, native, pack, stick, theme, window
 from .container import REPO, ContainerError
 from .job import (AUTOKIT_CE, AUTOKIT_LANGS, AUTOKIT_MODULES, BOOST_LEVELS, DRIVE_SECONDS, LOAD_SECONDS,
-                  REGISTRY_ROOTS, REGISTRY_WAIT_S, RESTARTING,
+                  CLOCK_ROOTS, REGISTRY_ROOTS, RESTARTING,
                   SCREENS, SERIAL, STARTUP_SCREENS, SWAP_KINDS, Job, autokit_lang_file, bundle_parts, stage)
 from .state import VERDICTS, Store, diff, outcome, parse_inventory
 
@@ -74,7 +74,7 @@ JOB_KINDS = {"inventory": "inv", "autokit-stock": "akstock", "autokit-patched": 
              "remove": "rm", "install": "inst", "undo": "undo", "autokit-config": "akcfg",
              "snapshot": "snap", "logger": "log", "native-hello": "hello", "runner-guard": "guard",
              "theme": "theme", "apps-menu": "appmenu", "cleanup": "clean", "screen": "screen",
-             "bundle": "bundle", "registry": "reg", "decoder": "dec", "pmic": "pmic"}
+             "bundle": "bundle", "registry": "reg", "decoder": "dec", "pmic": "pmic", "clock": "clock"}
 MARK = {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
 
 
@@ -408,15 +408,20 @@ def cmd_job(args) -> int:
               "Ford compatibility is unverified. No voltage or clock changes. Presets do not identify "
               "the active rail voltage. Leave the stick in until 'Install successfully completed', "
               "then import it; check pmic.txt for the result")
-    elif args.kind == "registry":
+    elif args.kind in ("registry", "clock"):
         params = {"roots": args.root or list(REGISTRY_ROOTS), "depth": args.depth}
         if args.fetch:
             params["fetch"] = theme.fetch_list(Store(), args.serial, args.fetch)
         extra = {"s2amreg.exe": native.binary("s2amreg.exe")}
+        if args.kind == "clock":
+            extra["s2ampmic.exe"] = native.binary("s2ampmic.exe")
+            print("clock: also reads MC13892 identification and SW1 presets through PMI1 first. "
+                  "No clock/voltage changes or restart. Presets are not active-voltage measurements; "
+                  "Ford compatibility and its frequency table remain unverified")
         print(f"registry: read-only; copies {', '.join(params['roots'])} ({args.depth} levels) to the stick. "
               "A paired phone's link key and PINs are not copied. Insert and leave it in until 'Install "
-              f"successfully completed': the screen stands still at 100% meanwhile, for up to {REGISTRY_WAIT_S} s "
-              "plus the file copies (allow 5 minutes). Then pull it and import it")
+              "successfully completed': the screen may stay at 100% for several minutes. "
+              "The script's wait limits do not bound blocked driver calls. Then pull it and import it")
         if params.get("fetch"):
             print(f"  and copies {len(params['fetch'])} car files to the stick for study (read-only)")
     elif args.kind == "bundle":
@@ -543,11 +548,11 @@ def cmd_stick_import(args) -> int:
                 if (report / "cleanup.txt").is_file() else []
             gone, stuck = sum(x.startswith("D|") for x in listed), [x[2:] for x in listed if x.startswith("S|")]
             print(f"  removed {gone} old job folders" + (f"; still there: {stuck}" if stuck else ""))
-        if record.get("kind") == "reg" and record["status"] == "applied" and report:
+        if record.get("kind") in ("reg", "clock") and record["status"] == "applied" and report:
             done = report / "registry-done.txt"
             print("  " + (done.read_text(errors="replace").strip().replace("|", ", ") if done.is_file() else
                           "NOT complete: s2amreg.exe did not finish in time; registry.txt may be partial"))
-        if record.get("kind") == "pmic" and record["status"] == "applied" and report:
+        if record.get("kind") in ("pmic", "clock") and record["status"] == "applied" and report:
             from . import pmic
             print("  " + pmic.summary(report))
         if verdict:
@@ -1077,6 +1082,10 @@ def parser() -> argparse.ArgumentParser:
                               help="read-only MC13892 identification and SW1 voltage presets through PMI1; "
                                    "Ford compatibility unverified, no clock/voltage changes")
     pmic.set_defaults(func=cmd_job)
+    clock = job_sub.add_parser("clock", parents=[common],
+                              help="one read-only job: PMIC presets plus driver, service and system registry; "
+                                   "no clock/voltage changes or restart")
+    clock.set_defaults(func=cmd_job, root=list(CLOCK_ROOTS), depth=8, fetch=[])
     bundle = job_sub.add_parser("bundle", parents=[common],
                                 help="several jobs already built, in one run (theme, apps-menu, screen "
                                      "and a cleanup last); each is verified on its own after import")

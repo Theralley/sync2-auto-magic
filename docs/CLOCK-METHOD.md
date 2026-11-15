@@ -45,14 +45,25 @@ evidence for a testable interface hypothesis, not proof of binary compatibility.
 unwritten or malformed results do not become a voltage result.
 
 ```sh
+python3 -m s2am job clock --serial YOURSERIAL  # both captures in one install
 python3 -m s2am job pmic --serial YOURSERIAL
 python3 -m s2am job registry --root 'HKLM\Drivers' --root 'HKLM\Services' --serial YOURSERIAL
 ```
 
+The combined `clock` job runs the same PMIC helper and corrected registry reader, with one
+report folder and no reboot. It captures `HKLM\Drivers`, `Services`, `System`, `Init` and
+`Platform` to depth 8. Import checks both capture outcomes separately; a successful install
+does not prove that either diagnostic succeeded. The 15-second PMIC and 90-second registry
+script waits are separate; neither cancels a blocked native call. Leave the stick inserted
+until **Install successfully completed**, including while the screen stays at 100%.
+
+These captures expose the available registry and PMIC presets. They cannot guarantee recovery
+of compiled operating-point tables from ROM modules or establish a usable frequency-control ABI.
+
 Use the usual job/stick workflow. `--no-pack` stages files without building an install pack.
 The normal pack-window check still applies. A PMIC job needs no settings undo because it
 changes no settings; the job runner still stages its executable and writes its normal records.
-Both jobs are separate captures; they have not run in the car.
+The standalone jobs remain available; the combined job also has not run in the car.
 
 After importing, the PMIC job prints presets only when its completion marker and full report
 agree. `pmic.txt` retains raw decimal values and failure details. Stage 1 = identification read
