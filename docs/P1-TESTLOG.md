@@ -714,3 +714,21 @@ behind the car and then jump to catch up.
 Also built before the build window closed, on no stick: `akcfg-fd7f` (10 fps, `usehwdec`),
 `akcfg-d4c7` (640,384,15) and `akcfg-9ccd` (640,384,10). Whether AutoKit accepts a smaller
 picture is not known.
+
+**After Exit, CarPlay could not be started again (10:18-10:22).** `akcfg-27c1` then refused with
+`busy.txt`: AutoKit was still running, so nothing changed and the stick stays good for the next
+insert. What the logs show:
+
+- 10:18:09 Exit: AutoKit hides its window (`SW_HIDE`) and keeps running. The guard notes
+  `nothing_usable 1` and waits 2 s before closing it.
+- 10:18:10 the stick goes in. At 10:18:12 the installer's `StatusWindow` is in front, the guard
+  notes `other_windows 1, nothing_usable 0`, and never closes AutoKit.
+- 10:18:14 AutoKit still answers. At 10:21 it is still running, and SYNC's CarPlay button
+  does nothing.
+
+Earlier the same morning, with no stick in the way, the guard did close AutoKit 2 s after Exit.
+So the guard has a hole: **a hidden AutoKit is left running whenever another window appears
+within those 2 s.** The same hole may be behind 2026-11-14, when CarPlay did not come back after
+switching to the radio; that is not checked. Fix to build: close an AutoKit that has been hidden
+for a few seconds whatever else is on the screen. Until then: restart SYNC, and wait a few
+seconds after Exit before inserting a stick.

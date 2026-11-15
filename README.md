@@ -56,6 +56,11 @@ Tested in a real car: a **2016 Ford Mondeo Mk5, 8" SYNC 2, software 3.10 (EU)**,
   for calls yet ([TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)).
 - **Switching to the radio while CarPlay plays** stopped CarPlay's music, and pulling the cable
   out and in did not bring CarPlay back ([TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)).
+- **After Exit, CarPlay sometimes cannot be started again** until SYNC is restarted. Seen
+  2026-11-14 and 2026-11-15. AutoKit is then still running, hidden: the runner guard closes a
+  hidden AutoKit only while nothing else is on the screen, and another window got there first
+  (on 2026-11-15, the installer's, 1 s after Exit). Workaround: restart SYNC
+  ([P1-TESTLOG.md](docs/P1-TESTLOG.md), 2026-11-15).
 - The parking sensors' pop-up does not appear while AutoKit is open. Leave AutoKit before
   reversing ([TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)). A reverse camera is untested: the
   test car has none.
