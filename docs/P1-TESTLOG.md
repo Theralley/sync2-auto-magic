@@ -707,8 +707,8 @@ behind the car and then jump to catch up.
 
 - Clock: 599-600 MHz in all but a few samples; the low ones (down to 376) are timing loops that
   were interrupted under full load, not a slower clock.
-- Power chip: `trial 1193`. `pmicSdk_mc13892.dll` does not load into an ordinary program (system
-  error 193), so the core voltage needs kernel-mode code.
+- Power chip: `trial 1193`. `pmicSdk_mc13892.dll` failed to load in the logger (system
+  error 193), leaving core voltage unknown. This does not rule out an existing driver interface.
 
 **Next, on the red stick:** `akcfg-27c1`, 10 frames per second with software decoding, measuring.
 Also built before the build window closed, on no stick: `akcfg-fd7f` (10 fps, `usehwdec`),
@@ -785,16 +785,19 @@ inside the last two days of the key window, so both jobs only install until 2026
   Update Installer screen stands still at "100%" for as long as the job works, and it looked
   stuck. The registry text read so far was whole up to the cut; no file had been copied yet.
 - `reg-c6e2` (`HKLM\Drivers` only, the same 21 files): ran to the end. 676 keys, 2614 values,
-  137 not copied (names that look like secrets, long binary values), 107 running drivers.
+  137 not copied (names that look like secrets, long binary values). Audit correction:
+  116 active-device entries, 106 with a name and 10 unnamed; the earlier count of 107 was wrong.
 - 6 of the 21 files copied: `boot.rgu`, `boot.hv`, `default.hv`, `user.hv`, the large `.rgu` and
   `ceconfig.h`. The 15 program files (`nk.exe`, `kernel.dll`, `cspddk.dll`, `ceddk.dll`,
   `pm.dll`, `Cppm.dll`, the power-chip files, the video-decoder files) left nothing on the
-  stick: they sit in the ROM image.
-- **Result for the clock:** no speed-step driver and no clock setting. `CPM0:` is
-  CriticalProcessMonitor, `PMI1:` is `pmicpdk_mc13892.dll`, `cspddk.dll` loads into the kernel
-  at start. Details in [PERFORMANCE.md](PERFORMANCE.md).
-- A driver's `Key` value under `HKLM\Drivers\Active` is withheld by the secrets rule (its name
-  holds "key"). It is only the driver's registry path; the driver can still be matched by name.
+  stick. ROM restrictions are a possible cause; source attributes and errors were not recorded.
+- **Result for the clock:** no explicit speed-step driver or frequency selector was found in
+  the captured text. `CPM0:` matches CriticalProcessMonitor and `PMI1:` matches
+  `pmicpdk_mc13892.dll`; `cspddk.dll` is configured at boot. This does not establish all of
+  their interfaces. Details in [PERFORMANCE.md](PERFORMANCE.md).
+- Every active driver's `Key` value was withheld by the secrets rule (its name holds "key").
+  These are driver registry references, so the capture cannot map all entries to definitions,
+  particularly the 10 unnamed ones. The collector correction is host-tested; no new car result yet.
 
 **State before the decoder test** (from `reg-c6e2`'s report, 21:44): AutoKit and Video Player
 installed, the three sound modules patched, AutoKit on `640,384,10` with software decoding and
