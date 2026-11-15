@@ -403,10 +403,14 @@ def cmd_job(args) -> int:
                   "s2am job apps-menu --restore <this job>")
     elif args.kind == "registry":
         params = {"roots": args.root or list(REGISTRY_ROOTS), "depth": args.depth}
+        if args.fetch:
+            params["fetch"] = theme.fetch_list(Store(), args.serial, args.fetch)
         extra = {"s2amreg.exe": native.binary("s2amreg.exe")}
         print(f"registry: read-only; copies {', '.join(params['roots'])} ({args.depth} levels) to the stick in "
               f"under {REGISTRY_WAIT_S} s. A paired phone's link key and PINs are not copied. Insert, wait for "
               "'Install successfully completed', pull it, import it")
+        if params.get("fetch"):
+            print(f"  and copies {len(params['fetch'])} car files to the stick for study (read-only)")
     elif args.kind == "bundle":
         params, payload = _plan_bundle(Store(), args.serial, args.part)
         print(f"bundle: {len(params['parts'])} jobs in one run, in this order, each verified on its own "
@@ -952,6 +956,9 @@ def parser() -> argparse.ArgumentParser:
     registry.add_argument("--root", action="append", metavar="HKLM\\PATH",
                           help=f"a registry root to copy (default: {', '.join(REGISTRY_ROOTS)})")
     registry.add_argument("--depth", type=int, default=6, help="levels below each root (0-8, default 6)")
+    registry.add_argument("--fetch", action="append", default=[], metavar="PATTERN",
+                          help="also copy matching car files to the stick, read-only "
+                               "(e.g. '\\Windows\\boot.rgu'); matched against the last drive log")
     registry.set_defaults(func=cmd_job)
     bundle = job_sub.add_parser("bundle", parents=[common],
                                 help="several jobs already built, in one run (theme, apps-menu, screen "

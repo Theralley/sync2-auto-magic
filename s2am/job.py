@@ -1063,7 +1063,7 @@ def registry_script(job: Job) -> str:
     """Read-only: s2amreg.exe copies parts of SYNC's registry to the stick (registry.txt), every
     key and value under each root down to ``depth`` levels; secrets (a paired phone's link key,
     PINs) are not copied. The job waits for it at most REGISTRY_WAIT_S seconds, so a stuck read
-    cannot hold up the car, then reports as usual."""
+    cannot hold up the car, then reports as usual. ``fetch`` adds read-only copies of car files."""
     roots, depth = job.params.get("roots") or [], job.params.get("depth")
     if not 1 <= len(roots) <= 12 or any(not isinstance(r, str) or not REGISTRY_ROOT.fullmatch(r) for r in roots):
         raise ValueError(f"invalid registry roots {roots!r}")
@@ -1086,7 +1086,7 @@ def registry_script(job: Job) -> str:
         "  EndIf",
         "EndWhile",
     ]
-    return _script(lines + _inventory() + _footer(job))
+    return _script(lines + _fetch(job) + _inventory() + _footer(job))
 
 
 def hello_script(job: Job) -> str:

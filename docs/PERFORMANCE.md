@@ -135,11 +135,15 @@ the register values are from the documents, not yet read from this car):
 
 1. **Baseline, with nothing changed.** The clock, the voltage and the processor's own answer,
    next to the hardware-decoding test. Stop if the power chip cannot be read.
-2. **A read-only driver.** It only reads the clock controller and PLL1, and shows whether our
+2. **The car's own start-up settings and system files, copied read-only** (planned 2026-11-15:
+   `s2am job registry --root 'HKLM\Drivers' --fetch '\Windows\boot.rgu' ...`). They show which
+   drivers handle the clock and the power chip, and whether Freescale's own speed-step driver
+   is there. Nothing from Ford is needed: it is all on the car.
+3. **A read-only driver.** It only reads the clock controller and PLL1, and shows whether our
    code can run in the kernel at all. Stop if the memory's clock hangs on PLL1.
-3. **A rehearsal with the stock values.** Go through the whole change and back, ending at the
+4. **A rehearsal with the stock values.** Go through the whole change and back, ending at the
    same clock. Stop on any difference.
-4. **About 5% up, for a few minutes,** parked, with as little writing to storage as possible, and
+5. **About 5% up, for a few minutes,** parked, with as little writing to storage as possible, and
    back down before SYNC sleeps. Stop on any fault, or if nothing gets quicker.
 
 If the baseline shows 600 MHz, the first aim is the 800 MHz that the same chip is sold for. If

@@ -31,6 +31,16 @@ class Script(unittest.TestCase):
                       ' & out)', script)
         self.assertIn("While (n < 90)", script)
         self.assertLess(script.index('If (FileExists(out & "\\registry-done.txt"))'), script.index("Run("))
+
+    def test_fetch_copies_car_files_after_the_registry_and_writes_nothing_to_the_car(self):
+        params = {"roots": ["HKLM\\Drivers"], "depth": 6, "fetch": ["\\Windows\\boot.rgu"]}
+        script = registry_script(Job(SERIAL, "reg", params=params))
+        copy = 'Copy("\\Windows\\boot.rgu", out & "\\fetched\\Windows_boot.rgu", TRUE)'
+        self.assertIn(copy, script)
+        self.assertLess(script.index("EndWhile"), script.index(copy))
+        self.assertEqual(script.count("Copy("), registry_script(Job(SERIAL, "reg", params={**params, "fetch": []})).count("Copy(") + 1)
+        with self.assertRaises(ValueError):
+            registry_script(Job(SERIAL, "reg", params={**params, "fetch": ["\\USB Disk\\x"]}))
         self.assertIn('If (FileExists(out & "\\registry-done.txt"))', script)
         self.assertNotRegex(script, r"\b(Delete|DelTree|RmDir|RegWrite\w*|RegDelete\w*|RunWait)\(")
         for target in re.findall(r"Copy\([^,]+, ([^,]+), TRUE\)", script):  # only the usual report, to the stick

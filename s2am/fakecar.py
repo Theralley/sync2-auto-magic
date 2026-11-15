@@ -159,6 +159,10 @@ class FakeCar:
         if job.kind == "reg":  # what s2amreg.exe writes; a paired phone's key is never copied
             (out / "registry.txt").write_text("".join(f"{line}\r\n" for line in self.registry_lines))
             (out / "registry-done.txt").write_text("T|complete|2 keys|3 values|1 not copied")
+            for path in job.params.get("fetch") or []:
+                if self.exists(path):
+                    (out / "fetched").mkdir(exist_ok=True)
+                    shutil.copyfile(self._resolve(path), out / "fetched" / path.strip("\\").replace("\\", "_"))
         if job.kind == "hello":
             (out / "native-hello.txt").write_text("s2am native hello ok|wince 7.0 build 3500|uptime_ms 1\r\n")
         lines = []
