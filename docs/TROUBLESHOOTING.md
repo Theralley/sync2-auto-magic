@@ -152,6 +152,29 @@ That brought SYNC back every time. Last resort: engine off, lock the car, wait 1
 - **Fix:** use the job's undo (restore) stick now. If the screen stays dark, insert it anyway
   and wait two minutes.
 
+### The import says `interrupted` or `not-verified` (theme, Apps menu, screen or decoder job)
+- **`interrupted`:** the job began changing the car's files and did not finish (power cut,
+  stick pulled), or it found its own backup on the car from such a run. The car may hold a mix
+  of old and new files. **Fix:** build and insert the job's undo stick, as the import says
+  (`s2am job <kind> --restore <job>`). It carries the originals itself.
+- **`not-verified`:** the files the car holds are not byte for byte what the Mac expects: the
+  new ones after a job that ran to the end, or the originals after a job that rolled back (a
+  copy can go wrong and keep its length, and the car checks sizes only). A job run again from a
+  stick that holds no copy of the run that finished it (another stick, or one whose own run was
+  cut short) reads the same until the stick it finished from is imported.
+  **Fix:** the same undo stick. For a decoder job, AutoKit may not start until it has run.
+- **`failed` with "verified: the originals are back":** a new file did not copy whole, and the
+  originals the job put back were checked byte for byte. Nothing more to do.
+- **`failed`, and `s2am report --serial <serial> <job>` shows `old-report.txt`:** the stick still
+  held files from an earlier run of the job (its stop markers or its copies of the car's files),
+  and the car could not delete them. They would speak for this run, so it stopped before it
+  changed anything. **Fix:**
+  import the stick, then prepare the job on another stick and insert that one.
+- **An undo (restore) job that is `interrupted`:** prepare its stick again on the Mac
+  (`s2am stick prepare` with the same restore job) and insert it. Inserting the old stick again
+  does nothing: UpdateService has used it up. If the restore itself is `not-verified`, build a
+  new restore job instead: the car counts the old one as done.
+
 ### The new Apps menu shows nothing, or a tile starts the wrong app
 - **Fix:** insert its undo stick (`s2am job apps-menu --restore <job>`). It carries SyncExtPack's
   original `SyncApps.swf` itself; SYNC restarts with the old list. The tile pictures stay in

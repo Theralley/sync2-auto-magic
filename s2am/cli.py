@@ -20,6 +20,7 @@
     s2am job native-hello --serial S             prove compiled code runs on this SYNC 2
     s2am job runner-guard --serial S [--off]     fix the frozen screen after leaving an app
     s2am job runner-guard --boost 251|off ...    more processor for CarPlay's video (optional, untried)
+    s2am job decoder --from FOLDER --serial S    AutoKit's video decoder files swapped (untried); --restore JOB
     s2am stick prepare /Volumes/STICK --job DIR  put that job on a stick
     s2am stick import /Volumes/STICK             read back what the car wrote
     s2am status --serial XXXXXXXX                apps, plugins and menu from the last report
@@ -35,12 +36,12 @@ import xml.etree.ElementTree as ElementTree
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import apps, autokit, bootstrap, diskcheck, native, pack, stick, theme, window
+from . import apps, autokit, bootstrap, decoder, diskcheck, native, pack, stick, theme, window
 from .container import REPO, ContainerError
 from .job import (AUTOKIT_CE, AUTOKIT_LANGS, AUTOKIT_MODULES, BOOST_LEVELS, DRIVE_SECONDS, LOAD_SECONDS,
-                  REGISTRY_ROOTS, REGISTRY_WAIT_S,
+                  REGISTRY_ROOTS, REGISTRY_WAIT_S, RESTARTING,
                   SCREENS, SERIAL, STARTUP_SCREENS, SWAP_KINDS, Job, autokit_lang_file, bundle_parts, stage)
-from .state import Store, diff, parse_inventory
+from .state import VERDICTS, Store, diff, outcome, parse_inventory
 
 UPSTREAM = REPO.parent / "syncextpack"
 
@@ -73,7 +74,7 @@ JOB_KINDS = {"inventory": "inv", "autokit-stock": "akstock", "autokit-patched": 
              "remove": "rm", "install": "inst", "undo": "undo", "autokit-config": "akcfg",
              "snapshot": "snap", "logger": "log", "native-hello": "hello", "runner-guard": "guard",
              "theme": "theme", "apps-menu": "appmenu", "cleanup": "clean", "screen": "screen",
-             "bundle": "bundle", "registry": "reg"}
+             "bundle": "bundle", "registry": "reg", "decoder": "dec"}
 MARK = {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
 
 
@@ -429,6 +430,19 @@ def cmd_job(args) -> int:
             if params["screen"] in STARTUP_SCREENS:
                 print("  this screen loads when SYNC starts: if the screen stays dark afterwards, insert the "
                       "undo stick anyway and wait two minutes (RECOVERY.md)")
+    elif args.kind == "decoder":
+        params, extra = decoder.plan(Store(), args.serial, args.upstream, args.source, args.restore)
+        if params.get("restore"):
+            print(f"decoder: puts AutoKit's own three decoder files back (what {args.restore} replaced). "
+                  "SYNC does not restart")
+        else:
+            print(f"decoder: replaces AutoKit's three decoder files ({', '.join(params['files'])}), backing "
+                  "them up first. SYNC does not restart. Build the undo stick now, at the same time: "
+                  "s2am job decoder --restore <this job>")
+            print("  if a run is cut short (the stick pulled, the power lost), AutoKit may not start until "
+                  "the undo stick has run")
+        print("  AutoKit must not be running, and it keeps running hidden after its Exit button: restart "
+              "SYNC and insert the stick before opening AutoKit")
     if getattr(args, "dry_run", False):
         return 0
     job = Job(serial=args.serial, kind=JOB_KINDS[args.kind], params=params)
@@ -455,7 +469,12 @@ def cmd_stick_prepare(args) -> int:
     if not install.is_file():
         raise stick.StickError(f"{install} is missing; build the job first")
     archive = stick.prepare(Path(args.stick), install, job, require_volume=not args.any_path)
-    Store().save_job(job.serial, job.id, _record(job, "on-stick"))
+    try:  # the byte check of its run, and its last outcome, stay with the job: the car runs it only once
+        stored = Store().job(job.serial, job.id)
+        checked = {**{key: value for key, value in stored.items() if key in VERDICTS}, **outcome(stored)}
+    except (OSError, ValueError):
+        checked = {}
+    Store().save_job(job.serial, job.id, _record(job, "on-stick", **checked))
     print(f"job {job.id} is on {args.stick}")
     if archive.exists():
         print(f"earlier UpdateService files moved to {archive}")
@@ -477,9 +496,12 @@ def cmd_stick_prepare(args) -> int:
         print(f"in the car: insert the stick and LEAVE IT IN. After 'Install successfully completed' "
               f"the logger records for {seconds} s: do the test meanwhile. Leave the stick in "
               f"even if you have to restart SYNC; pull it afterwards")
+    elif job.kind == "dec":
+        print("in the car: restart SYNC and do not open AutoKit (its Exit button only hides it). Insert the "
+              "stick, wait for 'Install successfully completed', pull it, then open AutoKit")
     else:
         print("in the car: insert the stick, wait for 'Install successfully completed', pull it")
-    if job.kind in apps.MENU_KINDS or job.kind in (*SWAP_KINDS, "bundle"):
+    if job.kind in RESTARTING:
         print("SYNC restarts after this job")
     if not _read_back(Path(args.stick), install, job, args):
         return 1
@@ -495,8 +517,9 @@ def cmd_stick_import(args) -> int:
     for record in results:
         note = " (stick was inserted again; nothing ran twice)" if record.get("replayed") else ""
         reason = f" ({record['reason']})" if record.get("reason") else ""
-        print(f"{record['id']}: {record['status']}{note}{reason}{STOP_HINTS.get(record['status'], '')}")
         report = store.report(record.get("serial", ""), record["id"]) if record.get("serial") else None
+        verdict = _byte_check(store, record, report)
+        print(f"{record['id']}: {record['status']}{note}{reason}{_hint(record)}")
         if report and (report / "mount-check.txt").is_file():
             print("  warning: " + (report / "mount-check.txt").read_text(errors="replace").strip()
                   + " (use one stick, always in the same USB port)")
@@ -517,9 +540,8 @@ def cmd_stick_import(args) -> int:
             done = report / "registry-done.txt"
             print("  " + (done.read_text(errors="replace").strip().replace("|", ", ") if done.is_file() else
                           "NOT complete: s2amreg.exe did not finish in time; registry.txt may be partial"))
-        if record.get("kind") in SWAP_KINDS and record["status"] == "applied" and report \
-                and not record.get("replayed"):
-            print(f"  {theme.verify(report, record['params'], record['kind'])}")
+        if verdict:
+            print(f"  {verdict}")
         if record.get("kind") in apps.MENU_KINDS and record["status"] == "applied":
             verdict = _verify_menu(store, record)
             print(f"  {verdict}")
@@ -534,15 +556,82 @@ STOP_HINTS = {
                "which and why. Parts before it are on the car",
     "not-run": ": an earlier part of its bundle stopped, so this one did not run",
     "interrupted": ": it started but did not finish (power cut or stick pulled). Run the undo stick",
+    "not-verified": ": the files on the car do not match byte for byte (below). Run the undo stick",
     "stale": ": the car's files changed since the job was planned. Nothing changed; run an "
              "inventory (or a drive log, for a theme), then plan again",
-    "busy": ": the app was running and nothing changed. UpdateService used up the stick anyway: "
+    "busy": ": the app was running, so this run changed nothing. UpdateService used up the stick anyway: "
             "restart SYNC, run `s2am stick prepare` with the same job again, then insert it",
     "rollback-failed": ": the car may have a damaged file; use the undo (restore) stick now; "
                        "if the screen stays dark, insert it anyway and wait two minutes",
-    "failed": ": the job stopped; its report says why "
-              "(if a restore did not complete, run the restore stick again)",
+    "failed": ": the job stopped; its report says why (if a restore did not complete, prepare the "
+              "restore stick again with `s2am stick prepare` and the same restore job, then insert it)",
 }
+SWAP_COMMANDS = {kind: name for name, kind in JOB_KINDS.items() if kind in SWAP_KINDS}
+
+
+def _byte_check(store: Store, record: dict, report: Path | None) -> str | None:
+    """The Mac's byte check of a swap job's files on the car, from its report; returns the line
+    to print. The car checks sizes only, and a copy can go wrong at full length.
+
+    A job that ran to the end is checked from what its run copied to the stick (applied/ and
+    backup/; each run deletes an earlier run's first, job.READBACK). A replay ran nothing: one
+    already checked keeps that check (state.VERDICTS) and says nothing new; one not yet checked, or
+    not successfully, is checked from its first run's copy on this stick if that run finished here
+    (done.txt, so "applied"). Otherwise (a replay from another stick, or of a run cut short on this
+    one, whose copies the finished run may not match) it keeps a failed check or, without any,
+    reads as not verified: nothing shows what the car holds. After a failed copy, what the rollback
+    put back (rolledback/) is checked against the originals. A failed check makes the job
+    "not-verified" and stays with it until a later check of the same job succeeds.
+    """
+    if record.get("kind") not in SWAP_KINDS:
+        return None
+    status, params, kept = record["status"], record["params"], record.get("verified") or record.get("not_verified")
+    replayed, earlier = record.get("replayed"), False
+    if status in ("applied", "already-applied"):
+        if replayed and record.get("verified"):
+            return None  # checked at an earlier import; nothing ran now
+        if report is not None and status == "applied":  # the run that finished, on this stick
+            verdict = theme.verify(report, params, record["kind"])
+        elif kept:
+            verdict, earlier = kept, True
+        else:
+            verdict = ("NOT verified: this stick holds no copy from the run that finished the job (it ran from "
+                       "another stick, or was cut short on this one), so nothing shows that the car has the "
+                       "planned files")
+    elif status == "failed" and report is not None and (report / "copy-failed.txt").is_file() \
+            and not params.get("restore"):
+        verdict = theme.verify_rollback(report, params)
+    else:  # it did not get far enough this time to show anything: an earlier check still stands
+        return f"its last byte check, at an earlier import: {kept}" if kept else None
+    good = verdict.startswith("verified")
+    if not good:
+        record["status"] = "not-verified"
+    for key in VERDICTS:
+        record.pop(key, None)
+    record["verified" if good else "not_verified"] = verdict
+    stored = {key: value for key, value in store.job(record["serial"], record["id"]).items() if key not in VERDICTS}
+    store.save_job(record["serial"], record["id"], {**stored, "status": record["status"],
+                                                    "outcome": record["status"],  # what this import found
+                                                    "verified" if good else "not_verified": verdict})
+    return verdict + (" (from an earlier import)" if earlier else "")
+
+
+def _hint(record: dict) -> str:
+    """STOP_HINTS for the record's status, in the words of its own job where they differ: a swap
+    job's undo is a restore job built from it, and a restore that did not finish runs again from
+    a stick prepared again (UpdateService has used up the one it ran from)."""
+    status, kind, params = record["status"], record.get("kind"), record.get("params") or {}
+    if kind not in SWAP_COMMANDS or status not in ("interrupted", "not-verified", "rollback-failed"):
+        return STOP_HINTS.get(status, "")
+    autokit = "; AutoKit may not start until it has run" if kind == "dec" else ""
+    if params.get("restore") and status == "not-verified":  # it ran to the end: the car counts it as done
+        return (f": the original files are not all back. Build the restore again (a new job) with "
+                f"`s2am job {SWAP_COMMANDS[kind]} --restore {params['restore']}` and insert its stick{autokit}")
+    if params.get("restore"):
+        return (": the original files may not all be back. Prepare this restore stick again with "
+                f"`s2am stick prepare` and the same job ({record['id']}), then insert it{autokit}")
+    return (f"{STOP_HINTS[status]}. Build it with `s2am job {SWAP_COMMANDS[kind]} --restore {record['id']}`"
+            f"{autokit}")
 
 
 def _guard_on(entries) -> bool:
@@ -630,11 +719,17 @@ def cmd_status(args) -> int:
         print(f"no inventory for {args.serial} yet: run 's2am job inventory --serial {args.serial}'")
         return 1
     job_id, entries, info = latest
+    try:
+        unchecked = store.job(args.serial, job_id).get("not_verified")
+    except (OSError, ValueError):
+        unchecked = None
     apps = sorted({"\\".join(e.path.split("\\")[:5]) for e in entries
                    if e.kind == "D" and e.path.lower().count("\\") >= 4})
     plugins = sorted(e.path.rsplit("\\", 1)[-1] for e in entries
                      if e.kind == "F" and e.path.lower().startswith("\\windows\\"))
     print(f"car {args.serial}, report {job_id}")
+    if unchecked:  # the newest picture of the car, from a job whose own files did not check out
+        print(f"  warning: job {job_id} did not pass the byte check ({unchecked}); run its undo stick")
     for key in ("time", "mortscript", "free"):
         if key in info:
             print(f"  {key}: {info[key]}")
@@ -733,8 +828,8 @@ def cmd_report(args) -> int:
         print("no imported report", file=sys.stderr)
         return 1
     print(f"report {job_id}")
-    for name in ("info.txt", "busy.txt", "stale.txt", "firmware-image-removed.txt",
-                 "native-hello.txt", "guard-selftest.txt", "selftest-failed.txt"):
+    for name in ("info.txt", "busy.txt", "stale.txt", "started-before.txt", "old-report.txt",
+                 "firmware-image-removed.txt", "native-hello.txt", "guard-selftest.txt", "selftest-failed.txt"):
         if (report / name).is_file():
             print(f"[{name}] " + (report / name).read_text(errors="replace").strip().replace("\r\n", "; "))
     if (report / "registry.txt").is_file():
@@ -950,6 +1045,14 @@ def parser() -> argparse.ArgumentParser:
     screen.add_argument("--fetch", action="append", default=[], metavar="PATTERN",
                         help="also copy matching car files to the stick, read-only")
     screen.set_defaults(func=cmd_job)
+    faster = job_sub.add_parser("decoder", parents=[common],
+                                help="replace AutoKit's three video decoder files (FFmpeg) with your own build, "
+                                     "backed up first; undo with --restore JOB (not tried in the car)")
+    source = faster.add_mutually_exclusive_group(required=True)
+    source.add_argument("--from", dest="source", type=Path,
+                        help="a folder with avcodec-56.dll, avutil-54.dll and avformat-56.dll, all three")
+    source.add_argument("--restore", metavar="JOB_ID", help="put back what that decoder job replaced")
+    faster.set_defaults(func=cmd_job)
     registry = job_sub.add_parser("registry", parents=[common],
                                   help="read-only: copy SYNC's Bluetooth, call, audio and other settings from "
                                        "the registry to the stick (link keys and PINs are not copied)")

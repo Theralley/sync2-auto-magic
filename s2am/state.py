@@ -41,6 +41,30 @@ def parse_info(text: str) -> dict[str, str]:
 
 
 SUCCESS = ("applied", "already-applied")
+# A job that ran to the end but whose files on the car failed the Mac's byte check: not a success,
+# but its inventory is still the car as it was read then, so it counts as the newest inventory.
+INVENTORIED = (*SUCCESS, "not-verified")
+# The Mac's byte check of a swap job's files on the car, kept in the job's record from the import
+# that made it until a later one succeeds (cli._byte_check): a stick prepared again, an import of a
+# pending stick or a replay must not lose it.
+VERDICTS = ("verified", "not_verified")
+# The status the last import found (any but "pending": the car had run the job) and when it was
+# imported. A stick prepared again ("on-stick") or imported before the car ran it ("pending") keeps
+# both, so the job keeps its place among the inventories (successful) whatever its status says now.
+OUTCOME = ("outcome", "imported_utc")
+# Statuses no import gives a job that ran (built, put on a stick, imported before it ran, set aside)
+NOT_RUN = ("built", "on-stick", "pending", "withdrawn")
+
+
+def outcome(record: dict) -> dict:
+    """The OUTCOME fields to carry into a record that replaces this one. A record saved before
+    they were kept has only its status: if an import gave it (it has imported_utc and is not one
+    of NOT_RUN), that status was its outcome."""
+    if "outcome" in record:
+        return {key: record[key] for key in OUTCOME if key in record}
+    if record.get("status") not in (None, *NOT_RUN) and record.get("imported_utc"):
+        return {"outcome": record["status"], "imported_utc": record["imported_utc"]}
+    return {}
 
 
 class Store:
@@ -105,8 +129,10 @@ class Store:
         return path if path.is_dir() else None
 
     def successful(self, serial: str) -> list[dict]:
-        """Jobs whose inventory reached the Mac, in the order the Mac imported them."""
-        records = [r for r in self.jobs(serial) if r.get("status") in SUCCESS
+        """Jobs whose inventory reached the Mac, in the order the Mac imported them (a job that
+        ran to the end but failed the byte check included: its inventory is still the car's), by
+        their last outcome (OUTCOME; a record from before it was kept has only its status)."""
+        records = [r for r in self.jobs(serial) if r.get("outcome", r.get("status")) in INVENTORIED
                    and (report := self.report(serial, r["id"]))
                    and (report / "inventory.txt").is_file()]
         return sorted(records, key=lambda r: (r.get("imported_utc", ""), r.get("created_utc", "")))

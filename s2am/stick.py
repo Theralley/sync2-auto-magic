@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .job import Job, bundle_parts
-from .state import Store
+from .state import VERDICTS, Store, outcome
 
 UPDATER_DIR = "SyncExtPack"
 # Earlier runs' files, plus the bootstrap's stage-one files: leaving Installer.jpg
@@ -28,11 +28,24 @@ UPDATER_FILES = ("install.bin", "installed.bin", "install_log.txt", "pack_instal
 # Stands in for installed.bin on the stick of a job that measures (read from UpdateService's
 # code, see docs/TOOLKIT-PLAN.md; not yet seen in the car).
 STAY = b"s2am: this file keeps install.bin in place, so the same stick runs again and fetches the logs\r\n"
-STOPPED = {"stale.txt": "stale", "busy.txt": "busy", "backup-failed.txt": "failed",
-           "rollback-failed.txt": "rollback-failed",
-           "backup-missing.txt": "failed", "copy-failed.txt": "failed", "payload-bad.txt": "failed",
-           "missing.txt": "failed", "selftest-failed.txt": "failed", "backup-bad.txt": "failed",
-           "unknown-runner.txt": "failed",
+# What the script's markers say, the most severe first: the import reads the first one present
+# (_status). One run writes one stop, but a report can hold more: a marker an earlier run left
+# that the car could not delete (a run that finds one stops first of all, job.OLD_REPORT, so only
+# a job built before that check runs on with it), or a progress marker (CHANGING, a bundle's
+# started.txt) that a later stop of the same run supersedes. Conflicting markers read as the worst.
+STOPPED = {# the car may hold a damaged file, or a mix of old and new ones, or files a rollback put
+           # back that only the Mac's byte check confirms
+           "rollback-failed.txt": "rollback-failed", "copy-failed.txt": "failed",
+           # a swap cut short: it found its own backup on the car, or it began changing the car and
+           # reached neither a stop nor done.txt (job.CHANGING; after it a run writes only the two above)
+           "started-before.txt": "interrupted", "changing.txt": "interrupted",
+           # this run changed nothing, because an earlier run's files would not go: above the plain
+           # "nothing changed" stops, so an earlier one of those does not speak for it
+           "old-report.txt": "failed",
+           # stopped before changing anything (the guard's, its own business)
+           "stale.txt": "stale", "busy.txt": "busy", "backup-failed.txt": "failed",
+           "backup-missing.txt": "failed", "payload-bad.txt": "failed", "missing.txt": "failed",
+           "selftest-failed.txt": "failed", "backup-bad.txt": "failed", "unknown-runner.txt": "failed",
            # a bundle: its part that stopped says why; parts after it never ran (checked last)
            "part.txt": "stopped", "started.txt": "interrupted", "queued.txt": "not-run"}
 
@@ -159,17 +172,17 @@ def import_reports(stick: Path, store: Store, require_volume: bool = True) -> li
         status, replayed = _status(report, updater)
         now = datetime.now(timezone.utc).isoformat(timespec="microseconds")
         try:
-            earlier = store.job(job.serial, job.id).get("imported_utc") if replayed else None
+            stored = store.job(job.serial, job.id)
         except (OSError, ValueError):
-            earlier = None
+            stored = {}
         # A replayed job ran nothing: its report is the first run's, so it keeps that run's
         # place in time instead of looking like fresh evidence.
         record = {**json.loads(job.to_json()), "status": status, "replayed": replayed,
-                  "imported_utc": earlier or now}
-        try:
-            known = store.job(job.serial, job.id).get("status")
-        except (OSError, ValueError, KeyError):
-            known = None
+                  "imported_utc": (stored.get("imported_utc") if replayed else None) or now}
+        known = stored.get("status")
+        record.update({key: stored[key] for key in VERDICTS if key in stored})  # whatever this import says
+        if status == "pending":  # the car has not run it: its last outcome, and when, stay as they were
+            record.update(outcome(stored))
         if known == "applied" and status not in ("applied", "already-applied"):
             # it ran from another stick; this one (a bundle that stopped before it) did not run it
             results.append({**record, "status": status, "reason": "it is applied already, from another run"})
@@ -183,6 +196,8 @@ def import_reports(stick: Path, store: Store, require_volume: bool = True) -> li
             store.save_report(job.serial, job.id, report)
         if status != "pending" and log.is_file() and not log.is_symlink():
             store.save_log(job.serial, job.id, log)
+        if status != "pending":
+            record["outcome"] = record["status"]
         store.save_job(job.serial, job.id, record)
         results.append(record)
         if status != "pending":

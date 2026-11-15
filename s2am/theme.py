@@ -311,7 +311,7 @@ def plan_screen(store: Store, serial: str, screen: str | None, swf: Path | None,
 def verify(report: Path, params: dict, kind: str = "theme") -> str:
     """After import: did the car end up with exactly the planned files (and a whole backup)?"""
     applied = report / "applied"
-    name = {"theme": "theme", "appmenu": "Apps menu"}.get(kind, "screen")
+    name = {"theme": "theme", "appmenu": "Apps menu", "dec": "decoder"}.get(kind, "screen")
     if params.get("restore"):
         expected = params["sha256"]
         what = f"the original {name} is back"
@@ -329,3 +329,15 @@ def verify(report: Path, params: dict, kind: str = "theme") -> str:
     if wrong:
         return f"NOT verified: these files on the car are not the planned ones: {wrong}"
     return f"verified: {what} ({len(expected)} files match byte for byte)"
+
+
+def verify_rollback(report: Path, params: dict) -> str:
+    """After a new file did not copy whole and the job copied the originals back (copy-failed.txt):
+    are the files it put back the originals, byte for byte? The car checked only their sizes."""
+    back = report / "rolledback"
+    files = params["files"]
+    wrong = [n for n, f in files.items()
+             if not (back / n).is_file() or sha256((back / n).read_bytes()) != f.get("old_sha256")]
+    if wrong:
+        return f"NOT verified: after the rollback these files on the car are not the originals: {wrong}"
+    return f"verified: the originals are back ({len(files)} files match byte for byte)"

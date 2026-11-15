@@ -8,13 +8,14 @@ install.bin renamed to installed.bin unless installed.bin is already there.
 """
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 
-from .job import (AUTOKIT_CE, AUTOKIT_LOGS, AUTOKIT_MODULES, BACKUP_DIR, BOOST_STUCK_OFF, BOOST_STUCK_ON,
-                  BOOST_STUCK_WRITE, GUARD_BOOST, GUARD_LOG, INVENTORY_ROOT, LOAD_LOGS, MENU_XML, load_folder,
-                  PHASE_DIR, PLUGINS_MASK, REPORTS_DIR, SWAP_KINDS, TOOLS_CE, Job, bundle_parts,
-                  ce_path, swap_target)
+from .job import (AUTOKIT_CE, AUTOKIT_LOGS, AUTOKIT_MODULES, BACKUP_DIR, BOOST_STUCK_OFF, BOOST_STUCK_ON, CHANGING,
+                  BOOST_STUCK_WRITE, GUARD_BOOST, GUARD_LOG, INVENTORY_ROOT, LOAD_LOGS, MENU_XML, OLD_REPORT_MARKER,
+                  PHASE_DIR, PLUGINS_MASK, REPORTS_DIR, STICK_MOUNTS, SWAP_KINDS, TOOLS_CE, Job, bundle_parts,
+                  ce_path, load_folder, swap_lines, swap_target)
 
 
 class PowerCut(Exception):
@@ -29,7 +30,10 @@ class FakeCar:
         self.autokit_running = False
         self.running: set[str] = set()  # lower-case process names
         self.broken_copies: set[str] = set()  # lower-case CE paths whose Copy silently fails
-        self.stuck_files: set[str] = set()  # lower-case CE paths whose Delete silently fails
+        self.garbled_copies: set[str] = set()  # lower-case CE paths whose Copy keeps the length, not the bytes
+        self.locked_files: set[str] = set()  # lower-case CE paths a running program holds open
+        self.stuck_files: set[str] = set()  # lower-case CE paths whose Delete (or DelTree) silently fails
+        self.stick: Path | None = None  # the stick in the car: its files are under STICK_MOUNTS[0] for the knobs
         self.registry: dict[str, dict[str, str]] = {}  # "HKLM\\Services\\X" -> values
         self.watch_lines: list[str] = ["12:00:00.000|start|s2am watch|seconds 180|toolhelp 1",
                                        "12:00:00.010|proc+|57|AutoKit.exe|threads 9", "12:03:00.000|end"]
@@ -45,6 +49,8 @@ class FakeCar:
             "V|HKLM\\Software\\Microsoft\\Bluetooth\\Device\\001122334455|key|binary|<not copied, 16 bytes>",
             "T|complete|2 keys|3 values|1 not copied"]
         self.power_cut_after_phase = False
+        self.power_cut_after_copy: str | None = None  # lower-case CE path: the power goes once it is written
+        self.power_cut_after_job = False  # the power goes after the job's script, before install.bin is renamed
         self.native_runs = True  # does a CeGCC program start on this car? (test knob)
         self.thread_priority = True  # does the guard's self-test find the boost's thread functions?
         root.mkdir(parents=True, exist_ok=True)
@@ -60,6 +66,9 @@ class FakeCar:
         return current
 
     def _ce(self, path: Path) -> str:
+        """The CE path of a file on the car, or of one on the stick (as the car sees the stick)."""
+        if self.stick is not None and not path.is_relative_to(self.root) and path.is_relative_to(self.stick):
+            return STICK_MOUNTS[0] + "\\" + str(path.relative_to(self.stick)).replace("/", "\\")
         return "\\" + str(path.relative_to(self.root)).replace("/", "\\")
 
     def put(self, ce: str, data: bytes) -> None:
@@ -90,6 +99,9 @@ class FakeCar:
                 shutil.copyfile(source, target)  # CREATE_ALWAYS
         try:
             self._run_inventory(stick, job)
+            if self.power_cut_after_job:  # the job finished, UpdateService did not
+                self.power_cut_after_job = False
+                raise PowerCut
         except PowerCut:
             return  # no log, no rename: the stick still carries install.bin
         (updater / "install_log.txt").write_text("Install successfully completed!\n")
@@ -100,6 +112,7 @@ class FakeCar:
     def _run_inventory(self, stick: Path, job: Job) -> None:
         out = stick / job.report_dir.replace(REPORTS_DIR.split("/s2am")[0] + "/", "")
         out.mkdir(parents=True, exist_ok=True)
+        self.stick = stick
         if self.exists(job.done_marker):
             (out / "replayed.txt").write_text(job.id)
             if job.kind == "akcfg" and job.params.get("measure"):
@@ -212,12 +225,21 @@ class FakeCar:
                                       f"mortscript=4.2\r\nfree=123456\r\n")
 
     def _copy(self, source: Path, target: Path) -> None:
-        """MortScript Copy: a broken target silently ends up truncated (ErrorLevel off)."""
+        """MortScript Copy: a broken target silently ends up truncated, a garbled one damaged at
+        its full length, and a locked one (a DLL a running program has loaded) silently stays as it
+        was (ErrorLevel off). A copy onto the stick takes the same knobs, by its path on the stick."""
+        if self._ce(target).lower() in self.locked_files or not source.is_file():
+            return  # a source that is not there copies nothing, silently too
         data = source.read_bytes()
         if self._ce(target).lower() in self.broken_copies:
             data = data[: len(data) // 2]
+        if self._ce(target).lower() in self.garbled_copies:
+            data = bytes(b ^ 0xFF for b in data[:16]) + data[16:]
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
+        if self._ce(target).lower() == self.power_cut_after_copy:
+            self.power_cut_after_copy = None
+            raise PowerCut
 
     def _swap(self, out: Path, job: Job) -> bool:
         p, th = job.params, self._resolve(swap_target(job.kind, job.params)[0])
@@ -227,11 +249,35 @@ class FakeCar:
         def stop(marker: str) -> bool:
             (out / marker).write_text(marker)
             return False
+        def size(path: Path) -> int:  # MortScript's FileSize: no file, no size that could match
+            return path.stat().st_size if path.is_file() else -1
+        # the script's own first lines: an earlier run's stop markers leave the report, or the run
+        # stops if one will not go (job._clear_stops)
+        script = "\n".join(swap_lines(job))
+        for marker in re.findall(r'^Delete\(out & "\\([\w.-]+)"\)$', script, re.M):
+            if self._ce(out / marker).lower() not in self.stuck_files:
+                (out / marker).unlink(missing_ok=True)
+        if any((out / marker).exists()
+               for marker in re.findall(r'^If \(FileExists\(out & "\\([\w.-]+)"\)\)$', script, re.M)):
+            return stop(OLD_REPORT_MARKER)
+        backup = self._resolve(f"{BACKUP_DIR}\\{job.id}")
+        if not p.get("restore") and backup.is_dir():
+            return stop("started-before.txt")  # first: a run cut short fails the checks below
+        if job.kind == "dec" and (self.autokit_running or "autokit.exe" in self.running):
+            return stop("busy.txt")  # as in the script: before anything is touched
         if not th.is_dir():
             return stop("missing.txt")
+        # as the script does: what an earlier run copied onto the stick goes, or the run stops (job.READBACK)
+        for name in re.findall(r'^DelTree\(out & "\\([\w.-]+)"\)$', script, re.M):
+            if self._ce(out / name).lower() not in self.stuck_files:
+                shutil.rmtree(out / name, ignore_errors=True)
+        if any((out / name).exists() for name in re.findall(r'^If \(DirExists\(out & "\\([\w.-]+)"\)\)$', script,
+                                                            re.M)):
+            return stop(OLD_REPORT_MARKER)
         if p.get("restore"):
             if any((jd / f"orig-{n}").stat().st_size != size for n, size in files.items()):
                 return stop("payload-bad.txt")
+            (out / CHANGING).write_text(job.id)
             for name in files:
                 self._copy(jd / f"orig-{name}", th / name)
             if any((th / n).stat().st_size != size for n, size in files.items()):
@@ -244,15 +290,14 @@ class FakeCar:
                 return stop("stale.txt")
             if any((jd / f"new-{n}").stat().st_size != f["new"] for n, f in files.items()):
                 return stop("payload-bad.txt")
-            backup = self._resolve(f"{BACKUP_DIR}\\{job.id}")
-            if backup.is_dir():
-                return stop("stale.txt")  # this job started once before
-            (out / "backup").mkdir()
+            (out / "backup").mkdir(exist_ok=True)
             for name in files:
                 self._copy(th / name, backup / name)
-                shutil.copyfile(backup / name, out / "backup" / name)  # the car's backup, onto the stick
-            if any((backup / n).stat().st_size != f["old"] for n, f in files.items()):
+                self._copy(backup / name, out / "backup" / name)  # the car's backup, onto the stick
+            # as the script does: both copies whole, the car's and the stick's, before any change
+            if any(size(copy / n) != f["old"] for n, f in files.items() for copy in (backup, out / "backup")):
                 return stop("backup-failed.txt")
+            (out / CHANGING).write_text(job.id)
             for name in added:
                 self._copy(jd / ("add-" + name.replace("\\", "_")), th / name.replace("\\", "/"))
             for name in files:
@@ -262,13 +307,16 @@ class FakeCar:
                     self._copy(backup / name, th / name)
                 if any((th / n).stat().st_size != f["old"] for n, f in files.items()):
                     return stop("rollback-failed.txt")
+                (out / "rolledback").mkdir(exist_ok=True)
+                for name in files:  # what the rollback put back, onto the stick, for the Mac's byte check
+                    self._copy(th / name, out / "rolledback" / name)
                 return stop("copy-failed.txt")
             done = f"{job.kind}-applied.txt"
-        (out / "applied").mkdir()
+        (out / "applied").mkdir(exist_ok=True)
         for name in files:
-            shutil.copyfile(th / name, out / "applied" / name)
+            self._copy(th / name, out / "applied" / name)
         for name in added if not p.get("restore") else []:
-            shutil.copyfile(th / name.replace("\\", "/"), out / "applied" / name.replace("\\", "_"))
+            self._copy(th / name.replace("\\", "/"), out / "applied" / name.replace("\\", "_"))
         (out / done).write_text(job.id)
         for path in p.get("fetch") or []:
             if self.exists(path):

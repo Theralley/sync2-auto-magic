@@ -24,6 +24,10 @@ from s2am.state import Store  # noqa: E402
 
 HAVE_UPSTREAM = (ROOT.parent / "syncextpack" / "SyncExtPack").exists()
 SERIAL = "XV31M13H"
+# A swap script deletes only what runs write to the stick: stop markers, and an earlier run's
+# copies in the report folder (job.READBACK). It writes no registry and starts no program.
+NO_DELETES = (r'\b(Delete(?!\(out & ")|(DelTree|RmDir)(?!\(out & "\\(applied|rolledback|backup)"\))'
+              r'|RegWrite\w*|Run|RunWait)\(')
 SCREEN = "Phone/PhoneHistory/PhoneHistory.swf"
 
 
@@ -91,7 +95,7 @@ class Checks(unittest.TestCase):
         script = theme_script(Job(SERIAL, "theme", params={"files": files, "fetch": ["\\Windows\\bthcsr.dll"]}))
         for target in re.findall(r"Copy\([^,]+, ([^,]+), TRUE\)", script):
             self.assertRegex(target, r'^(th|bk|out|"\\SyncExtendedPack\\_s2am)')
-        self.assertNotRegex(script, r"\b(Delete|DelTree|RmDir|RegWrite\w*|Run)\(")
+        self.assertNotRegex(script, NO_DELETES)
         self.assertIn('ReadFile(th & "\\Theme.XML") ne ReadFile(jd & "\\old-Theme.XML")', script)
         self.assertIn("NEED_REBOOT=True", meta(Job(SERIAL, "theme")).decode("utf-16-le"))
         with self.assertRaises(ValueError):
@@ -103,7 +107,7 @@ class Checks(unittest.TestCase):
                                                               "added": {"Tiles\\AutoKitPlugin.png": {"new": 5}}}))
         self.assertIn('MkDir(th & "\\Tiles")', script)
         self.assertIn('Copy(jd & "\\add-Tiles_AutoKitPlugin.png", th & "\\Tiles\\AutoKitPlugin.png", TRUE)', script)
-        self.assertNotRegex(script, r"\b(Delete|DelTree|RmDir|RegWrite\w*|Run)\(")
+        self.assertNotRegex(script, NO_DELETES)
         for added in ({"..\\Windows\\x.png": {"new": 5}}, {"Tiles\\a.exe": {"new": 5}}):
             with self.assertRaises(ValueError):
                 swap_script(Job(SERIAL, "appmenu", params={"files": menu, "added": added}))
@@ -122,7 +126,8 @@ class Checks(unittest.TestCase):
             self.assertIn(f'WriteFile(stick & "\\s2am\\reports\\{part.id}\\queued.txt"', script)
         self.assertLess(script.index(screen.id + "\\queued.txt"), script.index('Copy(jd & "\\new-PhoneHistory.swf"'))
         self.assertIn(f'jd = "\\SyncExtendedPack\\_s2am\\jobs\\{bundle.id}"', script)  # the cleanup keeps it
-        self.assertEqual(script.count("DelTree("), 1)
+        # the cleanup's; the screen part's delete only its earlier run's copies on the stick (job.READBACK)
+        self.assertEqual(len(re.findall(r'DelTree\((?!out & ")', script)), 1)
         self.assertIn("NEED_REBOOT=True", meta(bundle).decode("utf-16-le"))
         for wrong in ([{**parts[1]}, {**parts[0]}], [parts[0], parts[0]],
                       [{"kind": "rm", "id": parts[0]["id"].replace("screen", "rm"), "created_utc": screen.created_utc,
@@ -169,15 +174,23 @@ class Checks(unittest.TestCase):
         self.assertLess(stop, script.index('WriteFile(out & "\\done.txt"'))
         for message in ("car may have a damaged file", "use the undo (restore) stick now",
                         "screen stays dark", "insert it anyway and wait two minutes",
-                        "nothing changed; the originals are back"):
+                        "the originals were copied back and their sizes match; the Mac checks them byte for byte"):
             self.assertIn(message, script)
+        self.assertNotIn("the originals are back", script)  # the car checked sizes only
+        for name in files:  # what the rollback put back goes to the stick before the stop says so
+            self.assertLess(stop, script.index(f'  Copy(th & "\\{name}", out & "\\rolledback\\{name}", TRUE)'))
+            self.assertLess(script.index(f'  Copy(th & "\\{name}", out & "\\rolledback\\{name}", TRUE)'),
+                            script.index('WriteFile(out & "\\copy-failed.txt"'))
 
     def test_restore_script_says_an_incomplete_restore_must_run_again(self):
         script = theme_script(Job(SERIAL, "theme", params={
             "files": {"red.bmp": 10}, "restore": "20261101-120000-theme-abcd"}))
         self.assertIn('WriteFile(out & "\\copy-failed.txt"', script)
         self.assertIn("restore did not complete", script)
-        self.assertIn("run the restore stick again", script)
+        # UpdateService used the stick up: only a stick prepared again runs the restore again
+        self.assertIn("Prepare this restore stick again on the Mac (s2am stick prepare with the same restore job)",
+                      script)
+        self.assertNotIn("run the restore stick again", script)
         self.assertNotIn("rollback-failed.txt", script)
 
     def test_a_bundle_part_cut_short_reads_as_interrupted(self):
@@ -196,7 +209,7 @@ class Checks(unittest.TestCase):
         self.assertIn('th = "\\8inchSkins\\Ford\\Sync\\Apps\\Phone\\PhoneHistory"', script)
         for target in re.findall(r"Copy\([^,]+, ([^,]+), TRUE\)", script):
             self.assertRegex(target, r'^(th|bk|out)')
-        self.assertNotRegex(script, r"\b(Delete|DelTree|RmDir|RegWrite\w*|Run)\(")
+        self.assertNotRegex(script, NO_DELETES)
         self.assertIn("NEED_REBOOT=True", meta(Job(SERIAL, "screen")).decode("utf-16-le"))
         # the stick's copy of the backup is checked too, before the screen is touched
         self.assertLess(script.index('If (FileSize(out & "\\backup\\PhoneHistory.swf") <> 9)'),
@@ -228,7 +241,8 @@ class SwapFailures(unittest.TestCase):
         self.addCleanup(patcher.stop)
         self.car = FakeCar(self.tmp / "car", SERIAL)
         self.originals = {"red.bmp": b"original red", "blue.bmp": b"original blue"}
-        self.files = {name: {"old": len(data), "new": len(data) + 4}
+        self.files = {name: {"old": len(data), "new": len(data) + 4, "old_sha256": theme.sha256(data),
+                             "new_sha256": theme.sha256(data + b" new")}
                       for name, data in self.originals.items()}
         for name, data in self.originals.items():
             self.car.put(f"{THEMES_CE}\\{name}", data)
@@ -238,7 +252,7 @@ class SwapFailures(unittest.TestCase):
     def run_job(self, job):
         work = self.tmp / job.id
         payload = work / "payload" / job.job_dir.lstrip("/")
-        payload.mkdir(parents=True)
+        payload.mkdir(parents=True, exist_ok=True)  # the same job may go on the stick again
         for name, data in self.originals.items():
             prefix = "orig" if job.params.get("restore") else "new"
             (payload / f"{prefix}-{name}").write_bytes(data if prefix == "orig" else data + b" new")
@@ -276,6 +290,18 @@ class SwapFailures(unittest.TestCase):
                     self.assertIn(message, imported)
                 self.assertNotIn("verified:", imported)
 
+    def test_a_later_run_of_the_same_job_is_not_hidden_by_an_earlier_stale_one(self):
+        self.car.put(f"{THEMES_CE}\\red.bmp", b"another red, longer")
+        job = Job(SERIAL, "theme", params={"files": self.files})
+        status, report, _ = self.run_job(job)
+        self.assertEqual(status, "stale")
+        self.car.put(f"{THEMES_CE}\\red.bmp", self.originals["red.bmp"])  # the car is as planned again
+        self.car.broken_copies = {f"{THEMES_CE}\\red.bmp".lower()}
+        status, report, imported = self.run_job(job)  # the same job, prepared on the same stick again
+        self.assertEqual(status, "rollback-failed")
+        self.assertFalse((report / "stale.txt").exists())
+        self.assertIn("rollback-failed", imported)
+
     def test_short_copy_with_complete_rollback_keeps_copy_failed(self):
         self.car.broken_copies.add(f"{THEMES_CE}\\red.bmp".lower())
         copy = self.car._copy
@@ -302,7 +328,7 @@ class SwapFailures(unittest.TestCase):
         self.assertTrue((report / "copy-failed.txt").is_file())
         self.assertFalse((report / "rollback-failed.txt").exists())
         self.assertNotIn("old files were copied back", imported)
-        self.assertIn("run the restore stick again", imported)
+        self.assertIn("prepare the restore stick again with `s2am stick prepare` and the same restore job", imported)
 
 
 @unittest.skipUnless(HAVE_UPSTREAM, "syncextpack fixtures not present")
@@ -450,7 +476,8 @@ class Loop(unittest.TestCase):
         stick.prepare(self.stick, work / "install.bin", job, require_volume=False)
         self.car.insert(self.stick, work, job)
         _, imported = self.cli("stick", "import", str(self.stick), "--any-path")
-        self.assertIn("stale", imported)
+        self.assertIn(f"{job.id}: interrupted", imported)  # checked before the theme: a cut run leaves a mix
+        self.assertIn("Run the undo stick", imported)
         self.assertEqual(self.car_theme(), self.ford)
 
     def test_a_replayed_stick_gets_no_verdict(self):
@@ -673,6 +700,9 @@ class Loop(unittest.TestCase):
         swf.write_bytes(flash(10, b"our icons" * 1000, compressed=True))
         job, _, imported = self.run_job("screen", "--screen", SCREEN, "--swf", str(swf))
         self.assertIn("NOT verified: the backup on the stick is missing or differs", imported)
+        self.assertIn(f"{job.id}: not-verified: the files on the car do not match byte for byte (below). "
+                      f"Run the undo stick. Build it with `s2am job screen --restore {job.id}`", imported)
+        self.assertEqual(Store().job(SERIAL, job.id)["status"], "not-verified")
         _, _, imported = self.run_job("screen", "--restore", job.id)
         self.assertEqual(self.car._resolve(HISTORY_CE).read_bytes(), other)  # what was really there
 

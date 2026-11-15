@@ -803,9 +803,13 @@ def _fetch(job: Job) -> list[str]:
 
 
 APPS_MENU_CE = "\\8inchSkins\\Ford\\Sync\\Apps\\Info\\SyncApps"  # the Apps menu (SyncExtPack's)
+# AutoKit's video decoder: FFmpeg's three libraries, which AutoKit loads by name each time it opens
+# (s2am/decoder.py). They call each other, so a decoder job always changes all three.
+DECODER_FILES = ("avcodec-56.dll", "avutil-54.dll", "avformat-56.dll")
 # kind -> (the one folder the job writes to, the files it may replace there, what it is called)
 SWAPS = {"theme": (THEMES_CE, THEME_FILES, "theme"),
-         "appmenu": (APPS_MENU_CE, ("SyncApps.swf",), "Apps menu")}
+         "appmenu": (APPS_MENU_CE, ("SyncApps.swf",), "Apps menu"),
+         "dec": (AUTOKIT_CE, DECODER_FILES, "decoder")}
 ADDED = re.compile(r"Tiles\\[A-Za-z0-9_-]{1,40}\.png")  # files an Apps menu job may add
 FORD_APPS_CE = "\\8inchSkins\\Ford\\Sync\\Apps"
 # Ford's own screens a screen job may replace, one file each. SCREENS load when they are opened.
@@ -823,6 +827,33 @@ STARTUP_SCREENS = ("AppConsole/AppConsole.swf", "Home/Home.swf",
                    "Phone/PhoneConsoleObject.swf", "Nav/NavConsoleObject.swf", "Media/MediaConsoleObject.swf",
                    "Climate/ClimateConsoleObject.swf", "Media/Media.swf", "Menu/Menu.swf", "Info/Info.swf")
 SWAP_KINDS = (*SWAPS, "screen")
+# The swaps of SYNC's own skin, which SYNC reads when it starts: these restart it, and only these go
+# in a bundle. A decoder job does neither: AutoKit loads its decoder each time it opens.
+SKIN_SWAPS = ("theme", "appmenu", "screen")
+# UpdateService uses the stick up even when the job stops, so a stop that asks for another try
+# says to prepare the stick again on the Mac
+AUTOKIT_BUSY = ("AutoKit is running (it keeps running hidden after its Exit button too); nothing changed. "
+                "Prepare this stick again on the Mac, restart SYNC and insert it before opening AutoKit")
+AUTOKIT_BUSY_RESTORE = ("AutoKit is running (it keeps running hidden after its Exit button too); this run "
+                        "changed nothing, so AutoKit's decoder files are as they were before it, which may be "
+                        "the decoder job's half-done mix. Prepare this restore stick again on the Mac, restart "
+                        "SYNC and insert it before opening AutoKit")
+STARTED_BEFORE = ("this job started once before, and the car may still hold some of its new files: "
+                  "run its undo (restore) stick; nothing changed now")
+RESTORE_FAILED = ("the restore did not complete; a file did not copy back whole. Prepare this restore stick "
+                  "again on the Mac (s2am stick prepare with the same restore job) and insert it")
+# Written just before a swap first changes the car, after its backup is whole: a report that has
+# it but no outcome (done.txt or a stop) is from a run cut short, with the car maybe half changed.
+CHANGING = "changing.txt"
+# What a swap copies from the car onto the stick for the Mac's byte check (cli._byte_check). A
+# stick prepared again keeps the job's report folder, so a run first deletes what an earlier run
+# left there: a copy onto the stick can fail and leave the old file, which would speak for this run.
+READBACK = ("applied", "rolledback", "backup")
+# A run stops with this before it changes anything if it could not delete what an earlier run
+# left in the report folder: its stop markers (_clear_stops) or its copies (READBACK).
+OLD_REPORT_MARKER = "old-report.txt"
+OLD_REPORT = ("files an earlier run of this job left on the stick could not be deleted; nothing changed. "
+              "Import this stick on the Mac, then prepare the job on another stick")
 
 
 def swap_target(kind: str, params: dict) -> tuple[str, tuple[str, ...], str]:
@@ -841,8 +872,9 @@ def _flat(relative: str) -> str:
 
 
 def swap_script(job: Job) -> str:
-    """Replace a few of SYNC's files (or put a swap job's originals back); SYNC restarts.
-    The steps are swap_lines; a bundle runs the same steps for each of its parts."""
+    """Replace a few of SYNC's files (or put a swap job's originals back); SYNC restarts after a
+    swap of its skin (SKIN_SWAPS). The steps are swap_lines; a bundle runs the same steps for each
+    of its parts."""
     return _script(_header(job) + swap_lines(job) + _fetch(job) + _inventory() + _footer(job))
 
 
@@ -850,18 +882,30 @@ def swap_lines(job: Job) -> list[str]:
     """A swap job's own steps, between the script's header and the inventory.
 
     Theme jobs swap the five files in THEMES_CE, Apps menu jobs SyncApps.swf in APPS_MENU_CE and
-    add tile pictures under it, screen jobs one of Ford's screens in SCREENS or STARTUP_SCREENS. The job
+    add tile pictures under it, screen jobs one of Ford's screens in SCREENS or STARTUP_SCREENS,
+    decoder jobs AutoKit's three DECODER_FILES, all three or none, and only while AutoKit is not
+    running: it holds them open, and its Exit button only hides it. The job
     first checks that the car still has the files the Mac planned against (Theme.XML by content,
     the rest by size), backs them up on the car and copies that backup onto the stick, copies
-    the new ones in and checks their sizes, copying the backup back if one did not copy whole.
+    the new ones in and checks their sizes, copying the backup back if one did not copy whole
+    (and what it put back onto the stick, out\rolledback, so the Mac checks that byte for byte).
     What it applied goes back to the stick, so the Mac can compare every byte after import. The
-    restore carries the originals itself.
+    restore carries the originals itself. A job whose backup folder is already on the car started
+    before (a run cut short leaves a mix of old and new files, which the size checks would
+    misread as a changed car, and AutoKit may be running on that mix), so that comes first, and
+    only its restore stick goes on from there. Just before the first change, the job writes CHANGING
+    to its report folder, so a report from a run cut short after it says so. Before it copies
+    anything, it deletes what an earlier run copied onto the stick (READBACK), as it deleted that
+    run's stop markers first of all (_clear_stops), and stops if it cannot (OLD_REPORT).
     """
     p = job.params
     folder, allowed, what = swap_target(job.kind, p)
     files, added = p.get("files") or {}, p.get("added") or {}
     if not files or any(name not in allowed for name in files):
         raise ValueError(f"invalid {what} files {sorted(files)!r}")
+    # checked here too, where every script is written: old and new decoder files do not fit together
+    if job.kind == "dec" and sorted(files) != sorted(allowed):
+        raise ValueError(f"a decoder job changes all of {', '.join(allowed)}, not only {sorted(files)!r}")
     if any(not ADDED.fullmatch(name) for name in added) or (added and job.kind != "appmenu"):
         raise ValueError(f"invalid added files {sorted(added)!r}")
     # checked here, where every script is written (a bundle writes its parts' scripts again):
@@ -869,13 +913,31 @@ def swap_lines(job: Job) -> list[str]:
     if job.kind == "screen" and p.get("screen") in STARTUP_SCREENS and not p.get("restore") \
             and p.get("startup") is not True:
         raise ValueError(f"{p['screen']} loads when SYNC starts; the job was not planned with --startup")
-    lines = [
+    lines = []
+    if not p.get("restore"):  # first of all: a job cut short says so, whatever else is wrong now
+        lines += [f"bk = {_quote(BACKUP_DIR + chr(92) + job.id)}",
+                  "If (DirExists(bk))",
+                  *_stop("started-before.txt", STARTED_BEFORE, "  "),
+                  "EndIf"]
+    if job.kind == "dec":  # before anything is touched, the restore too: a running AutoKit holds the files
+        lines += ['If (ProcExists("AutoKit.exe"))',
+                  *_stop("busy.txt", AUTOKIT_BUSY_RESTORE if p.get("restore") else AUTOKIT_BUSY, "  "),
+                  "EndIf"]
+    missing = "AutoKit is not installed" if job.kind == "dec" else f"the car has no {what} folder"
+    lines += [
         f"th = {_quote(folder)}",
         f"jd = {_quote(ce_path(job.job_dir))}",
         "If (NOT DirExists(th))",
-        *_stop("missing.txt", f"the car has no {what} folder; nothing changed", "  "),
+        *_stop("missing.txt", f"{missing}; nothing changed", "  "),
         "EndIf",
     ]
+    # Before anything is copied: the Mac checks only what this run puts on the stick. An apply job
+    # gets here only if the car holds no backup of it (started-before above), so no earlier run of
+    # it changed the car, and a restore carries its own originals: nothing here is the only copy.
+    for name in READBACK:
+        lines += [f'DelTree(out & "\\{name}")', f'RmDir(out & "\\{name}")']
+    for name in READBACK:
+        lines += [f'If (DirExists(out & "\\{name}"))', *_stop(OLD_REPORT_MARKER, OLD_REPORT, "  "), "EndIf"]
     if p.get("restore"):
         if not JOB_ID.fullmatch(p["restore"]) or added:
             raise ValueError(f"invalid restore target {p['restore']!r}")
@@ -886,14 +948,13 @@ def swap_lines(job: Job) -> list[str]:
                       *_stop("payload-bad.txt", f"the job's original {what} files are incomplete; nothing changed",
                              "  "),
                       "EndIf"]
+        lines.append(f'WriteFile(out & "\\{CHANGING}", {_quote(job.id)})')
         lines += [f'Copy(jd & "\\orig-{name}", th & "\\{name}", TRUE)' for name in files]
         lines.append("ok = 1")
         for name, size in files.items():
             lines += [f'If (FileSize(th & "\\{name}") <> {size})', "  ok = 0", "EndIf"]
         lines += ["If (ok = 0)",
-                  *_stop("copy-failed.txt", "the restore did not complete; a file did not copy back whole; "
-                         "run the restore stick again",
-                         "  "),
+                  *_stop("copy-failed.txt", RESTORE_FAILED, "  "),
                   "EndIf"]
         done = f"{job.kind}-restored.txt"
     else:
@@ -916,10 +977,6 @@ def swap_lines(job: Job) -> list[str]:
                       "EndIf"]
         lines += ['MkDir("\\SyncExtendedPack\\_s2am")',
                   f"MkDir({_quote(BACKUP_DIR)})",
-                  f"bk = {_quote(BACKUP_DIR + chr(92) + job.id)}",
-                  "If (DirExists(bk))",  # a run that was cut short: its backup may hold a mixed state
-                  *_stop("stale.txt", "this job started once before; use its restore stick; nothing changed", "  "),
-                  "EndIf",
                   "MkDir(bk)",
                   'MkDir(out & "\\backup")']
         for name in files:  # the stick gets the car's backup, so the Mac checks what a restore would use
@@ -930,6 +987,7 @@ def swap_lines(job: Job) -> list[str]:
                 lines += [f'If (FileSize({copy}) <> {f["old"]})',
                           *_stop("backup-failed.txt", f"could not back up the {what}; nothing changed", "  "),
                           "EndIf"]
+        lines.append(f'WriteFile(out & "\\{CHANGING}", {_quote(job.id)})')  # the backup is whole: changes start
         for sub in sorted({name.rsplit("\\", 1)[0] for name in added}):
             lines.append(f'MkDir(th & "\\{sub}")')
         lines += [f'Copy(jd & "\\add-{_flat(name)}", th & "\\{name}", TRUE)' for name in added]
@@ -947,8 +1005,11 @@ def swap_lines(job: Job) -> list[str]:
                          "damaged file; use the undo (restore) stick now; if the screen stays dark, "
                          "insert it anyway and wait two minutes", "    "),
                   "  EndIf",
-                  *_stop("copy-failed.txt", f"a new {what} file did not copy whole; "
-                         "nothing changed; the originals are back",
+                  # their sizes match, which a damaged copy can too: the Mac checks every byte
+                  '  MkDir(out & "\\rolledback")',
+                  *[f'  Copy(th & "\\{name}", out & "\\rolledback\\{name}", TRUE)' for name in files],
+                  *_stop("copy-failed.txt", f"a new {what} file did not copy whole; the originals were "
+                         "copied back and their sizes match; the Mac checks them byte for byte at import",
                          "  "),
                   "EndIf"]
         done = f"{job.kind}-applied.txt"
@@ -956,7 +1017,31 @@ def swap_lines(job: Job) -> list[str]:
               *[f'Copy(th & "\\{name}", out & "\\applied\\{name}", TRUE)' for name in files],
               *[f'Copy(th & "\\{name}", out & "\\applied\\{_flat(name)}", TRUE)' for name in added],
               f'WriteFile(out & "\\{done}", {_quote(job.id)})']
-    return lines
+    return _clear_stops(lines, CHANGING)
+
+
+STOP_WRITE = re.compile(r'\s*WriteFile\(out & "\\([\w.-]+)", ')
+
+
+def _clear_stops(lines: list[str], *also: str) -> list[str]:
+    """The lines, after deleting from the report folder every stop marker they can write (_stop),
+    and the markers in ``also``, and stopping if one of them is still there (OLD_REPORT).
+
+    A stick prepared again for the same job keeps that job's report folder, and the import reads
+    its status from the markers there: one left by an earlier run (busy, say) would otherwise
+    speak for this run, even if this one stopped with a failed rollback. So a marker the car
+    could not delete stops the run before anything else, and the import reads OLD_REPORT before
+    the plain "nothing changed" stops (stick.STOPPED), so this run's own stop is what it says.
+    """
+    markers = [*also, OLD_REPORT_MARKER]
+    for line, after in zip(lines, lines[1:]):
+        found = STOP_WRITE.match(line)
+        if found and after.strip() == "Exit" and found.group(1) not in markers:
+            markers.append(found.group(1))
+    return ([f'Delete(out & "\\{marker}")' for marker in markers]
+            + [line for marker in markers for line in (f'If (FileExists(out & "\\{marker}"))',
+                                                       *_stop(OLD_REPORT_MARKER, OLD_REPORT, "  "), "EndIf")]
+            + lines)
 
 
 theme_script = swap_script
@@ -998,7 +1083,7 @@ def cleanup_lines(job: Job, home: str | None = None) -> list[str]:
     return lines
 
 
-BUNDLE_PARTS = (*SWAP_KINDS, "clean")  # jobs a bundle may run; a cleanup only last
+BUNDLE_PARTS = (*SKIN_SWAPS, "clean")  # jobs a bundle may run; a cleanup only last
 # a screen job changes one file, and the new frame and Home with their corners, labels and side
 # menus are 14 files, plus the theme and putting back the previous visit's frame, Home and theme
 BUNDLE_LIMIT = 24
@@ -1112,12 +1197,13 @@ SCRIPTS = {
     "theme": swap_script,
     "appmenu": swap_script,
     "screen": swap_script,
+    "dec": swap_script,
     "clean": cleanup_script,
     "bundle": bundle_script,
     "reg": registry_script,
 }
 MENU_CHANGING = ("rm", "undo", "inst")  # SYNC reads SyncApps.xml at start, so these restart it
-RESTARTING = MENU_CHANGING + SWAP_KINDS + ("bundle",)  # and its theme, Apps menu and screens
+RESTARTING = MENU_CHANGING + SKIN_SWAPS + ("bundle",)  # and its theme, Apps menu and screens
 
 
 def meta(job: Job) -> bytes:
