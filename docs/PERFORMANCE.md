@@ -30,6 +30,9 @@ samples while CarPlay ran. The details are in [P1-TESTLOG.md](P1-TESTLOG.md), 20
 | Windows CE reports neither NEON nor VFP3. CE 6.0 may have no flag for them, so this is not proof about the chip | The same log |
 | **`usehwdec` (hardware decoding) changes nothing:** 99% in total, AutoKit 58%, the same one thread | Load log, 2026-11-15, 50 samples with CarPlay |
 | Freescale's power-chip library does not load into an ordinary program (error 193) | The same log |
+| 10 frames per second instead of 15: the same 99% and 58% | Load log, 2026-11-15, 28 samples |
+| **AutoKit's 58% is what is left over, not what decoding costs:** its decoding thread has the lowest priority (252) and the processor is full whatever the setting | The three runs at 800x480 |
+| **A smaller picture helps: at 640x384 the processor is below 95% in 14 of 34 samples**, AutoKit 42%. AutoKit does not stretch it: black frame around | Load log, 2026-11-15, `akcfg-9ccd` |
 
 **The picture.** CarPlay alone fills the one processor core. Decoding the video in software
 takes the biggest share, and every tap and frame waits in the queue behind it. Ford's screens

@@ -755,3 +755,25 @@ The second only fetched the logs, as designed.
 **On the red stick now:** `akcfg-9ccd`, 640,384 at 10 a second, measuring. Whether AutoKit
 accepts a smaller picture is not known. The build window closed at 09:35 UTC; nothing new can be
 built before 2026-11-17 21:35 UTC.
+
+**Fourth run, `akcfg-9ccd`, 10:37-10:44: a smaller picture is the first setting that helps.**
+`640,384,10`, 34 samples with AutoKit:
+
+| | 800x480 (three runs) | 640x384 |
+|---|---|---|
+| Processor in total | 99-100% | 95% on average; **14 of 34 samples below 95%**, lowest 77% |
+| AutoKit | 58% | 42% |
+| `Desktop.exe` | 16-18% | 26% |
+| Kernel | 18-19% | 19% |
+
+For the first time the processor is not full all the time. The owner: "it felt much faster", the
+map still behind the car, but much less.
+
+**The cost:** AutoKit does not stretch the picture. CarPlay is drawn at 640x384 in the middle of
+the 800x480 screen with a black frame around it (the owner's photo, kept private). It is
+readable and the touch targets worked.
+
+Open: whether AutoKit can be made to stretch a smaller picture to the full screen; a size
+between the two; 640x384 at 15 a second (`akcfg-d4c7`, built, not run). The car is left on
+`640,384,10` with software decoding. The undo `akcfg-da1b` (stock: 800x480, 15, software) is
+unused on the no-name stick, good until 2026-11-17 09:35 UTC.
