@@ -60,3 +60,24 @@ The final check after remount remains pending: macOS loginwindow refused a norma
 after a successful forced unmount the SanDisk device disappeared before it could be remounted.
 Reconnect that stick, verify the existing package and instruction, then eject. Do not rebuild
 or rewrite merely to resume verification. No car result is available yet.
+
+## Outcome plan and offline trial preparation
+
+[CLOCK-OUTCOMES.md](../docs/CLOCK-OUTCOMES.md) now specifies the three routes: a verified higher
+CPU operating point, a genuine 600 MHz table/policy limit, and no discovered DVFC interface.
+Incomplete evidence is a separate unresolved outcome. The current discovery capture cannot
+itself recover compiled tables, live frequency, active core voltage or CPU temperature.
+
+`tools/clock_trial_model.py` prepares inert trial/undo proposals and eight synthetic fault
+traces. It has no hardware backend, native launcher or install-pack path. The 600-to-667 example
+and thermal limits are fixtures, not car operating settings. Every artifact is marked
+`simulation_only` and `deployable: false`; it cannot be parsed as an s2am install job.
+
+Sixteen focused model tests pass. Independent security, performance and tests/evidence reviews
+found and verified fixes for faults during pending application, missed telemetry deadlines,
+missing readback and late restoration. Pending operations never release concurrent undo;
+incomplete or timed-out restoration remains unresolved. This validates the model, not physical
+recovery. No full CI or car test ran for this offline preparation.
+
+A future live job needs matching image/interface/table and thermal/recovery evidence, then an
+explicit execution go bound to the final proposal. No additional USB or car work was done.

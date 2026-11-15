@@ -1,6 +1,10 @@
 # SYNC 2 clock method and the next measurement
 The clock investigation has a working diagnostic implementation, but no verified 700 MHz operating point yet.
 
+The [outcome plan and offline trial/undo rehearsal](CLOCK-OUTCOMES.md) cover a verified higher
+DVFC point, a genuine 600 MHz limit, and no discovered interface. The rehearsal has no live
+hardware backend or installable overclock job.
+
 ## What an application could control
 
 | Route | What it can establish | What is still missing |
