@@ -18,7 +18,7 @@ and free software.** It also includes a Mac tool that shows what is installed on
 ## Tested and working
 
 Tested in a real car: a **2016 Ford Mondeo Mk5, 8" SYNC 2, software 3.10 (EU)**, on
-**30 October to 14 November 2026**. Details in [docs/P1-TESTLOG.md](docs/P1-TESTLOG.md).
+**30 October to 15 November 2026**. Details in [docs/P1-TESTLOG.md](docs/P1-TESTLOG.md).
 
 | What | Result in the car |
 |---|---|
@@ -95,6 +95,10 @@ run the same system, but nothing is guaranteed.
 | AutoKit installed and opening on SYNC 2 | **Works in the car** |
 | AutoKit in English | **Works in the car**; new installs start in English (the stock app is Chinese; `autokit-config --lang` changes it) |
 | Apple CarPlay over a cable | **Works in the car, very slow** (2026-11-04): [docs/PERFORMANCE.md](docs/PERFORMANCE.md) |
+| A smaller CarPlay picture to lower the load (`autokit-config --screen 640,384,10`) | **Works in the car** (2026-11-15): the processor is no longer full all the time and CarPlay feels much faster; the picture sits in the middle with a black frame. The car is left on this setting |
+| Faster video decoder files for AutoKit, our own FFmpeg build (`s2am job decoder`, with its undo stick) | Built, about 20% less decoding work in an emulator with identical pictures; **both sticks written 2026-11-15, first car test to come**. The files themselves are not in this repository ([docs/PERFORMANCE.md](docs/PERFORMANCE.md)) |
+| A higher processor clock (overclocking) | **No route found.** A read-only copy from the car (2026-11-15) shows no speed-step driver and no clock setting; it would take our own code in the kernel, which is not built ([docs/PERFORMANCE.md](docs/PERFORMANCE.md)) |
+| Copy SYNC's registry and system files to the stick, read-only (`s2am job registry --fetch`) | **Works in the car** (2026-11-15) for the registry and the registry files; program files in the ROM image do not copy. The screen stands still at 100% for minutes while it works: leave the stick in |
 | Sound through the car's speakers | Fix installed (all three modules patched). Spotify over CarPlay plays through the speakers with the iPhone's Bluetooth off (14 November), so the sound comes through AutoKit. The Video Player, which gets its sound through the same `WaveOutHooks.dll`, plays through the speakers in the car |
 | Leaving AutoKit returns to SYNC | **Works in the car with the runner guard** (`s2am job runner-guard`, undo with `--off`). Without it, Exit only hides AutoKit and the screen freezes. Reported upstream: [syncextpack#4](https://github.com/chr0m1ng/syncextpack/issues/4) |
 | New colours for SYNC's menus (`s2am job theme`; Lincoln's colours now, your own next) | **Works in the car**: the change and its undo stick both verified byte for byte (2026-10-31). How to undo: [sync-redesign RECOVERY.md](https://github.com/Theralley/sync-redesign/blob/main/docs/RECOVERY.md) |

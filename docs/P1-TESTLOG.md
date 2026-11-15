@@ -777,3 +777,38 @@ Open: whether AutoKit can be made to stretch a smaller picture to the full scree
 between the two; 640x384 at 15 a second (`akcfg-d4c7`, built, not run). The car is left on
 `640,384,10` with software decoding. The undo `akcfg-da1b` (stock: 800x480, 15, software) is
 unused on the no-name stick, good until 2026-11-17 09:35 UTC.
+
+**Evening, 2026-11-15: a read-only copy of the registry and system files.** Built with `--force`
+inside the last two days of the key window, so both jobs only install until 2026-11-17 09:35 UTC.
+
+- `reg-c2d9` (all six registry roots, 21 files): the stick was pulled after about a minute. The
+  Update Installer screen stands still at "100%" for as long as the job works, and it looked
+  stuck. The registry text read so far was whole up to the cut; no file had been copied yet.
+- `reg-c6e2` (`HKLM\Drivers` only, the same 21 files): ran to the end. 676 keys, 2614 values,
+  137 not copied (names that look like secrets, long binary values), 107 running drivers.
+- 6 of the 21 files copied: `boot.rgu`, `boot.hv`, `default.hv`, `user.hv`, the large `.rgu` and
+  `ceconfig.h`. The 15 program files (`nk.exe`, `kernel.dll`, `cspddk.dll`, `ceddk.dll`,
+  `pm.dll`, `Cppm.dll`, the power-chip files, the video-decoder files) left nothing on the
+  stick: they sit in the ROM image.
+- **Result for the clock:** no speed-step driver and no clock setting. `CPM0:` is
+  CriticalProcessMonitor, `PMI1:` is `pmicpdk_mc13892.dll`, `cspddk.dll` loads into the kernel
+  at start. Details in [PERFORMANCE.md](PERFORMANCE.md).
+- A driver's `Key` value under `HKLM\Drivers\Active` is withheld by the secrets rule (its name
+  holds "key"). It is only the driver's registry path; the driver can still be matched by name.
+
+**State before the decoder test** (from `reg-c6e2`'s report, 21:44): AutoKit and Video Player
+installed, the three sound modules patched, AutoKit on `640,384,10` with software decoding and
+its own three decoder files, the runner guard on, 392 MB free.
+
+**On the sticks now, both good until 2026-11-17 09:35 UTC:**
+
+- red stick: `dec-edc8`, the decoder swap (our FFmpeg 2.6.9 build in place of AutoKit's three
+  files; it backs them up on the car and on the stick first);
+- no-name stick: `dec-393a`, its undo, carrying the original three files.
+
+The undo for the picture size (`akcfg-da1b`) is no longer on a stick; the built job is still on
+the Mac and can be written again before the same deadline.
+
+In the car: restart SYNC, do not open AutoKit, insert the red stick, wait for "Install
+successfully completed", pull it, then open AutoKit and use CarPlay. If AutoKit does not start
+or the picture is wrong, restart SYNC and run the no-name stick the same way.
