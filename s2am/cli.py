@@ -74,7 +74,7 @@ JOB_KINDS = {"inventory": "inv", "autokit-stock": "akstock", "autokit-patched": 
              "remove": "rm", "install": "inst", "undo": "undo", "autokit-config": "akcfg",
              "snapshot": "snap", "logger": "log", "native-hello": "hello", "runner-guard": "guard",
              "theme": "theme", "apps-menu": "appmenu", "cleanup": "clean", "screen": "screen",
-             "bundle": "bundle", "registry": "reg", "decoder": "dec"}
+             "bundle": "bundle", "registry": "reg", "decoder": "dec", "pmic": "pmic"}
 MARK = {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
 
 
@@ -402,6 +402,12 @@ def cmd_job(args) -> int:
             print(f"apps-menu: replaces SyncApps.swf and adds {len(params['added'])} tile pictures, backing up "
                   "the menu first; SYNC restarts. Build the restore stick now as well: "
                   "s2am job apps-menu --restore <this job>")
+    elif args.kind == "pmic":
+        extra = {"s2ampmic.exe": native.binary("s2ampmic.exe")}
+        print("pmic: reads identification and SW1 voltage presets through the existing PMI1 driver. "
+              "Ford compatibility is unverified. No voltage or clock changes. Presets do not identify "
+              "the active rail voltage. Leave the stick in until 'Install successfully completed', "
+              "then import it; check pmic.txt for the result")
     elif args.kind == "registry":
         params = {"roots": args.root or list(REGISTRY_ROOTS), "depth": args.depth}
         if args.fetch:
@@ -541,6 +547,9 @@ def cmd_stick_import(args) -> int:
             done = report / "registry-done.txt"
             print("  " + (done.read_text(errors="replace").strip().replace("|", ", ") if done.is_file() else
                           "NOT complete: s2amreg.exe did not finish in time; registry.txt may be partial"))
+        if record.get("kind") == "pmic" and record["status"] == "applied" and report:
+            from . import pmic
+            print("  " + pmic.summary(report))
         if verdict:
             print(f"  {verdict}")
         if record.get("kind") in apps.MENU_KINDS and record["status"] == "applied":
@@ -1064,6 +1073,10 @@ def parser() -> argparse.ArgumentParser:
                           help="also copy matching car files to the stick, read-only "
                                "(e.g. '\\Windows\\boot.rgu'); matched against the last drive log")
     registry.set_defaults(func=cmd_job)
+    pmic = job_sub.add_parser("pmic", parents=[common],
+                              help="read-only MC13892 identification and SW1 voltage presets through PMI1; "
+                                   "Ford compatibility unverified, no clock/voltage changes")
+    pmic.set_defaults(func=cmd_job)
     bundle = job_sub.add_parser("bundle", parents=[common],
                                 help="several jobs already built, in one run (theme, apps-menu, screen "
                                      "and a cleanup last); each is verified on its own after import")

@@ -1182,6 +1182,27 @@ def hello_script(job: Job) -> str:
     return _script(lines + _inventory() + _footer(job))
 
 
+def pmic_script(job: Job) -> str:
+    """One passive snapshot through PMI1; a failed/unfinished read is not a voltage result."""
+    lines = _header(job) + [
+        "n = 0",
+        'If (FileExists(out & "\\pmic-done.txt"))',
+        "  n = 15",  # keep a finished snapshot if the overall job was interrupted afterwards
+        "Else",
+        f'  Run({_quote(ce_path(job.job_dir))} & "\\s2ampmic.exe", out)',
+        "EndIf",
+        "While (n < 15)",
+        '  If (FileExists(out & "\\pmic-done.txt"))',
+        "    n = 15",
+        "  Else",
+        "    Sleep(1000)",
+        "    n = n + 1",
+        "  EndIf",
+        "EndWhile",
+    ]
+    return _script(lines + _inventory() + _footer(job))
+
+
 SCRIPTS = {
     "inv": inventory_script,
     "akstock": lambda job: autokit_script(job, "orig"),
@@ -1201,6 +1222,7 @@ SCRIPTS = {
     "clean": cleanup_script,
     "bundle": bundle_script,
     "reg": registry_script,
+    "pmic": pmic_script,
 }
 MENU_CHANGING = ("rm", "undo", "inst")  # SYNC reads SyncApps.xml at start, so these restart it
 RESTARTING = MENU_CHANGING + SKIN_SWAPS + ("bundle",)  # and its theme, Apps menu and screens
