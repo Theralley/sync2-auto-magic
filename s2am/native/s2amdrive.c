@@ -589,19 +589,28 @@ typedef int (*PmicReadFn)(unsigned char, DWORD *);  /* PMIC_STATUS PmicRegisterR
 static PmicReadFn pmic_read;
 static DWORD counter_rate, spin_loops;
 
+static DWORD pmic_error;  /* why pmic_open() failed: 4 = no such function, 1000 + the system's error = no library */
+
 static BOOL pmic_open(void)
 {
     HMODULE library = LoadLibraryW(L"pmicSdk_mc13892.dll");
-    pmic_read = library ? LOOKUP(library, PmicReadFn, L"PmicRegisterRead") : NULL;
+    if (!library) {
+        pmic_error = 1000 + (GetLastError() & 0xFFFF);
+        return FALSE;
+    }
+    pmic_read = LOOKUP(library, PmicReadFn, L"PmicRegisterRead");
+    if (!pmic_read)
+        pmic_error = 4;
     return pmic_read != NULL;
 }
 
-/* The trial copy: 42 if the power chip gave its identification, 2 or 3 if not. */
+/* The trial copy: 42 if the power chip gave its identification, 2 if it did not answer,
+ * else pmic_open()'s reason. */
 static int pmic_trial(void)
 {
     DWORD value = 0;
     if (!pmic_open())
-        return 3;
+        return (int)pmic_error;
     return pmic_read(PMIC_ID, &value) == 0 ? PMIC_WORKS : 2;
 }
 

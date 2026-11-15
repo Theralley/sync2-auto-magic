@@ -26,6 +26,9 @@ samples while CarPlay ran. The details are in [P1-TESTLOG.md](P1-TESTLOG.md), 20
 | AutoKit's log says `IsHaveNeon() = 0`, although the i.MX51's Cortex-A8 core has NEON | AutoKit's log, 2026-11-14 |
 | The car has Freescale's hardware video decoder files (`vpu.dll`, `mx51_vpu_dec_*.dll`) | The car's file list, 2026-10-31 |
 | Memory is not short: 141-183 MB free | Load log, 2026-11-14 |
+| **The processor runs at 600 MHz.** The kernel states it, and timing loops measured 599-600 MHz | Load log, 2026-11-15, four samples on Ford's Home |
+| Windows CE reports neither NEON nor VFP3. CE 6.0 may have no flag for them, so this is not proof about the chip | The same log |
+| AutoKit is set to hardware decoding since 2026-11-15. Its load is not measured yet: the recording stopped after 42 s | `akcfg-9b10`, P1-TESTLOG |
 
 **The picture.** CarPlay alone fills the one processor core. Decoding the video in software
 takes the biggest share, and every tap and frame waits in the queue behind it. Ford's screens
@@ -78,7 +81,7 @@ the first two are the ones to try first:
 
 | Lever | What changes | How | Risk |
 |---|---|---|---|
-| Hardware decoding | The video leaves the processor. The decoding is the biggest single cost, and the chip has a hardware decoder | `autokit-config --decoder hardware` (exists). **Sticks built and rehearsed 2026-11-14** (`akcfg-9b10`, undo `akcfg-da1b`, both with `--measure`), not yet run in the car | Its code path was made for other chips, so the picture may go black. `--restore` undoes it |
+| Hardware decoding | The video leaves the processor. The decoding is the biggest single cost, and the chip has a hardware decoder | `autokit-config --decoder hardware` (exists). **Applied in the car 2026-11-15** (`akcfg-9b10`; undo `akcfg-da1b`). Not measured yet: the recording stopped after 42 s. `akcfg-f021` repeats the measuring | Its code path was made for other chips, so the picture may go black. `--restore` undoes it |
 | Frame rate | 10 frames per second instead of 15: a third less decoding, and frames don't queue up | `autokit-config --screen 800,480,10` (exists) | A less smooth picture |
 | NEON | AutoKit's faster path, if its check is what holds it back | Not known yet: first find out how AutoKit checks | Unknown |
 | AutoKit's priority | AutoKit's video runs ahead of `Desktop.exe` while it is on the screen; JasonACT's runner on XDA sets thread priority too | New, in the runner guard | Can starve SYNC behind it, so it needs testing with calls and climate |
@@ -94,7 +97,7 @@ also the only lever here that can damage the hardware, so it comes last, after t
 above and after the groundwork below.
 
 **What the logger records.** Since 2026-11-14 the load logger also writes, every 10 s, a `clock`
-line, and at its start what the processor says about itself. None of it has run in the car yet:
+line, and at its start what the processor says about itself. First run in the car 2026-11-15: **600 MHz, stated and measured**; the power chip was not read, so the core voltage is still unknown:
 
 | What | How | How good |
 |---|---|---|

@@ -653,3 +653,39 @@ is not what we think and that copy dies, the logger and its load log go on witho
 If the picture goes black: Exit, or pull the adapter. On 2026-11-14 AutoKit hid itself at 12:50,
 probably when the adapter came out for the second stick, and the runner guard closed it 2 s
 later. Then use the undo stick.
+
+## 2026-11-15: hardware decoding is on; the recording stopped after 42 seconds
+
+`akcfg-9b10` ran at 09:48 (the car's clock): applied, AutoKit now has `usehwdec` and
+`800,480,15`. The same stick went in again at 10:01 and fetched the logs.
+
+**Seen in the car for the first time:**
+
+- **The second insert works.** With the stand-in `installed.bin` on the stick, SyncExtPack ran
+  the used `install.bin` again. The job saw its own `done.txt`, copied the logs and changed nothing.
+- **The clock is 600 MHz.** The kernel states 600000000, and the two timing loops measured
+  599-600 MHz in four samples. The counter runs at 8 MHz, so every sample is a fine one.
+- Windows CE reports neither NEON nor VFP3 (feature bits `1000422a`). CE 6.0 may simply have no
+  flag for them, so this does not say what the chip can do. It does fit AutoKit's `IsHaveNeon() = 0`.
+- **The power chip was not read:** `not readable (trial 3)`. Code 3 meant either that
+  `pmicSdk_mc13892.dll` did not load or that it has no `PmicRegisterRead`. The trial ran in its
+  second copy as planned, and the logger went on without the voltage.
+
+**The recording is only 42 s long, all of it on Ford's Home.** At 09:49:14 the driver list
+changed (`BSP1:` out, `COM6:` in) and MiniMedia's video window flashed, at 09:49:18 the stick's
+disk left, at 09:49:19 memory in use fell from 70% to 65%, and at 09:49:30 `DSK2:` left. Both
+loggers wrote nothing after that. On 2026-11-14 the same signs came just before SYNC slept for
+nine minutes, and that time both loggers carried on when it woke. This time they did not: SYNC
+had probably started afresh instead of waking. **Not known:** whether the car was switched off,
+and whether CarPlay was used between the two inserts. There is no load figure for hardware
+decoding yet.
+
+In those 42 s: `Desktop.exe` about 51% on one thread, as before.
+
+**Built 2026-11-15, before the key window closed for building:** `akcfg-f021`, the same settings
+with `--measure` again, on the red stick. Its logger tells the two power-chip failures apart
+(`trial 4` = the function is missing, `trial 1000 + n` = the library did not load, n being the
+system's error). Rehearsed on a simulated car that already has hardware decoding: first visit,
+second visit, and a visit with AutoKit running. `akcfg-bbd6`, built a minute earlier with the old
+logger, is not on any stick. The undo is still `akcfg-da1b` on the no-name stick, unused. Both
+install only until 2026-11-17 09:35 UTC.
