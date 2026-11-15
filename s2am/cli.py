@@ -407,9 +407,10 @@ def cmd_job(args) -> int:
         if args.fetch:
             params["fetch"] = theme.fetch_list(Store(), args.serial, args.fetch)
         extra = {"s2amreg.exe": native.binary("s2amreg.exe")}
-        print(f"registry: read-only; copies {', '.join(params['roots'])} ({args.depth} levels) to the stick in "
-              f"under {REGISTRY_WAIT_S} s. A paired phone's link key and PINs are not copied. Insert, wait for "
-              "'Install successfully completed', pull it, import it")
+        print(f"registry: read-only; copies {', '.join(params['roots'])} ({args.depth} levels) to the stick. "
+              "A paired phone's link key and PINs are not copied. Insert and leave it in until 'Install "
+              f"successfully completed': the screen stands still at 100% meanwhile, for up to {REGISTRY_WAIT_S} s "
+              "plus the file copies (allow 5 minutes). Then pull it and import it")
         if params.get("fetch"):
             print(f"  and copies {len(params['fetch'])} car files to the stick for study (read-only)")
     elif args.kind == "bundle":

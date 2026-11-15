@@ -140,6 +140,15 @@ the register values are from the documents, not yet read from this car):
    `s2am job registry --root 'HKLM\Drivers' --fetch '\Windows\boot.rgu' ...`). They show which
    drivers handle the clock and the power chip, and whether Freescale's own speed-step driver
    is there. Nothing from Ford is needed: it is all on the car.
+   **Done in the car 2026-11-15** (job `reg-c6e2`, 107 running drivers, the start-up registry
+   files): **there is no speed-step driver and no clock setting.** `CPM0:` is Ford's
+   CriticalProcessMonitor, not a clock manager. `PMI1:` is the power chip's driver
+   (`pmicpdk_mc13892.dll`), and Freescale's clock library `cspddk.dll` loads into the kernel at
+   start, with nothing in the registry to set a speed. The registry files and `ceconfig.h`
+   copied; none of the 15 program files did (`nk.exe`, `kernel.dll`, `cspddk.dll`, `pm.dll`,
+   `Cppm.dll`, the power-chip and video-decoder files): they sit in the ROM image and an
+   ordinary copy leaves nothing on the stick. So the clock can only be changed by our own code
+   in the kernel (step 3), which has not been built.
 3. **A read-only driver.** It only reads the clock controller and PLL1, and shows whether our
    code can run in the kernel at all. Stop if the memory's clock hangs on PLL1.
 4. **A rehearsal with the stock values.** Go through the whole change and back, ending at the
