@@ -47,8 +47,8 @@ the decoding cheaper would help a lot.
    is slower or quicker than Ford's. The only number is from before any change.
 3. What inside `Desktop.exe` takes the time.
 4. Whether AutoKit's hardware decoding works at all on this chip.
-5. What clock speed the processor runs at, and how hot it gets. The logger records the clock
-   from 2026-11-14 (not yet run in the car), and no temperature.
+5. How hot the processor gets, its active core voltage, and how the memory clock is sourced.
+   The processor clock was measured at 600 MHz in the car on 2026-11-15; temperature is unmeasured.
 6. Why AutoKit finds no NEON, and whether it would be quicker if it did.
 7. What `Desktop.exe` does at 60% while it is hidden.
 
@@ -120,8 +120,9 @@ to the box would say more about the processor than the power chip's temperature 
 the register values are from the documents, not yet read from this car):
 
 - The processor's clock comes from the chip's first clock generator (PLL1, at `0x83F80000`),
-  through the clock controller (CCM, at `0x73FD4000`). Both can only be reached from inside the
-  kernel. Whether a driver of ours loads there on SYNC is not known.
+  through the clock controller (CCM, at `0x73FD4000`). Direct register access needs a suitable
+  privileged platform interface. Whether Ford exposes one, or accepts a driver of ours, is
+  not established by the registry capture.
 - **The memory's clock may come from the same generator** (the clock controller's `CBCDR`
   register, bit 30). If it does, changing PLL1 changes the memory's clock too, and SYNC stops at
   once. This has to be read before anything is changed.
@@ -140,15 +141,31 @@ the register values are from the documents, not yet read from this car):
    `s2am job registry --root 'HKLM\Drivers' --fetch '\Windows\boot.rgu' ...`). They show which
    drivers handle the clock and the power chip, and whether Freescale's own speed-step driver
    is there. Nothing from Ford is needed: it is all on the car.
-   **Done in the car 2026-11-15** (job `reg-c6e2`, 107 running drivers, the start-up registry
-   files): **there is no speed-step driver and no clock setting.** `CPM0:` is Ford's
-   CriticalProcessMonitor, not a clock manager. `PMI1:` is the power chip's driver
-   (`pmicpdk_mc13892.dll`), and Freescale's clock library `cspddk.dll` loads into the kernel at
-   start, with nothing in the registry to set a speed. The registry files and `ceconfig.h`
-   copied; none of the 15 program files did (`nk.exe`, `kernel.dll`, `cspddk.dll`, `pm.dll`,
-   `Cppm.dll`, the power-chip and video-decoder files): they sit in the ROM image and an
-   ordinary copy leaves nothing on the stick. So the clock can only be changed by our own code
-   in the kernel (step 3), which has not been built.
+   **Done in the car 2026-11-15** (job `reg-c6e2`, the start-up registry files).
+   **Evidence audit:** the registry reports 676 keys, 2,614 values and 137 withheld values.
+   There are **116 active-device entries: 106 named and 10 unnamed**, not 107 running drivers.
+   Every active device's `Key` reference was withheld by the exporter's generic credential
+   filter. A complete traversal therefore did not give a complete map to driver definitions.
+   No explicit DVFC/speed-step driver or CPU frequency selector was found in the captured text.
+   `CPM0:` matches CriticalProcessMonitor (`CritProcMonDrv.dll`); `PMI1:` matches the MC13892
+   PMIC driver (`pmicpdk_mc13892.dll`). These identities do not enumerate their interfaces.
+   `cspddk.dll` is configured at boot with order 0 and flags `0x1000` (`DEVFLAGS_BOOTPHASE_1`);
+   this does not establish which clock operations Ford's build exposes.
+   Six of 21 requested files copied (registry files and `ceconfig.h`). Fifteen program files
+   are absent from the report. The fetch script records neither source attributes nor copy
+   errors and skips a failed `FileExists` check, so ROM-module copy restrictions are a plausible
+   explanation, **not a verified cause**. This capture does not prove that custom kernel code
+   is the only possible clock-control route.
+
+   **Next evidence:** repeat the driver registry capture with the corrected exporter, which
+   preserves only well-formed `Drivers\\...` or `Services\\...` references in
+   `Drivers\\Active\\<number>\\Key` and retains credential filtering. The correction is
+   host-tested but has not been built for CE or run in the car. Add per-file attributes and
+   error reporting before drawing conclusions from missing binaries.
+   Freescale's [i.MX51 CE 6.0 BSP reference manual, chapters 7 and 9](https://community.nxp.com/pwmxy87654/attachments/pwmxy87654/imx-processors/9897/1/481-WCE600_MX51_ER_1104_ReferenceManual.pdf)
+   describes CSPDDK clock services and a `dvfc_mc13892.dll` driver with `DVF1:`/`DVF2:` power
+   interfaces. Those are reference-BSP facilities, **not confirmed Ford interfaces**. No calls
+   to them have been made. Core voltage and the CPU/memory clock relationship remain unknown.
 3. **A read-only driver.** It only reads the clock controller and PLL1, and shows whether our
    code can run in the kernel at all. Stop if the memory's clock hangs on PLL1.
 4. **A rehearsal with the stock values.** Go through the whole change and back, ending at the
@@ -156,8 +173,9 @@ the register values are from the documents, not yet read from this car):
 5. **About 5% up, for a few minutes,** parked, with as little writing to storage as possible, and
    back down before SYNC sleeps. Stop on any fault, or if nothing gets quicker.
 
-If the baseline shows 600 MHz, the first aim is the 800 MHz that the same chip is sold for. If
-it shows 800 MHz, anything more is beyond what any version of the chip is specified for.
+The baseline is 600 MHz. Another i.MX51 variant's 800 MHz rating does not qualify this car's
+part for that frequency. Any proposed target needs the actual part's rating and measured
+clock, voltage and thermal conditions; the current evidence does not establish a usable target.
 
 **Rules if it is ever tried:**
 

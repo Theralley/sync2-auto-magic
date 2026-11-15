@@ -65,15 +65,19 @@ class Helpers(unittest.TestCase):
         program = "\n".join([
             "#include <stdio.h>", "#include <stdlib.h>", "#include <string.h>", defines, pure,
             "int main(int argc, char **argv) {",
-            "    char out[1024] = \"\"; unsigned char data[300]; int i;",
+            "    char out[1024] = \"\"; unsigned char data[1024]; int i;",
             "    if (strcmp(argv[1], \"secret\") == 0) { printf(\"%d\\n\", is_secret(argv[2])); return 0; }",
             "    if (strcmp(argv[1], \"clean\") == 0) { strcpy(out, argv[2]); clean(out); printf(\"%s\\n\", out);"
             " return 0; }",
             "    if (strcmp(argv[1], \"hex\") == 0) { int n = atoi(argv[2]); for (i = 0; i < n; i++)"
             " data[i] = (unsigned char)i; add_hex(out, sizeof(out), data, (unsigned long)n); printf(\"%s\\n\", out);"
             " return 0; }",
-            "    if (strcmp(argv[1], \"withheld\") == 0) { printf(\"%d\\n\", withheld(argv[2], argv[3],"
-            " (unsigned long)atoi(argv[4]), (unsigned long)atoi(argv[5]))); return 0; }",
+            "    if (strcmp(argv[1], \"withheld\") == 0) { unsigned long n = (unsigned long)atoi(argv[5]);"
+            " if (argc > 6) { if (n > sizeof(data) || strlen(argv[6]) != 2 * n) return 2;"
+            " for (i = 0; i < (int)n; i++) { char h[3] = {argv[6][2*i], argv[6][2*i+1], 0};"
+            " data[i] = (unsigned char)strtoul(h, NULL, 16); } }"
+            " printf(\"%d\\n\", withheld(argv[2], argv[3], (unsigned long)atoi(argv[4]), n,"
+            " argc > 6 ? data : NULL)); return 0; }",
             "    printf(\"%s %s %s\\n\", type_name(1), type_name(4), type_name(99)); return 0;", "}"])
         cls.work = Path(tempfile.mkdtemp())
         (cls.work / "reg.c").write_text(program)
@@ -103,6 +107,31 @@ class Helpers(unittest.TestCase):
                 ("HKLM\\Software\\Microsoft\\Bluetooth\\HandsFree", "Features", "4", "4", "0")):
             with self.subTest(key=key, name=name):
                 self.assertEqual(self.run_helper("withheld", key, name, kind, size), kept)
+
+    def test_active_driver_reference_is_not_a_credential(self):
+        for target in ("Drivers\\BuiltIn\\PMIC", "Services\\Example", "drivers\\USB\\ClientDrivers\\Serial_Class"):
+            raw = (target + "\0").encode("utf-16le")
+            for key, name in (("HKLM\\Drivers\\Active\\42", "Key"), ("hklm\\drivers\\active\\007", "kEy")):
+                with self.subTest(target=target, key=key):
+                    self.assertEqual(self.run_helper("withheld", key, name, "1", str(len(raw)), raw.hex()), "0")
+
+    def test_driver_exception_rejects_secret_names_and_malformed_references(self):
+        valid = ("Drivers\\BuiltIn\\PMIC\0").encode("utf-16le")
+        active = "HKLM\\Drivers\\Active\\42"
+        cases = [(key, "Key", "1", valid) for key in (
+            "HKLM\\Comm\\Wifi", "HKLM\\Drivers\\Active\\", "HKLM\\Drivers\\Active\\x",
+            active + "\\Nested", active + "x", "HKLM\\Drivers\\ActiveExtra\\42", "")]
+        cases += [(active, name, "1", valid) for name in ("NetworkKey", "LinkKey", "KeySuffix")]
+        cases += [(active, "Key", kind, valid) for kind in ("2", "3", "4", "7", "11")]
+        cases += [(active, "Key", "1", (target + "\0").encode("utf-16le")) for target in (
+            "", "Drivers\\", "Drivers\\BuiltIn\\PIN", "Drivers\\BuiltIn\\Passphrase",
+            "Drivers\\BuiltIn\\LinkKeys", "Services\\SecretStore", "Software\\Other",
+            "Drivers\\..\\Comm", "Drivers\\\\PMIC", "Drivers\\BuiltIn\\PMIC|extra",
+            "Drivers\\BuiltIn\\Å", "Drivers\\BuiltIn\\PMIC\0hidden", "Drivers\\" + "x" * 256)]
+        cases += [(active, "Key", "1", raw) for raw in (valid[:-2], valid[:-1], b"\0\0", b"", valid + b"\0\0")]
+        for key, name, kind, raw in cases:
+            with self.subTest(key=key, name=name, kind=kind, raw=raw):
+                self.assertEqual(self.run_helper("withheld", key, name, kind, str(len(raw)), raw.hex()), "1")
 
     def test_text_keeps_one_field_and_hex_stops_at_256_bytes(self):
         self.assertEqual(self.run_helper("clean", "a|b\tc"), "a?b?c")

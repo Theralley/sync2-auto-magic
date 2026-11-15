@@ -11,6 +11,8 @@
  * the stick. A value is written as "<not copied, N bytes>" when its name or its key's path looks
  * like a secret (key, pin, pass, secret: a paired phone's link key, a PIN), and so is every
  * binary value longer than 8 bytes, whatever its name: such secrets must not leave the car.
+ * The one exception is Drivers\Active\<number>\Key: a validated driver registry reference,
+ * not a credential. Malformed references and paths containing secret names stay withheld.
  *
  * Lines:  K|<key>     V|<key>|<name>|<type>|<value>     E|<key>|cannot open     T|<summary>
  * Text is kept to printable ASCII ('|' and the rest become '?'); binary values are written
@@ -46,8 +48,52 @@ static int is_secret(const char *name)
 
 #define BINARY_SHOWN 8  /* longer binary values are never copied: a link key is 16 bytes */
 
-static int withheld(const char *key, const char *name, unsigned long type, unsigned long size)
+static const char *after_prefix(const char *text, const char *prefix)
 {
+    while (*prefix) {
+        char a = *text++, b = *prefix++;
+        if (a >= 'A' && a <= 'Z') a += 'a' - 'A';
+        if (b >= 'A' && b <= 'Z') b += 'a' - 'A';
+        if (a != b) return NULL;
+    }
+    return text;
+}
+
+/* Only an exact Active device's Key REG_SZ may bypass the name heuristic. Inspect the
+ * original UTF-16LE bytes before display sanitisation can hide malformed input. */
+static int driver_reference(const char *key, const char *name, unsigned long type,
+                            unsigned long size, const unsigned char *bytes)
+{
+    const char *part = after_prefix(key, "HKLM\\Drivers\\Active\\");
+    char value[SHOW_BYTES];
+    size_t i, chars;
+    if (!part || *part < '0' || *part > '9') return 0;
+    while (*part >= '0' && *part <= '9') part++;
+    if (*part) return 0;
+    part = after_prefix(name, "Key");
+    if (!part || *part || type != 1 || !bytes || size < 4 || size % 2 || size > sizeof(value) * 2)
+        return 0;
+    chars = size / 2;
+    if (bytes[size - 2] || bytes[size - 1]) return 0;
+    for (i = 0; i < chars - 1; i++) {
+        unsigned char c = bytes[2 * i];
+        if (bytes[2 * i + 1] || !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '\\'))
+            return 0;
+        value[i] = (char)c;
+    }
+    value[chars - 1] = '\0';
+    if (is_secret(value) || strstr(value, "\\\\") || value[chars - 2] == '\\') return 0;
+    part = after_prefix(value, "Drivers\\");
+    if (!part) part = after_prefix(value, "Services\\");
+    return part && *part;
+}
+
+static int withheld(const char *key, const char *name, unsigned long type, unsigned long size,
+                    const unsigned char *bytes)
+{
+    if (driver_reference(key, name, type, size, bytes))
+        return 0;
     if (is_secret(name) || is_secret(key))
         return 1;
     return type != 1 && type != 2 && type != 4 && type != 7 && type != 11 && size > BINARY_SHOWN;
@@ -162,7 +208,7 @@ static void value_line(const char *key, const WCHAR *wide_name, DWORD type, DWOR
     text[0] = '\0';
     if (too_long) {
         add(text, sizeof(text), "<too long, not read>");
-    } else if (withheld(key, name, type, size)) {
+    } else if (withheld(key, name, type, size, data)) {
         add(text, sizeof(text), "<not copied, ");
         add_uint(text, sizeof(text), size);
         add(text, sizeof(text), " bytes>");
