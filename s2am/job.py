@@ -1028,14 +1028,16 @@ PHASE_LOG = "phase.txt"  # in the job's folder on the car: how far a decoder app
 def _decoder_apply_lines(job: Job, folder: str, files: dict) -> list[str]:
     """A decoder apply: the car first, the stick's report after.
 
-    The first decoder job in the car (2026-11-16) backed the three files up on the car and then
-    stopped without a trace: nothing it wrote reached the stick, so the check of the stick's copy
-    of the backup failed, and so did the note saying so. Here nothing the stick does can stop the
-    job once it runs. The backup that matters is the one on the car (the undo stick carries the
+    The first decoder job in the car (2026-11-16) backed the three files up on the car, changed
+    nothing and left nothing on the stick. The likeliest reading, not proven, is that its writes
+    did not reach the stick, so the check of the stick's copy of the backup failed and so did the
+    note saying so. Here nothing the stick does can stop the job once it runs. The backup that matters is the one on the car (the undo stick carries the
     originals anyway); the stick's copies of the backup and of what was applied are written last,
     for the Mac to compare. A job whose backup is on the car and whose three new files are in
     place finished its swap before: put in again, it only writes the report it could not write
-    then, AutoKit running or not. Any other state with a backup on the car is a run cut short
+    then, AutoKit running or not. That second visit is not a full recovery: once the inventory
+    reached the stick the job is marked done on the car, and a later visit stops as a replay even
+    if the copies for the Mac did not all arrive (the import then says not-verified). Any other state with a backup on the car is a run cut short
     (STARTED_BEFORE). PHASE_LOG, on the car, says how far a run got.
     """
     def phase(word: str, indent: str = "  ") -> str:
