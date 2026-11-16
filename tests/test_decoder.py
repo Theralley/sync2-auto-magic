@@ -418,7 +418,9 @@ class Scripts(unittest.TestCase):
         self.assertRegex(script, self.block([
             *backup,
             '  WriteFile(jd & "\\phase.txt", "backup-ok" & "^NL^", TRUE)',
-            f'  WriteFile(out & "\\changing.txt", "{job.id}")',
+            "  If (DirExists(out))",
+            f'    WriteFile(out & "\\changing.txt", "{job.id}")',
+            "  EndIf()",
             *[f'  Copy(jd & "\\new-{n}", th & "\\{n}", TRUE)' for n, _, _ in sizes],
             "  ok = 1",
             *[line for n, _, new in sizes

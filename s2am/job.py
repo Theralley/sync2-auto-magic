@@ -1104,7 +1104,12 @@ def _decoder_apply_lines(job: Job, folder: str, files: dict) -> list[str]:
                   *_stop("backup-failed.txt", "could not back up the decoder on the car; nothing changed", "    "),
                   "  EndIf"]
     lines += [phase("backup-ok"),
-              f'  WriteFile(out & "\\{CHANGING}", {_quote(job.id)})',
+              # dec-2f5d in the car (2026-11-16) made its backup and changed nothing: its report
+              # folder was gone by then (DelTree), and this was its first write to the stick after
+              # the backup. Whether that write ended the script is not known; it no longer can.
+              "  If (DirExists(out))",
+              f'    WriteFile(out & "\\{CHANGING}", {_quote(job.id)})',
+              "  EndIf",
               *[f'  Copy(jd & "\\new-{name}", th & "\\{name}", TRUE)' for name in files],
               "  ok = 1"]
     for name, f in files.items():
