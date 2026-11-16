@@ -217,9 +217,15 @@ That brought SYNC back every time. Last resort: engine off, lock the car, wait 1
   OK, and import the stick.
 
 ### "Install successfully completed!", but `stick import` says `processed-no-report`
-- **Cause:** the job's script stopped before writing anything. Usually the dialog above. The
-  installer ignores the script's result.
-- **Fix:** see the entry above. Build a fresh job; never re-use the old install.bin.
+- **Meaning:** the installer consumed the package, but no recognized job result was returned.
+  The installer ignores the script's result. A pre-parse error can cause this, but the status
+  alone does not identify the cause or prove the car stayed unchanged.
+- **Check:** preserve/import the return and record the screen message and current app behavior.
+  A two-line installer log is also normal on successful jobs. Investigate the missing script
+  report before retrying; see the known MortScript dialog above.
+- **Seen:** the November 16 decoder return had the exact prepared pack but no job report
+  directory. Its launcher/interpreter matched a successful clock job, and script structural
+  checks passed. Installation remains unverified; there is no confirmed fix yet.
 
 ### Nothing happens when the job stick is inserted
 - **Inserted right after SYNC started?** If the stick goes in too soon after starting the car or

@@ -1,5 +1,23 @@
 # SYNC 2 clock investigation
-The non-NEON decoder test and its undo are ready on the two verified sticks; clock analysis has recovered matching candidate modules but no usable CPU-frequency selector.
+The decoder return has no job report, leaving installation unverified; clock analysis has recovered matching candidate modules but no usable CPU-frequency selector.
+
+## Decoder return unresolved, November 16
+
+`20261115-205200-dec-edc8` imported as `processed-no-report`. The returned `installed.bin`
+matches the prepared pack SHA-256 below; `install.bin` is absent. No report directory for
+this job exists on the returned stick. Four original return files were preserved and hashed
+before import; the imported installer log matches the preserved copy.
+
+The launcher and MortScript interpreter are byte-identical to the successful `clock-d9b3`
+job. Their initial report-creation code also matches after normalizing job IDs; the decoder
+script passes current structural checks. Both installer logs have the same two-line form,
+so that log alone does not locate the failure. An independent review found no deterministic
+package-startup defect. No installation, unchanged-car or performance claim is justified.
+
+Next evidence: the observed SYNC message/error and current AutoKit behavior, including any
+use of the undo stick. Do not blindly replay the ambiguous installation. No replacement job,
+code change, native build or CI run was made during return analysis. The preparation section
+below is historical; the red stick's package has been consumed.
 
 ## Decoder test sticks prepared again, November 16
 

@@ -19,12 +19,20 @@ before **November 17, 10:35 Swedish time**. Rewriting the sticks does not extend
 Neither has a recorded successful car test. The earlier decoder test was displaced by clock
 diagnostics, so the historical "on the sticks now" entry is not current readiness evidence.
 
-**Prepared again November 16:** the red SYNC stick now contains `dec-edc8`, verified after
+**Prepared again November 16:** the red SYNC stick was loaded with `dec-edc8`, verified after
 unmount/remount and safely ejected. The 2 GB stick's matching `dec-393a` undo and pending
 record matched their originals; its instructions were updated and it was safely ejected.
 Both sticks were backed up first. This readiness check is not a successful car run.
 
-The first car trial establishes loading, correct picture/audio and a possible visible benefit:
+**Returned November 16, unresolved:** `dec-edc8` imported as `processed-no-report`. Its
+`installed.bin` matches the prepared pack byte for byte, but the entire job report directory
+is absent. The two-line installer log also occurs in successful jobs; it does not establish
+script completion. Launcher/interpreter hashes and script structure pass comparison with the
+successful clock job. No deterministic package defect was found. Preserve the return and
+establish the observed screen/error and current AutoKit behavior before a fresh attempt;
+neither installation success nor an unchanged car can be inferred from the missing report.
+
+Once that failure is understood, the trial establishes loading, correct picture/audio and a possible visible benefit:
 
 1. Restart SYNC. With the original decoder, use the same phone, adapter and Maps/Spotify sequence for
    5–8 minutes after a two-minute warm-up. Note picture lag, repeated tap response and audio
