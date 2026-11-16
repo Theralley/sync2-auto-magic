@@ -1,7 +1,20 @@
 # SYNC 2 clock investigation
-The November 15 registry capture does not establish that custom kernel code is the only clock-control route.
+The November 16 car run demonstrates the PMIC read route and corrected registry capture; no CPU-frequency selector has been discovered.
 
-## Evidence
+## Latest car result, November 16
+
+Both diagnostics in `20261115-214729-clock-9792` completed. The returned pack and imported
+reports match the preserved originals. PMIC identification/SW1 reads returned presets of
+1050/1050/700 mV (normal/DVS/standby), not an active CPU-voltage measurement.
+
+The registry contains 950 keys, 3,792 values and 49 withheld values. All five requested roots
+are present with no recorded errors/limit markers. There are 116 active entries; 104 references
+resolve directly, while 12 remain withheld, including three unnamed entries. No higher point
+or complete table capped at 600 MHz has been established. Current route: interface discovery,
+with exact CSPDDK and AutoPM module analysis next. See the
+[full findings](../docs/CLOCK-CAPTURE-2026-11-16.md).
+
+## Earlier evidence audit, November 15
 
 - The completed capture contains 116 active-device entries: 106 named and 10 unnamed.
 - The registry exporter withheld every active device's `Key` reference as a potential credential.
@@ -11,11 +24,11 @@ The November 15 registry capture does not establish that custom kernel code is t
 
 ## Implementation and verification
 
-Commit `6d9e3dc` on `fix/clock-evidence` retains bounded, validated driver references while preserving credential filtering and corrects `docs/PERFORMANCE.md`. Nine focused registry tests pass, including malformed input and credential cases. Independent security, performance and tests reviews found no blocking issues. Both the corrected registry reader and the subsequent PMIC helper now compile for Windows CE; car validation remains outstanding. No clock-change implementation is available. Full CI was not run for this experimental development change.
+Commit `6d9e3dc` on `fix/clock-evidence` retains bounded, validated driver references while preserving credential filtering and corrects `docs/PERFORMANCE.md`. Nine focused registry tests pass, including malformed input and credential cases. Independent security, performance and tests reviews found no blocking issues. Both readers compile for Windows CE and completed in the November 16 car run. No clock-change implementation is available. Full CI was not run for this experimental development change.
 
 ## Next evidence
 
-Run the staged PMIC diagnostic and corrected driver-registry capture in the car. Record per-file attributes and copy errors before attributing missing files to ROM. Check actual Ford driver interfaces against the Freescale reference BSP; a documented reference interface does not prove that Ford ships it.
+Resolve remaining structural identities and obtain exact clock/power module implementations. Record per-file attributes and copy errors before attributing missing files to ROM. Check actual Ford driver interfaces against the Freescale reference BSP; a documented reference interface does not prove that Ford ships it.
 
 Reference: [Freescale i.MX51 CE 6.0 BSP manual, chapters 7 and 9](https://community.nxp.com/pwmxy87654/attachments/pwmxy87654/imx-processors/9897/1/481-WCE600_MX51_ER_1104_ReferenceManual.pdf).
 
@@ -29,12 +42,13 @@ its unconstrained demand. No clock-change command or tested target frequency is 
 An ordinary application now reads identification and SW1 presets through the existing `PMI1:`
 driver, using the reference Freescale read ABI. It checks identity before reading SW1 and has
 no hardware-write interface. Normal/DVS/standby presets do not identify the active voltage.
-Ford ABI compatibility and hardware behavior remain unverified.
+The two fixed reads now have real-car evidence; other operations and active rail interpretation remain unverified.
 
 The PMIC and registry helpers compiled on `ant-srv-001` with warnings as errors and passed CE
 ARM/COREDLL-only checks. Eight PMIC tests, nine registry tests and three native binary checks
 pass; the optional Docker build test was skipped locally. Review found and fixed interrupted
-snapshot overwrite and oversized completion-marker acceptance. No full CI or car test ran.
+snapshot overwrite and oversized completion-marker acceptance. This host validation preceded
+the November 16 car test; no full CI ran.
 The standalone jobs were initially staged without install packs. A subsequent one-stick
 request produced the combined diagnostic described below.
 
@@ -59,9 +73,9 @@ This pack must be used before November 17, 2026, 10:35 Swedish time.
 The final check completed on November 16 after the SanDisk was reconnected and identified by
 its volume UUID and device model. The install pack, pending-job record and Swedish instruction
 matched byte for byte; the package remained valid. The stick was then successfully ejected.
-Nothing was rebuilt or rewritten. The owner confirmed it has not run in the car; no run marker
-or report was present. It is ready for the first car capture. The prior remount interruption
-is resolved.
+Nothing was rebuilt or rewritten. At that pre-car check the owner confirmed it had not yet run;
+no run marker or report was present. The prior remount interruption was resolved. The subsequent
+successful car result is recorded above.
 
 ## Outcome plan and offline trial preparation
 
@@ -82,4 +96,4 @@ incomplete or timed-out restoration remains unresolved. This validates the model
 recovery. No full CI or car test ran for this offline preparation.
 
 A future live job needs matching image/interface/table and thermal/recovery evidence, then an
-explicit execution go bound to the final proposal. No additional USB or car work was done.
+explicit execution go bound to the final proposal. The offline preparation itself performs no USB or car work.

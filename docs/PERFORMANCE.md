@@ -99,8 +99,10 @@ the first two are the ones to try first:
 to the clock has been built or tried.**
 The [clock-method investigation](CLOCK-METHOD.md) now includes a compiled `s2am job pmic`
 diagnostic for voltage presets through the existing driver, plus the evidence needed to
-distinguish an existing operating-point selector from missing platform support. Neither the
-new PMIC job nor the corrected driver capture has run in the car yet.
+distinguish an existing operating-point selector from missing platform support. Both readers
+completed in the car on November 16: SW1 presets are 1050/1050/700 mV, and 104/116 active
+driver references resolve. No CPU-frequency selector was discovered; see the
+[capture findings](CLOCK-CAPTURE-2026-11-16.md).
 More clock speed helps everything at once: Ford's screens, AutoKit's decoding, the taps. It is
 also the only lever here that can damage the hardware, so it comes last, after the cheaper levers
 above and after the groundwork below.
@@ -161,11 +163,11 @@ the register values are from the documents, not yet read from this car):
    explanation, **not a verified cause**. This capture does not prove that custom kernel code
    is the only possible clock-control route.
 
-   **Next evidence:** repeat the driver registry capture with the corrected exporter, which
-   preserves only well-formed `Drivers\\...` or `Services\\...` references in
-   `Drivers\\Active\\<number>\\Key` and retains credential filtering. The correction is
-   host-tested and compiled for CE on `ant-srv-001`, but has not run in the car. Add per-file
-   attributes and error reporting before drawing conclusions from missing binaries.
+   **November 16 follow-up:** the corrected exporter ran in the car and recovered 104 active
+   references; 12 remain withheld. No explicit CPU selector or frequency table was found.
+   **Next evidence:** resolve the remaining identities and inspect exact clock/power module
+   implementations, especially CSPDDK and AutoPM. Add per-file attributes and error reporting
+   before drawing conclusions from missing binaries.
    Freescale's [i.MX51 CE 6.0 BSP reference manual, chapters 7 and 9](https://community.nxp.com/pwmxy87654/attachments/pwmxy87654/imx-processors/9897/1/481-WCE600_MX51_ER_1104_ReferenceManual.pdf)
    describes CSPDDK clock services and a `dvfc_mc13892.dll` driver with `DVF1:`/`DVF2:` power
    interfaces. Those are reference-BSP facilities, **not confirmed Ford interfaces**. No calls

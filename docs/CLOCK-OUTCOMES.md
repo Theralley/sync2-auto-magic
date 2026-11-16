@@ -5,8 +5,9 @@ Three routes are prepared for the returned `clock-9792` evidence; no live clock-
 
 The strongest current observation is **no explicit CPU-frequency selector discovered**. That
 makes interface discovery/platform work the working route, not proof that DVFC is absent.
-There is no evidence-based probability estimate. The earlier driver export withheld structural
-references, and `clock-9792` has not returned. Do not label 667 or 700 MHz a qualified or
+There is no evidence-based probability estimate. The [returned `clock-9792` capture](CLOCK-CAPTURE-2026-11-16.md)
+resolves 104/116 active references, with 12 still withheld and no explicit CPU selector found.
+Do not label 667 or 700 MHz a qualified or
 available operating point before the exact deployed implementation and fitted hardware agree.
 
 Here, qualification means an explicit engineering assessment for the bounded experiment, with

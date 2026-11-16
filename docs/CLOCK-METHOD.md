@@ -1,6 +1,10 @@
 # SYNC 2 clock method and the next measurement
 The clock investigation has a working diagnostic implementation, but no verified 700 MHz operating point yet.
 
+**Car result, November 16:** both readers completed. The PMIC returned SW1 presets of
+1050/1050/700 mV; the registry resolved 104/116 active references but exposed no CPU-frequency
+selector. See the [capture findings and next module-analysis step](CLOCK-CAPTURE-2026-11-16.md).
+
 The [outcome plan and offline trial/undo rehearsal](CLOCK-OUTCOMES.md) cover a verified higher
 DVFC point, a genuine 600 MHz limit, and no discovered interface. The rehearsal has no live
 hardware backend or installable overclock job.
@@ -10,7 +14,7 @@ hardware backend or installable overclock job.
 | Route | What it can establish | What is still missing |
 |---|---|---|
 | Existing DVFC driver | Selects operating points compiled into that driver; the reference BSP exposes CPU and peripheral domains separately | A matching Ford driver, its API contract and its actual operating-point table |
-| Existing `PMI1:` driver | Reads MC13892 registers through the documented register-read request | Compatibility of Ford's implementation with the reference ABI; this is not a CPU clock selector |
+| Existing `PMI1:` driver | Identification and SW1 reads demonstrated in the car | Other requests and active rail interpretation remain unverified; this is not a CPU clock selector |
 | `cspddk.dll` clock services | The reference BSP has clock-query and configuration services | Ford's exports, callable context and implementation; a function name does not prove arbitrary CPU-frequency support |
 | New board-specific platform support | Would be needed if the deployed software has no suitable operating point/interface | Actual CPU grade, clock tree, DDR/AXI dependencies, rail control, synchronization and suspend/resume behavior |
 
@@ -18,8 +22,8 @@ Source: Freescale's [i.MX51 CE 6.0 BSP manual](https://community.nxp.com/pwmxy87
 
 Finding an existing DVFC driver would not by itself make 700 MHz available. Its compiled table
 must contain a suitable point, or its platform implementation must change. The captured Ford
-registry has no explicit DVFC entry; the corrected reader will recover previously hidden driver
-references. An absence in that capture is not a complete inventory of OEM interfaces.
+registry has no explicit DVFC entry; the corrected reader recovered 104 active-driver
+references, with 12 still withheld. An absence in that capture is not a complete inventory of OEM interfaces.
 
 The measured CPU clock is 600 MHz. The [automotive i.MX51A datasheet](https://www.nxp.com/docs/en/data-sheet/IMX51AEC.pdf)
 rates that variant at up to 600 MHz; the fitted order code has not been established. A different
@@ -67,7 +71,7 @@ of compiled operating-point tables from ROM modules or establish a usable freque
 Use the usual job/stick workflow. `--no-pack` stages files without building an install pack.
 The normal pack-window check still applies. A PMIC job needs no settings undo because it
 changes no settings; the job runner still stages its executable and writes its normal records.
-The standalone jobs remain available; the combined job also has not run in the car.
+The standalone jobs remain available; the combined job completed in the car on November 16.
 
 After importing, the PMIC job prints presets only when its completion marker and full report
 agree. `pmic.txt` retains raw decimal values and failure details. Stage 1 = identification read
@@ -111,8 +115,10 @@ The PMIC and corrected registry helpers compile with CeGCC `-Wall -Wextra -Werro
 `ant-srv-001`; their PE headers/imports validate as Windows CE ARM, COREDLL only. Focused host
 tests execute the actual PMIC C application against an API shim and cover successful readings,
 wrong identity, no-op success, read errors, partial writes and report validation. This verifies
-application logic and buildability, not the Ford driver ABI or a real voltage reading.
+application logic and buildability. The November 16 car run additionally demonstrates the
+two tested PMIC reads and corrected registry capture, not arbitrary driver operations or a
+measured active voltage.
 
-Next decision requires the returned PMIC and corrected driver captures. Then identify the actual
-CPU-domain interface and operating-point table. If none provides the target, the remaining work
+The returned captures now support the interface-discovery route. Identify the actual
+CPU-domain interface and operating-point table in the exact modules. If none provides the target, the remaining work
 is board-specific platform support; the present tools do not establish or apply an overclock.
