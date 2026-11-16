@@ -1,6 +1,25 @@
 # SYNC 2 clock investigation
 The November 16 car run demonstrates the PMIC read route and corrected registry capture; no CPU-frequency selector has been discovered.
 
+## Module diagnostic USB ready, November 16
+
+Job `20261116-082901-clock-d9b3` is now on the identified SanDisk SYNC stick. Its 681 existing
+files were backed up and hash-verified first; previous updater files were archived. The new
+179,240-byte install pack and pending-job record matched after an unmount/remount, then the
+CLI successfully ejected the stick. The second stick was not changed. This is the first car
+test of the module/PMIC-mode diagnostic, not an overclock; no report for this job exists yet.
+
+The CLI's automatic eject occurred before the root instruction file could be replaced. That
+file still describes the earlier registry job; its car steps and November 17, 10:35 Swedish
+expiry remain applicable. The updated instruction is available beside the local job package,
+and this limitation was disclosed. Use the new diagnostic before that deadline, wait for
+"Install successfully completed", then bring back the stick for import.
+
+Backup recovery note: copying old Windows dump-file flags with Python `copy2` failed on the
+Mac. Copying file contents and verifying SHA-256 succeeded; original timestamps/flags were
+recorded in the backup manifest instead of being applied to the backup files. No code changed
+or new build/CI ran for USB preparation.
+
 ## Targeted follow-up prepared, November 16
 
 `s2am job clock --modules` pairs the v2 PMIC reader with a fixed eight-file inspector.
@@ -25,7 +44,8 @@ Job `20261116-082901-clock-d9b3` is available locally after server compilation a
 179,240 bytes, six payload files, byte-identical unpack verification. Three native binary
 checks also pass; the optional local Docker build test is skipped. The pack expires on
 November 17, 2026, at 10:35 Swedish time; rebuild the pack after that window rather than
-using the expired artifact. USB preparation and the car run are still outstanding.
+using the expired artifact. USB preparation was outstanding at this point and is completed
+above; the car run remains outstanding.
 
 Next: run this diagnostic after preparing the identified stick, import both reports, then
 analyze any verified files. If the key files are ROM modules, obtain and match the firmware
