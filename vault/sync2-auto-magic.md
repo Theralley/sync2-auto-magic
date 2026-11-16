@@ -1,5 +1,35 @@
 # SYNC 2 clock investigation
-All seven target modules have been recovered offline with metadata matching the November 16 car capture; no usable CPU-frequency selector has been established.
+The non-NEON decoder test and its undo are ready on the two verified sticks; clock analysis has recovered matching candidate modules but no usable CPU-frequency selector.
+
+## Decoder test sticks prepared again, November 16
+
+At the owner's request, the existing `20261115-205200-dec-edc8` test was put back on the
+identified red SYNC stick after backing up and hash-verifying 696 files / 134,120,779 bytes.
+The pack, pending record and updated Swedish instructions matched after unmount/remount;
+the stick was safely ejected. Pack SHA-256:
+`0c656039f1711b277bd4fcfbdf9b6dafa1f8534f5cb1cc5b73357db3be388b32`.
+
+The 2 GB undo stick already held matching `20261115-205211-dec-393a`. Its pack and pending
+record verified; 130 files / 30,346,435 bytes were backed up before replacing its stale
+instructions. It was safely ejected and the owner removed it. Undo pack SHA-256:
+`745343c159ff6c494ff6d600096001e5d8654770a2c9c2ab26a901f367286dc2`.
+
+Use both packages before November 17, 10:35 Swedish time; rewriting does not extend the
+installer window. The decoder's three DLLs and system imports passed the existing ABI check
+and comparison with the metadata-matched candidate firmware, including COREDLL forwards.
+Actual-car decoder hashes are unavailable; latest inventory reports stock sizes and
+640×384/10/software. First installation/loading and performance validation are still pending.
+
+Keep that picture configuration and priority unchanged for the first A/B. Restart and warm
+up equally before each condition. This package starts no load logger, so the initial trial
+checks operation and visible behavior; paired CPU measurement needs separate logging jobs.
+See [the current procedure](../docs/PERFORMANCE.md#next-useful-tests-november-16).
+
+New static NEON evidence: candidate NK/kernel integrate FPSCR and D0–D31 context routines.
+This supports preparing a separate user-mode instruction/context-switch probe, not assuming
+NEON works in the car. No separate NEON build/test executable was located. No new binary,
+native build, full CI or car clock change was made in this preparation. Three independent
+reviews corrected matched warm-up wording and stale readiness text.
 
 ## Candidate binaries recovered and inspected, November 16
 

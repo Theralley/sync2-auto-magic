@@ -123,6 +123,20 @@ names in CSPDDK copies, but compression prevents using that search to exclude ev
 Neither the name inventory nor the examined OAL handlers prove that no other implementation
 exists anywhere in the system.
 
+## NEON follow-up evidence
+
+A later bounded inspection found integrated extended floating-point context support in this
+candidate: NK saves/restores FPSCR and D0–D31 at `0x8010b544` / `0x8010b558`. OEM initialization
+registers those callbacks and a `0x108`-byte context through `0x80106be4`. Kernel code allocates
+the context and calls the corresponding save/restore interface at `0x80122d9c` / `0x8011fc3c`.
+This is stronger evidence than the processor's advertised instruction set alone.
+
+It is still static candidate-image evidence, not demonstrated instruction execution or
+context switching in the car. Baseline D0–D15 helpers also exist; this inspection does not
+establish every exception/debugging path. A separate user-mode probe should check correct
+results and register preservation across forced thread switches, including D16–D31, before
+trying a NEON decoder. The current decoder test deliberately uses no NEON.
+
 ## What is still needed for an overclock trial
 
 The earlier claim that no standalone DVFC driver means the clock can *only* be changed

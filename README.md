@@ -8,11 +8,12 @@ and free software.** It also includes a Mac tool that shows what is installed on
 > [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Leaving AutoKit froze the screen; the runner guard
 > fixes that (verified in the car). Try it only if you are comfortable with the recovery steps.
 >
-> **Where it stands (14 November 2026):**
+> **Where it stands (16 November 2026):**
 > - **Measured:** with CarPlay running, the processor is at 100%. Most of it goes on AutoKit's
 >   video decoding in software.
-> - **Next test:** hardware decoding (`autokit-config --decoder hardware`). The job and its undo
->   are built, rehearsed and on the car's sticks, but have not run in the car yet.
+> - **Next test:** the rebuilt software decoder, keeping 640×384/10 unchanged for comparison.
+>   Its matching undo is available; first car validation remains outstanding. Hardware-decoder
+>   selection and 800×480/10 have already been tried without a CPU-load improvement.
 > - **Calls over CarPlay don't work yet** (the microphone). Don't rely on CarPlay for calls.
 
 ## Tested and working
@@ -96,7 +97,7 @@ run the same system, but nothing is guaranteed.
 | AutoKit in English | **Works in the car**; new installs start in English (the stock app is Chinese; `autokit-config --lang` changes it) |
 | Apple CarPlay over a cable | **Works in the car, very slow** (2026-11-04): [docs/PERFORMANCE.md](docs/PERFORMANCE.md) |
 | A smaller CarPlay picture to lower the load (`autokit-config --screen 640,384,10`) | **Works in the car** (2026-11-15): the processor is no longer full all the time and CarPlay feels much faster; the picture sits in the middle with a black frame. The car is left on this setting |
-| Faster video decoder files for AutoKit, our own FFmpeg build (`s2am job decoder`, with its undo stick) | Built, about 20% less decoding work in an emulator with identical pictures; **both sticks written 2026-11-15, first car test to come**. The files themselves are not in this repository ([docs/PERFORMANCE.md](docs/PERFORMANCE.md)) |
+| Faster video decoder files for AutoKit, our own FFmpeg build (`s2am job decoder`, with its undo stick) | Built, about 20% fewer emulated instructions with identical test pictures; **first car test still outstanding**. The files themselves are not in this repository; see the [current test procedure](docs/PERFORMANCE.md#next-useful-tests-november-16) |
 | A higher processor clock (overclocking) | **No confirmed frequency-control route yet.** Seven clock/system targets are confirmed ROM modules; the named DVFC DLL is absent. No binaries or higher CPU point recovered. Next: matching firmware for offline module analysis ([car findings](docs/CLOCK-MODULE-CAPTURE-2026-11-16.md)) |
 | Read MC13892 voltage presets through the existing driver (`s2am job pmic`) | **Registers 7/24/28 work in this car** (2026-11-16, as part of `clock`): presets 1050/1050/700 mV, SW1MODE 9, SID disabled. Active CPU voltage remains unmeasured; no voltage or clock changes ([findings](docs/CLOCK-MODULE-CAPTURE-2026-11-16.md)) |
 | Collect clock evidence in one visit (`s2am job clock`) | **Original profile works in the car** (2026-11-16): both reports completed; registry has 950 keys and 3,792 values. The later targeted profile also validates the new PMIC mode read. No reboot or clock/voltage changes; each diagnostic's outcome is checked separately on import |
