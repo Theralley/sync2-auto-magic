@@ -1,5 +1,21 @@
 # SYNC 2 clock investigation
-Native decoder-file inspection has worked in the car; the latest decoder installation still needs byte verification, and a read-only clock-driver prototype awaits review and car validation.
+Two native decoder inspections found stock active DLLs; a corrected swap awaits car testing, and a reviewed read-only clock-driver prototype awaits USB integration and car validation.
+
+## Latest verified results and source publication, November 16
+
+The second native inspection, after the revised decoder attempt, verified stock active DLLs,
+complete stock backup and intact staged candidate. Exact packaged MortScript analysis shows
+`DelTree` deleted the empty report folder and the subsequent failed `WriteFile` stopped execution
+before decoder copies. Cleanup now guards missing directories and recreates the report folder;
+the corrected decoder package has not yet run in the car. An existing but unwritable report
+directory can still stop the pre-swap marker write. The independent decoder undo remains available.
+
+The reviewed read-only clock driver, controller, tests and six-step clock plan are now in the
+repository. Nineteen focused driver tests and five parser tests pass; independent mutations
+confirmed registry isolation checks reject kernel-mode flags and altered memory windows. The
+candidate 624 MHz result depends on unverified assumptions; no live frequency change exists.
+USB integration is ongoing separately. Older readiness and unresolved-status entries below are
+historical snapshots.
 
 ## Development goals and latest return, November 16 evening
 
