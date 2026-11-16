@@ -3,8 +3,8 @@
 The `decoder-inspect` job collects active, backup and staged files independently of MortRunner.
 Its first car run on November 16 completed and verified that the active decoder was still stock.
 The later revised decoder installation also returned the correct consumed package without a
-job report; AutoKit works, but its current file identity remains unresolved. A fresh inspection
-targets that later attempt. See the [current development update](PROGRESS-2026-11-16.md).
+job report. A second inspection of that attempt confirmed all three active DLLs remained stock,
+the car backup was complete and the staged candidate files were intact. See the [current development update](PROGRESS-2026-11-16.md).
 
 ## Why a new launch path is needed
 
@@ -13,8 +13,8 @@ failure and child exit status, and MortRunner silently returns zero when its scr
 or MortScript cannot start. Thus a success screen and `installed.bin` do not prove the swap
 script ran. Separately, analysis of the exact packaged MortScript interpreter confirmed that
 `DelTree` on a missing child can delete the empty report directory. The generator now guards
-those calls and recreates the report directory. Neither defect identifies the files currently
-installed; direct file evidence is still required.
+those calls and recreates the report directory. The second capture identifies the active files after that attempt; a corrected swap still
+requires a new installation and subsequent verification.
 
 The new job selects `s2amdiag.exe` directly as POST_APP. It first leaves a native-entry trace
 in its own new job folder, locates exactly one USB pending record, and creates a fresh report.

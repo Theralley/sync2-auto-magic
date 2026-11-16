@@ -16,18 +16,17 @@ The [development update](PROGRESS-2026-11-16.md) brings the decoder, priority an
 up to date. The immediate next step is **identify the decoder actually installed**, followed by
 separate decoder and scheduling comparisons at the existing **640×384/10/software** setting.
 
-The first native inspection completed in the car and found stock active DLLs, stock backups
-and correctly staged candidate DLLs. The revised decoder installation then returned without
-its report again. The same Maps/Spotify test worked, but the owner noticed no improvement.
-Neither the installer success message nor that subjective result proves which DLLs are active.
+Two native inspections completed in the car. The second found the three active DLLs still
+stock after the revised swap attempt, with a complete stock backup and intact staged candidate.
+The owner saw no improvement in the Maps/Spotify test; that test did not use the new decoder.
 
-Independent source and exact-binary analysis confirmed a reporting defect: MortScript's
-`DelTree` can remove the empty parent report folder when a requested child does not exist.
-Cleanup now checks child existence and recreates the report directory. A fresh
-[read-only native inspection](DECODER-INSPECTION.md) targets the latest installation. It does
-not repeat the swap or apply a priority/frequency change. The matching decoder undo remains
-available. Current prepared test packages expire **November 17, 10:35 Swedish time**; rewriting
-the sticks does not extend that window.
+Exact-interpreter analysis identified the cause: `DelTree` on a missing child removed the empty
+report folder and a later failed `WriteFile` ended the script before the decoder copies. The
+cleanup now guards children and recreates the report directory. A corrected decoder installation
+has been prepared; its first car run remains pending. The matching undo remains available.
+Current prepared packages expire **November 17, 10:35 Swedish time**; rewriting the sticks does
+not extend that window. An existing but unwritable report folder can still stop the pre-swap
+marker write; this is recorded as a remaining limitation.
 
 ### Verify the custom decoder
 
@@ -70,8 +69,7 @@ provide a basis for the probe. Neither establishes live Ford compatibility or Au
 
 The hardware-decoder flag and 800×480/10 have already been tried without a CPU-load improvement.
 The standalone clock reader failed at mapping with error 87. A separate temporary read-only
-clock-driver prototype has passed host tests and a server build; it still needs review and car
-validation. No installable CPU-frequency trial is available. See the
+clock-driver prototype has passed host tests and a server build; independent review passed, and USB integration and car validation remain pending. No installable CPU-frequency trial is available. See the
 [clock research goal](PROGRESS-2026-11-16.md#goal-3-a-controlled-overclock-experiment).
 
 ## What we know
@@ -153,7 +151,7 @@ given above; this table also preserves the already tested options:
 | Frame rate | Requests 10 frames per second instead of 15 | `autokit-config --screen 800,480,10`. **Tried November 15: no measured CPU-load improvement**; actual frame admission/queueing was not measured | Some audio interruptions were observed; no proven decoding-cost reduction |
 | NEON | AutoKit's faster path, if its check is what holds it back | Not known yet: first find out how AutoKit checks | Unknown |
 | AutoKit's priority | AutoKit's video (252) runs at 251 or 250 while CarPlay is alone on the screen: 251 is still below `Desktop.exe` (250), 250 shares with it. Never above it: a busy video there could keep Ford's screens from ever coming up, and their coming up is what ends the boost. Back to 252 as soon as SYNC or anything else is on the screen; JasonACT's runner on XDA sets thread priority too | `runner-guard --boost 250 --measure 600` (**next comparison; not tried in the car**); `--boost off` undoes it, `--off` too | Can slow Ford's screens behind it, so it needs testing with calls, climate and the parking sensors. Compare boost off against 250 at the same decoder and resolution |
-| A faster decoder build | AutoKit's three decoder files, FFmpeg 2.6.9, built again for this processor, without NEON. In an emulator, AutoKit's own build needs about 1.25 times as many instructions per frame. The picture is identical on the test videos. The decoder files themselves are not in this repository yet | `s2am job decoder --from FOLDER` (**installation attempted; latest active DLL identity and performance unverified**). AutoKit must be closed: restart SYNC and insert the stick before opening AutoKit. Build the undo stick at the same time | AutoKit does not start, or crashes. `s2am job decoder --restore JOB` undoes it. If a run is cut short, AutoKit may not start until the undo stick has run |
+| A faster decoder build | AutoKit's three decoder files, FFmpeg 2.6.9, built again for this processor, without NEON. In an emulator, AutoKit's own build needs about 1.25 times as many instructions per frame. The picture is identical on the test videos. The decoder files themselves are not in this repository yet | `s2am job decoder --from FOLDER` (**prior attempts left stock DLLs; corrected installation and performance unverified**). AutoKit must be closed: restart SYNC and insert the stick before opening AutoKit. Build the undo stick at the same time | AutoKit does not start, or crashes. `s2am job decoder --restore JOB` undoes it. If a run is cut short, AutoKit may not start until the undo stick has run |
 | Flash quality | Ford's screens drawn at a lower quality setting, which may cost less to draw | New, a small patch in the frame | Rougher text. Whether Ford's player honours the setting is not known |
 | Lighter screens | Fewer and simpler things to draw | sync-redesign, plan step S7 | Slow work, screen by screen |
 
