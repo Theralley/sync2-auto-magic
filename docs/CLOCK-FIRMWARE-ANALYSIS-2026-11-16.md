@@ -139,6 +139,19 @@ trying a NEON decoder. The current decoder test deliberately uses no NEON.
 
 ## What is still needed for an overclock trial
 
+**Prepared follow-up:** the [independent native inspection](DECODER-INSPECTION.md) now includes
+a fixed PLL1/CCM read probe using the user-space CEDDK mapping API. Candidate `ceddk.dll`
+sections match the extracted ROM bytes; `MmMapIoSpace` at RVA `0x3d60` allocates virtual space
+and calls `VirtualCopy`, while `MmUnmapIoSpace` at `0x3e28` frees it. Runtime permission is
+unverified. The probe has no kernel-loader fallback or hardware writes.
+
+The NK boot sequence at `0x801012c0–0x801012e4` selects `CBCMR=0x2042` on its newer-silicon
+branch and changes `CBCDR=0x26239180` to `0x24239180` by clearing bit 25. DDR's high-frequency
+selection bit 30 is clear and its ordinary selector is AXI_A. This suggests a PLL2-derived
+DDR route independent of PLL1 at that point. It is not evidence of live state or proof that
+all peripheral roots are independent. The fixed read probe is intended to check that state;
+it cannot measure temperature or derive PLL2 frequency without reading PLL2.
+
 The earlier claim that no standalone DVFC driver means the clock can *only* be changed
 by newly written kernel code was too strong. These binaries expose additional internal
 clock services, but the services inspected so far do not supply the requested CPU step.

@@ -175,6 +175,19 @@ def import_reports(stick: Path, store: Store, require_volume: bool = True) -> li
             stored = store.job(job.serial, job.id)
         except (OSError, ValueError):
             stored = {}
+        # A diagnostic's expected decoder hashes are host evidence, never USB input.
+        # Also inspect the ID and stored kind so changing the returned kind cannot bypass this.
+        if job.kind == "decdiag" or job.id.split("-")[2] == "decdiag" or stored.get("kind") == "decdiag":
+            try:
+                trusted = Job.from_json(json.dumps(stored))
+                if json.loads(trusted.to_json()) != json.loads(job.to_json()):
+                    raise ValueError("decoder inspection identity differs from its local job")
+            except ValueError:
+                rejected.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(path), str(rejected / path.name))
+                results.append({"id": job.id, "status": "rejected",
+                                "reason": "decoder inspection has no matching trusted local job"})
+                continue
         # A replayed job ran nothing: its report is the first run's, so it keeps that run's
         # place in time instead of looking like fresh evidence.
         record = {**json.loads(job.to_json()), "status": status, "replayed": replayed,

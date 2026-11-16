@@ -32,6 +32,12 @@ successful clock job. No deterministic package defect was found. Preserve the re
 establish the observed screen/error and current AutoKit behavior before a fresh attempt;
 neither installation success nor an unchanged car can be inferred from the missing report.
 
+**Next diagnostic prepared:** `20261116-182444-decdiag-4e4c` starts a native collector directly,
+captures the actual active/backup/staged files and independently tests a fresh harmless script.
+It also attempts a fixed PLL1/CCM snapshot through the installed CEDDK APIs. See the
+[inspection and car procedure](DECODER-INSPECTION.md). This replaces the consumed package
+on the red stick; it is not another decoder swap or an overclock. Car validation is pending.
+
 Once that failure is understood, the trial establishes loading, correct picture/audio and a possible visible benefit:
 
 1. Restart SYNC. With the original decoder, use the same phone, adapter and Maps/Spotify sequence for

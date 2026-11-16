@@ -1213,6 +1213,16 @@ def pmic_lines(job: Job) -> list[str]:
     ]
 
 
+def decoder_inspect_script(job: Job) -> str:
+    """A fresh harmless interpreter probe; the native POST_APP owns the real report."""
+    from .decoder_inspect import target_id
+    target_id(job.params.get("target"))
+    return _script([
+        'ErrorLevel("off")',
+        f'WriteFile({_quote(ce_path(job.job_dir) + chr(92) + "probe-done.txt")}, {_quote(job.id)})',
+    ])
+
+
 def clock_script(job: Job) -> str:
     """Collect PMIC plus either registry or targeted module evidence, without settings changes."""
     modules = job.params.get("modules", False)
@@ -1261,6 +1271,7 @@ SCRIPTS = {
     "reg": registry_script,
     "pmic": pmic_script,
     "clock": clock_script,
+    "decdiag": decoder_inspect_script,
 }
 MENU_CHANGING = ("rm", "undo", "inst")  # SYNC reads SyncApps.xml at start, so these restart it
 RESTARTING = MENU_CHANGING + SKIN_SWAPS + ("bundle",)  # and its theme, Apps menu and screens
@@ -1271,7 +1282,7 @@ def meta(job: Job) -> bytes:
     entries = {
         "HEADER": f"s2am {job.kind} job",
         "VERSION": f"s2am {job.id} for: {job.serial}",
-        "POST_APP": f"{job.job_dir}/{RUNNER_NAME}.exe",
+        "POST_APP": f"{job.job_dir}/{'s2amdiag' if job.kind == 'decdiag' else RUNNER_NAME}.exe",
     }
     if job.kind in RESTARTING:
         entries["NEED_REBOOT"] = "True"
@@ -1296,6 +1307,9 @@ def stage(job: Job, upstream: Path, workdir: Path, extra: dict[str, bytes] | Non
     shutil.copy2(upstream / MORTSCRIPT_SOURCE, target / "MortScript.exe")
     shutil.copy2(upstream / MORTRUNNER_SOURCE, target / f"{RUNNER_NAME}.exe")
     (target / f"{RUNNER_NAME}.mscr").write_bytes(script)
+    if job.kind == "decdiag":
+        (target / "target.txt").write_text(job.params["target"] + "\n", encoding="ascii")
+        (target / "probe.mscr").write_bytes(script)
     for name, data in (extra or {}).items():
         if "/" in name or "\\" in name or name.startswith("."):
             raise ValueError(f"invalid extra file name {name!r}")

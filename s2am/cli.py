@@ -74,7 +74,8 @@ JOB_KINDS = {"inventory": "inv", "autokit-stock": "akstock", "autokit-patched": 
              "remove": "rm", "install": "inst", "undo": "undo", "autokit-config": "akcfg",
              "snapshot": "snap", "logger": "log", "native-hello": "hello", "runner-guard": "guard",
              "theme": "theme", "apps-menu": "appmenu", "cleanup": "clean", "screen": "screen",
-             "bundle": "bundle", "registry": "reg", "decoder": "dec", "pmic": "pmic", "clock": "clock"}
+             "bundle": "bundle", "registry": "reg", "decoder": "dec", "pmic": "pmic", "clock": "clock",
+             "decoder-inspect": "decdiag"}
 MARK = {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
 
 
@@ -449,6 +450,13 @@ def cmd_job(args) -> int:
             if params["screen"] in STARTUP_SCREENS:
                 print("  this screen loads when SYNC starts: if the screen stays dark afterwards, insert the "
                       "undo stick anyway and wait two minutes (RECOVERY.md)")
+    elif args.kind == "decoder-inspect":
+        from . import decoder_inspect
+        params = decoder_inspect.plan(Store().job(args.serial, args.target))
+        extra = {name: native.binary(name) for name in ("s2amdiag.exe", "s2amclock.exe")}
+        print("decoder inspection: native startup, active/backup/staged file evidence and a fresh harmless "
+              "script probe. The separate clock probe attempts fixed register reads through ceddk; "
+              "mapping may be denied. No decoder replacement, clock/voltage writes or reboot.")
     elif args.kind == "decoder":
         params, extra = decoder.plan(Store(), args.serial, args.upstream, args.source, args.restore)
         if params.get("restore"):
@@ -567,6 +575,13 @@ def cmd_stick_import(args) -> int:
                 and record["status"] == "applied" and report:
             from . import modules
             print("  " + modules.summary(report))
+        if record.get("kind") == "decdiag" and report:
+            from . import clock_snapshot, decoder_inspect
+            inspected = Job.from_json(json.dumps(record))
+            print("  " + decoder_inspect.summary(report, inspected))
+            evidence = decoder_inspect.analyze(report, inspected)
+            if evidence["complete"]:
+                print("  " + clock_snapshot.summary(report / "clock.txt", evidence["processes"]["C"]))
         if verdict:
             print(f"  {verdict}")
         if record.get("kind") in apps.MENU_KINDS and record["status"] == "applied":
@@ -1080,6 +1095,11 @@ def parser() -> argparse.ArgumentParser:
                         help="a folder with avcodec-56.dll, avutil-54.dll and avformat-56.dll, all three")
     source.add_argument("--restore", metavar="JOB_ID", help="put back what that decoder job replaced")
     faster.set_defaults(func=cmd_job)
+    inspect = job_sub.add_parser("decoder-inspect", parents=[common],
+                                help="independent native inspection of an unresolved decoder test")
+    inspect.add_argument("--target", required=True, metavar="JOB_ID",
+                         help="the original known decoder test job to inspect, without rerunning it")
+    inspect.set_defaults(func=cmd_job)
     registry = job_sub.add_parser("registry", parents=[common],
                                   help="read-only: copy SYNC's Bluetooth, call, audio and other settings from "
                                        "the registry to the stick (link keys and PINs are not copied)")

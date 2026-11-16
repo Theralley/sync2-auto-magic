@@ -1,5 +1,37 @@
 # SYNC 2 clock investigation
-The decoder return has no job report, leaving installation unverified; clock analysis has recovered matching candidate modules but no usable CPU-frequency selector.
+An independent native decoder/clock inspection is ready on USB; the previous decoder installation and a CPU-frequency transition remain unverified.
+
+## Native inspection ready, November 16
+
+Job `20261116-182444-decdiag-4e4c` replaces the consumed red-stick package. Its 183,728-byte
+pack has SHA-256 `f81d785ec35acd1df335cafed4fbf539acbfc9c8f3352fe202aad0c0cef32657`.
+All eight payload files passed byte-for-byte server unpack verification. Seven hundred USB
+files were backed up with hashes before preparation; pack, pending record and updated
+instructions matched after unmount/remount, then the stick was safely ejected. The 2 GB undo
+was not changed. Use before November 17, 10:35 Swedish time; car validation remains pending.
+
+The owner reports AutoKit seems fine, plus an insertion where nothing happened; which
+insertion and whether undo ran are unresolved. The remounted stick contained the identical
+consumed return, not new result evidence. UpdateService ignores POST_APP launch failure and
+exit status; MortRunner also silently returns zero on missing script/interpreter launch failure.
+That establishes an observability gap, not this run's cause.
+
+`decoder-inspect` selects a new native POST_APP, captures fourteen fixed active/backup/staged
+files and old completion evidence, records storage/mount state, and separately observes a
+fresh harmless script. It never replays the old swap. Imported expected hashes are bound to
+the trusted local diagnostic job. Current disk classification leaves the old verdict unchanged.
+
+A separate fixed read-only application samples PLL1/CCM through ordinary installed CEDDK APIs.
+Candidate CEDDK mapping code and a potentially independent DDR boot route were identified.
+The host requires clean child exit and all 64 stable bracketed register reads before interpreting
+source/divider fields. Runtime permission and actual clocks are unverified; no overclock or
+voltage change is applied. See [procedure and limits](../docs/DECODER-INSPECTION.md).
+
+Verification: 45 focused tests; independent security, performance and tests reviews; five
+additional real-C producer-to-parser/import scenarios preserved the earlier decoder verdict.
+Both helpers were compiled on ant-srv-001 with warnings as errors and checked for CE ARM /
+COREDLL-only imports; all 37/23 imports exist in candidate COREDLL, and both mapping exports
+exist in candidate CEDDK. No full CI or Mac native/production build was run.
 
 ## Decoder return unresolved, November 16
 

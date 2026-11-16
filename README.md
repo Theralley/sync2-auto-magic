@@ -12,7 +12,8 @@ and free software.** It also includes a Mac tool that shows what is installed on
 > - **Measured:** with CarPlay running, the processor is at 100%. Most of it goes on AutoKit's
 >   video decoding in software.
 > - **Decoder test unresolved:** the November 16 return contains no job report, so installation
->   is unverified. Diagnose that before repeating the 640×384/10 comparison. Hardware-decoder
+>   is unverified. An [independent native inspection](docs/DECODER-INSPECTION.md) is prepared
+>   before repeating the 640×384/10 comparison. Hardware-decoder
 >   selection and 800×480/10 have already been tried without a CPU-load improvement.
 > - **Calls over CarPlay don't work yet** (the microphone). Don't rely on CarPlay for calls.
 
@@ -98,7 +99,8 @@ run the same system, but nothing is guaranteed.
 | Apple CarPlay over a cable | **Works in the car, very slow** (2026-11-04): [docs/PERFORMANCE.md](docs/PERFORMANCE.md) |
 | A smaller CarPlay picture to lower the load (`autokit-config --screen 640,384,10`) | **Works in the car** (2026-11-15): the processor is no longer full all the time and CarPlay feels much faster; the picture sits in the middle with a black frame. The car is left on this setting |
 | Faster video decoder files for AutoKit, our own FFmpeg build (`s2am job decoder`, with its undo stick) | Built, about 20% fewer emulated instructions with identical test pictures; **November 16 return has no job report; installation and car performance unverified**. The files themselves are not in this repository; see the [current test procedure](docs/PERFORMANCE.md#next-useful-tests-november-16) |
-| A higher processor clock (overclocking) | **No confirmed frequency-control route yet.** Seven clock/system targets are confirmed ROM modules; the named DVFC DLL is absent. No binaries or higher CPU point recovered. Next: matching firmware for offline module analysis ([car findings](docs/CLOCK-MODULE-CAPTURE-2026-11-16.md)) |
+| A higher processor clock (overclocking) | **No validated CPU transition yet.** Matching candidate binaries have been analyzed. A fixed PLL1/CCM read probe through ordinary CEDDK APIs is prepared; live mapping permission and clock dependencies remain unverified ([inspection](docs/DECODER-INSPECTION.md)) |
+| Independently inspect a decoder attempt (`s2am job decoder-inspect --target JOB_ID`) | Prepared and host-tested; **first car validation pending**. Native startup captures active/backup/staged files, tests a fresh harmless script, and attempts fixed clock-register reads. It changes no decoder or clock setting |
 | Read MC13892 voltage presets through the existing driver (`s2am job pmic`) | **Registers 7/24/28 work in this car** (2026-11-16, as part of `clock`): presets 1050/1050/700 mV, SW1MODE 9, SID disabled. Active CPU voltage remains unmeasured; no voltage or clock changes ([findings](docs/CLOCK-MODULE-CAPTURE-2026-11-16.md)) |
 | Collect clock evidence in one visit (`s2am job clock`) | **Original profile works in the car** (2026-11-16): both reports completed; registry has 950 keys and 3,792 values. The later targeted profile also validates the new PMIC mode read. No reboot or clock/voltage changes; each diagnostic's outcome is checked separately on import |
 | Inspect clock/power files and PMIC mode (`s2am job clock --modules`) | **Completed in the car** (2026-11-16): seven ROM modules, one missing named file, zero binaries copied. PMIC mode read succeeded. The ordinary-file copy branch remains untested in this car; no overclock is applied ([findings](docs/CLOCK-MODULE-CAPTURE-2026-11-16.md)) |

@@ -226,6 +226,10 @@ That brought SYNC back every time. Last resort: engine off, lock the car, wait 1
 - **Seen:** the November 16 decoder return had the exact prepared pack but no job report
   directory. Its launcher/interpreter matched a successful clock job, and script structural
   checks passed. Installation remains unverified; there is no confirmed fix yet.
+- **Independent follow-up:** UpdateService ignores POST_APP creation failure/exit status, and
+  MortRunner silently returns zero on missing script or interpreter launch failure. A new
+  [native inspection job](DECODER-INSPECTION.md) collects evidence without that launch chain;
+  those code paths are possible causes, not proof of what happened in this run.
 
 ### Nothing happens when the job stick is inserted
 - **Inserted right after SYNC started?** If the stick goes in too soon after starting the car or
