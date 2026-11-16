@@ -913,6 +913,8 @@ def swap_lines(job: Job) -> list[str]:
     if job.kind == "screen" and p.get("screen") in STARTUP_SCREENS and not p.get("restore") \
             and p.get("startup") is not True:
         raise ValueError(f"{p['screen']} loads when SYNC starts; the job was not planned with --startup")
+    if job.kind == "dec" and not p.get("restore"):
+        return _clear_stops(_decoder_apply_lines(job, folder, files), CHANGING)
     lines = []
     if not p.get("restore"):  # first of all: a job cut short says so, whatever else is wrong now
         lines += [f"bk = {_quote(BACKUP_DIR + chr(92) + job.id)}",
@@ -1018,6 +1020,96 @@ def swap_lines(job: Job) -> list[str]:
               *[f'Copy(th & "\\{name}", out & "\\applied\\{_flat(name)}", TRUE)' for name in added],
               f'WriteFile(out & "\\{done}", {_quote(job.id)})']
     return _clear_stops(lines, CHANGING)
+
+
+PHASE_LOG = "phase.txt"  # in the job's folder on the car: how far a decoder apply got, stick or no stick
+
+
+def _decoder_apply_lines(job: Job, folder: str, files: dict) -> list[str]:
+    """A decoder apply: the car first, the stick's report after.
+
+    The first decoder job in the car (2026-11-16) backed the three files up on the car and then
+    stopped without a trace: nothing it wrote reached the stick, so the check of the stick's copy
+    of the backup failed, and so did the note saying so. Here nothing the stick does can stop the
+    job once it runs. The backup that matters is the one on the car (the undo stick carries the
+    originals anyway); the stick's copies of the backup and of what was applied are written last,
+    for the Mac to compare. A job whose backup is on the car and whose three new files are in
+    place finished its swap before: put in again, it only writes the report it could not write
+    then, AutoKit running or not. Any other state with a backup on the car is a run cut short
+    (STARTED_BEFORE). PHASE_LOG, on the car, says how far a run got.
+    """
+    def phase(word: str, indent: str = "  ") -> str:
+        return f'{indent}WriteFile(jd & "\\{PHASE_LOG}", {_quote(word)} & "^NL^", TRUE)'
+
+    lines = [f"bk = {_quote(BACKUP_DIR + chr(92) + job.id)}",
+             f"th = {_quote(folder)}",
+             f"jd = {_quote(ce_path(job.job_dir))}",
+             "If (NOT DirExists(th))",
+             *_stop("missing.txt", "AutoKit is not installed; nothing changed", "  "),
+             "EndIf",
+             "swapped = 0",
+             "If (DirExists(bk))",
+             "  swapped = 1"]
+    for name, f in files.items():
+        lines += [f'  If (FileSize(th & "\\{name}") <> {_length(f["new"])})', "    swapped = 0", "  EndIf"]
+    lines += ["  If (swapped = 0)",
+              *_stop("started-before.txt", STARTED_BEFORE, "    "),
+              "  EndIf",
+              "EndIf"]
+    for name in READBACK:
+        lines += [f'DelTree(out & "\\{name}")', f'RmDir(out & "\\{name}")']
+    for name in READBACK:
+        lines += [f'If (DirExists(out & "\\{name}"))', *_stop(OLD_REPORT_MARKER, OLD_REPORT, "  "), "EndIf"]
+    lines += ["If (swapped = 0)",
+              '  If (ProcExists("AutoKit.exe"))',
+              *_stop("busy.txt", AUTOKIT_BUSY, "    "),
+              "  EndIf"]
+    for name, f in files.items():
+        lines += [f'  If (FileSize(th & "\\{name}") <> {_length(f["old"])})',
+                  *_stop("stale.txt", f"{name} is not the one the Mac planned against; nothing changed", "    "),
+                  "  EndIf",
+                  f'  If (FileSize(jd & "\\new-{name}") <> {_length(f["new"])})',
+                  *_stop("payload-bad.txt", "the job's decoder files are incomplete; nothing changed", "    "),
+                  "  EndIf"]
+    lines += ['  MkDir("\\SyncExtendedPack\\_s2am")',
+              f"  MkDir({_quote(BACKUP_DIR)})",
+              "  MkDir(bk)",
+              *[f'  Copy(th & "\\{name}", bk & "\\{name}", TRUE)' for name in files]]
+    for name, f in files.items():  # the car's own copy, whole, before any change
+        lines += [f'  If (FileSize(bk & "\\{name}") <> {f["old"]})',
+                  *_stop("backup-failed.txt", "could not back up the decoder on the car; nothing changed", "    "),
+                  "  EndIf"]
+    lines += [phase("backup-ok"),
+              f'  WriteFile(out & "\\{CHANGING}", {_quote(job.id)})',
+              *[f'  Copy(jd & "\\new-{name}", th & "\\{name}", TRUE)' for name in files],
+              "  ok = 1"]
+    for name, f in files.items():
+        lines += [f'  If (FileSize(th & "\\{name}") <> {f["new"]})', "    ok = 0", "  EndIf"]
+    lines += ["  If (ok = 0)",
+              *[f'    Copy(bk & "\\{name}", th & "\\{name}", TRUE)' for name in files],
+              "    ok = 1"]
+    for name, f in files.items():
+        lines += [f'    If (FileSize(th & "\\{name}") <> {f["old"]})', "      ok = 0", "    EndIf"]
+    lines += ["    If (ok = 0)",
+              phase("rollback-failed", "      "),
+              *_stop("rollback-failed.txt", "the originals could not be restored; the car may have a "
+                     "damaged file; use the undo (restore) stick now; if the screen stays dark, "
+                     "insert it anyway and wait two minutes", "      "),
+              "    EndIf",
+              phase("rolled-back", "    "),
+              '    MkDir(out & "\\rolledback")',
+              *[f'    Copy(th & "\\{name}", out & "\\rolledback\\{name}", TRUE)' for name in files],
+              *_stop("copy-failed.txt", "a new decoder file did not copy whole; the originals were "
+                     "copied back and their sizes match; the Mac checks them byte for byte at import", "    "),
+              "  EndIf",
+              phase("swapped"),
+              "EndIf",
+              'MkDir(out & "\\backup")',
+              *[f'Copy(bk & "\\{name}", out & "\\backup\\{name}", TRUE)' for name in files],
+              'MkDir(out & "\\applied")',
+              *[f'Copy(th & "\\{name}", out & "\\applied\\{name}", TRUE)' for name in files],
+              f'WriteFile(out & "\\dec-applied.txt", {_quote(job.id)})']
+    return lines
 
 
 STOP_WRITE = re.compile(r'\s*WriteFile\(out & "\\([\w.-]+)", ')

@@ -263,11 +263,10 @@ class Scripts(unittest.TestCase):
                               AUTOKIT_BUSY_RESTORE)):
             script = swap_script(Job(SERIAL, "dec", params=params))
             busy = script.index('If (ProcExists("AutoKit.exe"))')
-            self.assertLess(busy, script.index('th = "\\SyncExtendedPack\\Apps\\Media\\AutoKit"'))
             self.assertLess(busy, min(m.start() for m in re.finditer(r"\bCopy\(", script)))
             # every folder made before it is the report's, on the stick (the script's header)
             self.assertLess(busy, min(m.start() for m in re.finditer(r"\bMkDir\((?!stick|out\))", script)))
-            self.assertIn(f'WriteFile(out & "\\busy.txt", "{text}")\r\n  Exit()', script)
+            self.assertRegex(script, re.escape(f'WriteFile(out & "\\busy.txt", "{text}")') + r"\r\n +Exit\(\)")
             self.assertIn("Exit button", text)
             self.assertIn("Prepare this", text)  # UpdateService used the stick up: inserting it again does nothing
             self.assertNotRegex(text, r"(?i)insert (it|the stick) again")
@@ -376,8 +375,11 @@ class Scripts(unittest.TestCase):
                 self.assertLess(last_check, writes[0])
                 self.assertLess(writes[0], min(changes))
                 self.assertLess(writes[0], steps.index("ok = 1"))
-                if not job.params.get("restore"):
+                if not job.params.get("restore") and job.kind != "dec":
                     self.assertLess(steps.index('If (FileSize(out & "\\backup\\'), writes[0])
+                if not job.params.get("restore") and job.kind == "dec":  # the car's own backup is the gate
+                    self.assertLess(steps.index('If (FileSize(bk & "\\'), writes[0])
+                    self.assertNotIn('If (FileSize(out & "\\backup\\', steps)
 
     def test_a_job_that_started_before_stops_before_the_cars_files_are_compared(self):
         # a run cut short leaves new files on the car: the size checks would call that a changed car
@@ -402,30 +404,49 @@ class Scripts(unittest.TestCase):
         job = Job(SERIAL, "dec", params={"files": self.files})
         script = swap_script(job)
         sizes = [(n, f["old"], f["new"]) for n, f in self.files.items()]
-        backup = [line for n, old, _ in sizes for copy in (f'bk & "\\{n}"', f'out & "\\backup\\{n}"')
-                  for line in (f"If (FileSize({copy}) <> {old})", '  WriteFile(out & "\\backup-failed.txt", "MSG")',
-                               "  Exit()", "EndIf()")]
+        backup = [line for n, old, _ in sizes
+                  for line in (f'  If (FileSize(bk & "\\{n}") <> {old})',
+                               '    WriteFile(out & "\\backup-failed.txt", "MSG")', "    Exit()", "  EndIf()")]
         self.assertRegex(script, self.block([
             *backup,
-            f'WriteFile(out & "\\changing.txt", "{job.id}")',
-            *[f'Copy(jd & "\\new-{n}", th & "\\{n}", TRUE)' for n, _, _ in sizes],
-            "ok = 1",
-            *[line for n, _, new in sizes for line in (f'If (FileSize(th & "\\{n}") <> {new})', "  ok = 0", "EndIf()")],
-            "If (ok = 0)",
-            *[f'  Copy(bk & "\\{n}", th & "\\{n}", TRUE)' for n, _, _ in sizes],
+            '  WriteFile(jd & "\\phase.txt", "backup-ok" & "^NL^", TRUE)',
+            f'  WriteFile(out & "\\changing.txt", "{job.id}")',
+            *[f'  Copy(jd & "\\new-{n}", th & "\\{n}", TRUE)' for n, _, _ in sizes],
             "  ok = 1",
-            *[line for n, old, _ in sizes
-              for line in (f'  If (FileSize(th & "\\{n}") <> {old})', "    ok = 0", "  EndIf()")],
+            *[line for n, _, new in sizes
+              for line in (f'  If (FileSize(th & "\\{n}") <> {new})', "    ok = 0", "  EndIf()")],
             "  If (ok = 0)",
-            '    WriteFile(out & "\\rollback-failed.txt", "MSG")',
+            *[f'    Copy(bk & "\\{n}", th & "\\{n}", TRUE)' for n, _, _ in sizes],
+            "    ok = 1",
+            *[line for n, old, _ in sizes
+              for line in (f'    If (FileSize(th & "\\{n}") <> {old})', "      ok = 0", "    EndIf()")],
+            "    If (ok = 0)",
+            '      WriteFile(jd & "\\phase.txt", "rollback-failed" & "^NL^", TRUE)',
+            '      WriteFile(out & "\\rollback-failed.txt", "MSG")',
+            "      Exit()",
+            "    EndIf()",
+            '    WriteFile(jd & "\\phase.txt", "rolled-back" & "^NL^", TRUE)',
+            '    MkDir(out & "\\rolledback")',
+            *[f'    Copy(th & "\\{n}", out & "\\rolledback\\{n}", TRUE)' for n, _, _ in sizes],
+            '    WriteFile(out & "\\copy-failed.txt", "MSG")',
             "    Exit()",
             "  EndIf()",
-            '  MkDir(out & "\\rolledback")',
-            *[f'  Copy(th & "\\{n}", out & "\\rolledback\\{n}", TRUE)' for n, _, _ in sizes],
-            '  WriteFile(out & "\\copy-failed.txt", "MSG")',
-            "  Exit()",
+            '  WriteFile(jd & "\\phase.txt", "swapped" & "^NL^", TRUE)',
             "EndIf()",
+            'MkDir(out & "\\backup")',
+            *[f'Copy(bk & "\\{n}", out & "\\backup\\{n}", TRUE)' for n, _, _ in sizes],
             'MkDir(out & "\\applied")']))
+
+    def test_a_dead_stick_cannot_stop_the_swap_and_a_second_visit_writes_the_report(self):
+        # the first decoder job in the car backed up, then stopped silently: no write reached the stick
+        script = swap_script(Job(SERIAL, "dec", params={"files": self.files}))
+        swap = script[script.index("If (swapped = 0)\r\n  If (ProcExists"):script.index('MkDir(out & "\\backup")')]
+        self.assertNotIn("FileSize(out", swap)  # no stop inside the swap depends on what the stick holds
+        self.assertNotIn("FileExists(out", swap)
+        again = script[script.index("If (DirExists(bk))"):script.index("DelTree(out")]
+        for n, f in self.files.items():  # all three new files in place: only the report is left to write
+            self.assertIn(f'If (FileSize(th & "\\{n}") <> {f["new"]})\r\n    swapped = 0', again)
+        self.assertIn('WriteFile(out & "\\started-before.txt"', again)
 
     def test_a_restore_that_did_not_copy_whole_says_so(self):
         job = Job(SERIAL, "dec", params={"files": {n: 100 + i for i, n in enumerate(DECODER_FILES)},
