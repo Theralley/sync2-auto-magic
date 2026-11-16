@@ -1,9 +1,11 @@
 # SYNC 2 clock method and the next measurement
 The clock investigation has a working diagnostic implementation, but no verified operating point above 600 MHz yet.
 
-**Car result, November 16:** both readers completed. The PMIC returned SW1 presets of
-1050/1050/700 mV; the registry resolved 104/116 active references but exposed no CPU-frequency
-selector. See the [capture findings and next module-analysis step](CLOCK-CAPTURE-2026-11-16.md).
+**Car results, November 16:** the registry resolved 104/116 active references without exposing
+a CPU selector. The later module diagnostic completed with seven ROM modules and one missing
+named file; no binaries copied. PMIC presets remain 1050/1050/700 mV, now with SW1MODE 9 and
+SID disabled. See the [registry findings](CLOCK-CAPTURE-2026-11-16.md) and
+[module/mode findings](CLOCK-MODULE-CAPTURE-2026-11-16.md).
 
 The [outcome plan and offline trial/undo rehearsal](CLOCK-OUTCOMES.md) cover a verified higher
 DVFC point, a genuine 600 MHz limit, and no discovered interface. The rehearsal has no live
@@ -14,7 +16,7 @@ hardware backend or installable overclock job.
 | Route | What it can establish | What is still missing |
 |---|---|---|
 | Existing DVFC driver | Selects operating points compiled into that driver; the reference BSP exposes CPU and peripheral domains separately | A matching Ford driver, its API contract and its actual operating-point table |
-| Existing `PMI1:` driver | Identification and SW1 reads demonstrated in the car | Other requests and active rail interpretation remain unverified; this is not a CPU clock selector |
+| Existing `PMI1:` driver | Identification, SW1 preset and mode/SID reads demonstrated in the car | Other requests and active rail interpretation remain unverified; this is not a CPU clock selector |
 | `cspddk.dll` clock services | The reference BSP has clock-query and configuration services | Ford's exports, callable context and implementation; a function name does not prove arbitrary CPU-frequency support |
 | New board-specific platform support | Would be needed if the deployed software has no suitable operating point/interface | Actual CPU grade, clock tree, DDR/AXI dependencies, rail control, synchronization and suspend/resume behavior |
 
@@ -50,8 +52,8 @@ The returned 1.05 V normal/DVS presets are numerically above the automotive nomi
 but that difference is not demonstrated headroom. MC13892 output accuracy is ±50 mV, including
 ripple, load regulation and specified transients. If 1.05 V is the effective setting under
 those conditions, the regulator-output envelope is 1.00–1.10 V before board losses. SID control
-can also change the effective setting without updating the normal-preset bits. Register 28's
-mode/SID configuration and standby state were not captured. See the
+can also change the effective setting without updating the normal-preset bits. The later
+register-28 capture shows SID disabled in that snapshot; standby state is still unknown. See the
 [MC13892 Rev. 19, table 5 p.15, table 49 p.79 and SID description pp.80–81](https://www.nxp.com/docs/en/data-sheet/MC13892.pdf#page=15)
 ([accessible Rev. 14 copy with the same accuracy specification](https://www.nxp.com/docs/pcn_attachments/14928A_MC13892.pdf#page=15)).
 
@@ -81,7 +83,7 @@ The [trial and restoration contract](CLOCK-OUTCOMES.md) still applies; no clock-
 This ordinary Windows CE application opens the existing `PMI1:` device and sends one fixed
 register-read request. It reads identification first, checks the MC13892 identity, then reads
 SW1's presets and mode/SID configuration. Version 2 adds register 28 to the car-tested reads
-of registers 7 and 24. **Register 28 has not been tested in the car.** There is no SDK DLL load,
+of registers 7 and 24. **The later November 16 car run also validated register 28.** There is no SDK DLL load,
 new driver, physical-memory mapping, register write, power-state request, or ADC/interrupt
 access. No clock-change command is implemented.
 
@@ -136,12 +138,16 @@ remain running. A completed snapshot is preserved if the overall job was interru
 
 ## Prepared follow-up: `clock --modules`
 
+**Car-validated November 16:** both readers completed; seven targets are ROM modules and
+the eighth named file was absent. No binaries copied. See the
+[returned evidence](CLOCK-MODULE-CAPTURE-2026-11-16.md).
+
 This profile runs the v2 PMIC reader and a new ordinary-file inspector instead of repeating
 the registry capture. It examines exactly these eight names under `\Windows`: `cspddk.dll`,
 `autopmdrv.dll`, `pmicPdk_mc13892.dll`, `pmicSdk_mc13892.dll`, `dvfc_mc13892.dll`, `nk.exe`,
 `kernel.dll` and `coredll.dll`. Neither helper changes frequency, voltage, power state or boot
-configuration. Normal job staging and report writing still occur. Both new helpers need car
-validation; this profile is not an overclock test.
+configuration. Normal job staging and report writing still occur. Both helpers completed in
+this car; the ordinary-file copy branch was not exercised there. This profile is not an overclock test.
 
 The inspector records attributes, size, modification time, the operation outcome and its system
 error. It uses [GetFileAttributesEx](https://learn.microsoft.com/en-us/previous-versions/windows/embedded/ms890909(v=msdn.10))
@@ -159,8 +165,8 @@ short writes and final verification. Cleanup and report writes continue after th
 The script waits up to 90 seconds for the module helper, separately from the PMIC wait;
 neither limit cancels a blocked operating-system call or bounds the whole install.
 
-If the needed files are ROM modules, the next source is the matching firmware image for
-offline extraction. The car's recorded CCPU is `3.10.16180.EA` (EU). A filename mentioning
+The needed files are now confirmed ROM modules, so the next source is the matching firmware
+image for offline extraction. The car's recorded CCPU is `3.10.16180.EA` (EU). A filename mentioning
 build 16180 does not prove its modules match this car; no matching firmware payload has yet
 been obtained or verified. This profile does not dump ROM, extract exports or establish a
 clock-control interface.
@@ -206,9 +212,9 @@ The PMIC, module inspector and corrected registry helpers compile with CeGCC `-W
 `ant-srv-001`; their PE headers/imports validate as Windows CE ARM, COREDLL only. Focused host
 tests execute the actual PMIC C application against an API shim and cover successful readings,
 wrong identity, no-op success, read errors, partial writes and report validation. This verifies
-application logic and buildability. The November 16 car run additionally demonstrates the
-two tested PMIC reads and corrected registry capture, not the new register-28 read, file
-inspector, arbitrary driver operations or a measured active voltage. Focused module tests
+application logic and buildability. The November 16 car runs additionally demonstrate the
+three fixed PMIC reads, corrected registry capture and module metadata inspection, not
+ordinary-file copying, arbitrary driver operations or a measured active voltage. Focused module tests
 execute the actual C code through an API shim, including ROM skips, short writes, deadlines,
 I/O failures and completion markers; import tests reject corrupt copies, symlinks and special
 files. Full CI is not run for this experimental development change.

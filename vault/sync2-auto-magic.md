@@ -1,7 +1,26 @@
 # SYNC 2 clock investigation
-The November 16 car run demonstrates the PMIC read route and corrected registry capture; no CPU-frequency selector has been discovered.
+The November 16 car runs demonstrate PMIC reads and confirm the target binaries are ROM modules; no CPU-frequency selector has been discovered.
 
-## Module diagnostic USB ready, November 16
+## Module diagnostic returned, November 16
+
+`20261116-082901-clock-d9b3` returned applied with both diagnostics complete. Fifteen return
+artifacts were backed up; all thirteen imported files match the preserved report/updater
+originals, and the returned pack matches the prepared hash. The USB was safely ejected.
+
+PMIC register 28 is `6366281` (`0x612449`): SW1MODE 9, SID disabled. Normal/DVS/standby presets
+remain 1050/1050/700 mV. Regulator-mode configuration does not measure active CPU voltage.
+The fixed register-28 read now has car evidence; other PMIC operations remain unverified.
+
+All seven existing targets have `0x2047` ROM-module attributes. `dvfc_mc13892.dll` returned
+file-not-found for that exact name. Zero binaries copied; this substantiates ROM storage for
+these targets without ruling out other clock-control implementations. Next: obtain a matching
+firmware image and inspect clock/power modules offline. No repeated copy job or new car run
+was prepared. See [capture findings](../docs/CLOCK-MODULE-CAPTURE-2026-11-16.md).
+
+Independent PMIC interpretation agrees with the NXP datasheet. Documentation and evidence
+checks only; no code, rebuild or CI. The readiness notes below describe the earlier state.
+
+## Earlier: module diagnostic USB ready, November 16
 
 Job `20261116-082901-clock-d9b3` is now on the identified SanDisk SYNC stick. Its 681 existing
 files were backed up and hash-verified first; previous updater files were archived. The new
