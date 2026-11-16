@@ -1,5 +1,39 @@
 # SYNC 2 clock investigation
-An independent native decoder/clock inspection is ready on USB; the previous decoder installation and a CPU-frequency transition remain unverified.
+Native decoder-file inspection has worked in the car; the latest decoder installation still needs byte verification, and a read-only clock-driver prototype awaits review and car validation.
+
+## Development goals and latest return, November 16 evening
+
+The public [development update](../docs/PROGRESS-2026-11-16.md) records three goals: verify an
+own FFmpeg decoder in the car, compare foreground CarPlay priority, and establish a controlled
+CPU-frequency experiment. This is experimental development, not a release or an available
+overclock package.
+
+The first native inspection verified all three active decoder DLLs as stock, with stock backups
+and candidate staged files. Its harmless script probe completed; the separate clock child failed
+at PLL1 mapping with error 87 and returned no clock registers. The later revised decoder job
+again returned a matching consumed package with no report. The owner reports working Maps and
+Spotify with no noticeable improvement at the existing 640×384/10/software setting.
+
+Independent source and exact-interpreter analysis confirmed that DelTree on an absent child
+can remove its empty parent report folder. The generator now checks child existence and
+recreates the output directory. The latest active DLLs remain unresolved despite this diagnosis.
+A fresh native inspection is prepared; the decoder undo remains unchanged.
+
+The next priority comparison targets 250 only while AutoKit is alone in the foreground, with
+restoration checked on exit/backgrounding. Its measurement option reuses the load logger;
+sampling timestamps must be checked because higher-priority work can delay the sampler.
+
+A separate temporary clock-driver prototype has 18 focused tests plus five existing parser
+tests passing and a successful CE ARM server build. It only reads fixed PLL1/CCM registers;
+independent review, integration and first car activation are pending. No CPU-frequency or
+voltage change has been made. Earlier readiness entries below are historical snapshots.
+
+Publication verification: 201 focused decoder/guard/theme tests pass with no skips; the
+decoder simulation now follows the car-first transaction and covers missing USB readback and
+report-only recovery. Independent security, performance and tests reviews pass after that fix.
+Documentation links, changed Python syntax and diff whitespace checks pass. No full CI or new
+native build was needed for this update. Ongoing experimental changes may be committed and
+pushed after review without another approval request; release/car-validation status remains explicit.
 
 ## Native inspection ready, November 16
 
