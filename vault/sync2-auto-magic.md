@@ -56,10 +56,12 @@ identified SanDisk SYNC stick after backing up 665 existing files. The first rea
 The earlier decoder package and instruction were archived; the second stick was not changed.
 This pack must be used before November 17, 2026, 10:35 Swedish time.
 
-The final check after remount remains pending: macOS loginwindow refused a normal unmount;
-after a successful forced unmount the SanDisk device disappeared before it could be remounted.
-Reconnect that stick, verify the existing package and instruction, then eject. Do not rebuild
-or rewrite merely to resume verification. No car result is available yet.
+The final check completed on November 16 after the SanDisk was reconnected and identified by
+its volume UUID and device model. The install pack, pending-job record and Swedish instruction
+matched byte for byte; the package remained valid. The stick was then successfully ejected.
+Nothing was rebuilt or rewritten. The owner confirmed it has not run in the car; no run marker
+or report was present. It is ready for the first car capture. The prior remount interruption
+is resolved.
 
 ## Outcome plan and offline trial preparation
 
