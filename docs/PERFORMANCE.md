@@ -103,6 +103,10 @@ distinguish an existing operating-point selector from missing platform support. 
 completed in the car on November 16: SW1 presets are 1050/1050/700 mV, and 104/116 active
 driver references resolve. No CPU-frequency selector was discovered; see the
 [capture findings](CLOCK-CAPTURE-2026-11-16.md).
+The [datasheet comparison](CLOCK-METHOD.md#datasheet-comparison-for-a-small-experiment)
+considers 620–630 MHz as a hypothetical small experiment: +3.3–5.0% ideal CPU capacity.
+It establishes no usable setting or voltage margin; the PMIC's ±50 mV output tolerance means
+the 1.05 V preset alone cannot demonstrate extra margin over the automotive 1.00 V nominal.
 More clock speed helps everything at once: Ford's screens, AutoKit's decoding, the taps. It is
 also the only lever here that can damage the hardware, so it comes last, after the cheaper levers
 above and after the groundwork below.
@@ -132,14 +136,16 @@ the register values are from the documents, not yet read from this car):
 - **The memory's clock may come from the same generator** (the clock controller's `CBCDR`
   register, bit 30). If it does, changing PLL1 changes the memory's clock too, and SYNC stops at
   once. This has to be read before anything is changed.
-- The change itself: raise the core voltage if needed, move the processor to a second clock
-  source, set PLL1, wait until it is steady, move back. The 800 MHz parts of this chip are
-  specified at 1.10 V (1.05 to 1.15 V). The car parts are specified for 600 MHz.
-- Ford's own power saving may set the clock back, and the power chip keeps its settings while
-  SYNC sleeps. So "a restart brings back Ford's clock" holds for the clock, but the voltage must
-  be put back by us.
+- The change needs a verified platform transition, including clock-source switching and any
+  rail coordination. Consumer-grade parts specify 1.10 V nominal (1.05–1.15 V) through 800 MHz;
+  automotive and industrial parts specify 1.00 V nominal (0.95–1.10 V) through 600 MHz.
+  The fitted grade remains unidentified. These rows do not supply an overclock voltage curve.
+- Ford's power policy may overwrite a requested clock, and PMIC settings can persist through
+  sleep. The actual reset/suspend behavior and restoration of the full clock/rail baseline
+  must be established for the deployed implementation.
 
-**The order, one visit each:**
+**Earlier November 14 investigation sequence** (the current implementation and trial decision
+are governed by [CLOCK-METHOD.md](CLOCK-METHOD.md) and [CLOCK-OUTCOMES.md](CLOCK-OUTCOMES.md)):
 
 1. **Baseline, with nothing changed.** The clock, the voltage and the processor's own answer,
    next to the hardware-decoding test. Stop if the power chip cannot be read.
@@ -185,9 +191,9 @@ clock, voltage and thermal conditions; the current evidence does not establish a
 
 **Rules if it is ever tried:**
 
-- **Never at start-up.** Set the clock only after SYNC is up and running, so that a restart
-  always brings back Ford's clock. A clock that hangs SYNC at start-up could not be undone with
-  a stick, because SYNC would never get as far as reading one.
+- **Never at start-up.** A future experiment must avoid persistent boot changes. Restoration
+  after reset still requires evidence for the complete clock/rail state; a restart is not a
+  demonstrated recovery guarantee. An undo stick requires functioning USB/update services.
 - **Watch the temperature the whole time,** and drop back on the first sign of trouble.
 - **The test drive is long, in summer heat as well as now.** The box sits behind the dashboard.
 

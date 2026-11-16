@@ -14,6 +14,20 @@ or complete table capped at 600 MHz has been established. Current route: interfa
 with exact CSPDDK and AutoPM module analysis next. See the
 [full findings](../docs/CLOCK-CAPTURE-2026-11-16.md).
 
+## Datasheet comparison, November 16
+
+The [small-experiment assessment](../docs/CLOCK-METHOD.md#datasheet-comparison-for-a-small-experiment)
+compares automotive/industrial VDDGP 0.95/1.00/1.10 V through 600 MHz with the consumer
+1.05/1.10/1.15 V range through 800 MHz. Fitted grade is still unknown. The observed 1.05 V
+presets do not demonstrate headroom: MC13892 output tolerance is ±50 mV under specified
+conditions; rail mapping, SID/standby mode and loaded CPU voltage remain unresolved.
+
+620–630 MHz is a conditional investigation range (+3.3–5.0% ideal CPU capacity), with unchanged
+active voltage policy as the initial hypothesis. It is not an available or qualified operating
+point. CPU-only transition/restore behavior, dependent clocks and thermal evidence still need
+verification. No new hardware job or voltage/frequency write was prepared. Documentation and
+arithmetic were reviewed; no build or CI is needed for this comparison.
+
 ## Earlier evidence audit, November 15
 
 - The completed capture contains 116 active-device entries: 106 named and 10 unnamed.
