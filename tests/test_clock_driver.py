@@ -247,6 +247,9 @@ HMODULE LoadLibraryW(LPCWSTR name) {
 FARPROC GetProcAddress(HMODULE module,LPCWSTR name) {
     assert(module==(HMODULE)(intptr_t)1);
     if(ismode("missing-export")) return NULL;
+    if(ismode("missing-translate") && !wcscmp(name,L"HalTranslateBusAddress")) return NULL;
+    if(ismode("missing-map") && !wcscmp(name,L"MmMapIoSpace")) return NULL;
+    if(ismode("missing-unmap") && !wcscmp(name,L"MmUnmapIoSpace")) return NULL;
     if(!wcscmp(name,L"HalTranslateBusAddress")) return (FARPROC)(void *)translate;
     if(!wcscmp(name,L"MmMapIoSpace")) return (FARPROC)(void *)map_io;
     assert(!wcscmp(name,L"MmUnmapIoSpace")); return (FARPROC)(void *)unmap_io;
@@ -256,12 +259,18 @@ BOOL FreeLibrary(HMODULE module) { assert(module==(HMODULE)(intptr_t)1); puts("f
 
 DRIVER_SHIM = REGISTRY_SHIM + DRIVER_FAKES + r'''
 static DWORD device,stream;
-static unsigned state_reads,abort_after;
-static int in_hook;
+static unsigned state_reads,abort_after,race_reads,race_at;
+static int in_hook,race_kind;
 /* Each sampled register is preceded by two state reads (device, then open).
- * PreClose at read 2k+1 after both mappings exist stops after exactly k loads. */
+ * PreClose at read 2k+1 after both mappings exist stops after exactly k loads.
+ * race_at instead invalidates at the Nth state read of one Open or IOControl
+ * call, i.e. after its first validity check and after it acquired its flag. */
 static void abort_hook(void) {
-    if(maps<2 || in_hook || !abort_after) return;
+    if(in_hook) return;
+    if(race_at && ++race_reads==race_at) {
+        in_hook=1; assert(race_kind==1 ? SCK_PreDeinit(device) : SCK_PreClose(stream)); in_hook=0;
+    }
+    if(maps<2 || !abort_after) return;
     if(++state_reads==abort_after) { in_hook=1; assert(SCK_PreClose(stream)); in_hook=0; }
 }
 static SCK_SNAPSHOT snap;
@@ -285,6 +294,15 @@ int main(int argc,char **argv) {
     assert(!SCK_Open(device,GENERIC_WRITE,0));
     assert(!SCK_Open(device,GENERIC_READ|GENERIC_WRITE,0));
     assert(!SCK_Open(device+1,GENERIC_READ,0));
+    state_hook=abort_hook;
+    if(ismode("open-race")) {
+        /* Open reads device state, takes the open slot, then reads device state again. */
+        race_at=2; race_kind=1;
+        assert(!SCK_Open(device,GENERIC_READ,0)); assert(GetLastError()==ERROR_INVALID_HANDLE);
+        race_at=0;
+        assert(!SCK_Open(device,GENERIC_READ,0)); assert(!maps && !translates);
+        puts("open-race-denied"); return 0;
+    }
     stream=SCK_Open(device,GENERIC_READ,0); assert(stream && !maps);
     assert(!SCK_Open(device,GENERIC_READ,0));
     if(ismode("abort-read-5")) abort_after=11;
@@ -304,6 +322,12 @@ int main(int argc,char **argv) {
         assert(SCK_Write(stream,&snap,sizeof(snap))==(DWORD)-1);
         assert(SCK_Seek(stream,0,0)==(DWORD)-1); assert(!maps);
         puts("invalid-denied");
+    } else if(ismode("ioctl-race")) {
+        /* IOControl reads device+open state, takes busy, then reads state again. */
+        race_at=3; race_kind=2;
+        assert(!SCK_IOControl(stream,SCK_IOCTL_SNAPSHOT,NULL,0,(BYTE *)&snap,sizeof(snap),&done));
+        assert(GetLastError()==ERROR_INVALID_HANDLE && !done && !maps && !translates);
+        race_at=0; puts("ioctl-race-denied");
     } else if(blocking()) {
         assert(!pthread_create(&thread,NULL,snapshot_thread,NULL));
         while(!blocked) usleep(1000);
@@ -486,6 +510,7 @@ BOOL DeviceIoControl(HANDLE h,DWORD code,void *input,DWORD in_size,void *output,
     if(ismode("snapshot-bad-stage")) s->stage=SCK_STAGE_READ;
     if(ismode("snapshot-error")) s->error=5;
     if(ismode("snapshot-reserved")) s->reserved=1;
+    if(ismode("snapshot-status-only")) s->status=1;
     return 1;
 #endif
 }
@@ -574,12 +599,16 @@ class NativeClockDriver(unittest.TestCase):
                 self.assertNotIn("load", output)
 
     def test_mapping_and_translation_failures_do_not_sample(self):
-        for mode, stage in (("load-fail", 1), ("missing-export", 2), ("translate-fail", 3), ("translate-space", 3),
+        for mode, stage in (("load-fail", 1), ("missing-export", 2), ("missing-translate", 2), ("missing-map", 2),
+                            ("missing-unmap", 2), ("translate-fail", 3), ("translate-space", 3),
                             ("translate-address", 3), ("map-fail", 4), ("partial-map", 6)):
             with self.subTest(mode=mode):
                 output = self.run_driver(mode)
                 self.assertIn("result 1 0", output)
                 self.assertIn(f" stage {stage}\n", output)
+                if stage <= 2:
+                    self.assertNotIn("translate", output)
+                    self.assertNotIn("map ", output)
                 self.assertNotIn("R|", output)
                 if mode == "partial-map":
                     self.assertIn("unmap 0", output)
@@ -603,6 +632,13 @@ class NativeClockDriver(unittest.TestCase):
                 reads = [line for line in output.splitlines() if line.startswith("R|")]
                 self.assertEqual(reads, expected_reads({1: 1, 2: 2, 3: 3})[:count])
                 self.assertLess(output.index("unmap 1"), output.index("unmap 0"))
+
+    def test_invalidation_right_after_acquiring_open_or_busy_is_refused_before_loading(self):
+        for mode in ("open-race", "ioctl-race"):
+            with self.subTest(mode=mode):
+                output = self.run_driver(mode)
+                self.assertIn(mode + "-denied", output)
+                self.assertNotIn("load", output)
 
     def test_close_and_deinit_refuse_a_busy_context_without_unmapping(self):
         for mode in ("close-busy", "deinit-busy"):
@@ -783,7 +819,7 @@ class NativeClockController(unittest.TestCase):
 
     def test_malformed_or_failed_snapshot_has_no_read_records_or_completion(self):
         for mode in ("ioctl-fail", "snapshot-bad-magic", "snapshot-bad-count", "snapshot-bad-offset", "snapshot-bad-order", "snapshot-short", "snapshot-failed", "snapshot-bad-version", "snapshot-bad-bytes",
-                     "snapshot-bad-stage", "snapshot-error", "snapshot-reserved"):
+                     "snapshot-bad-stage", "snapshot-error", "snapshot-reserved", "snapshot-status-only"):
             with self.subTest(mode=mode):
                 result = self.run_ctl(mode)
                 self.assertNotEqual(result.returncode, 0, result.stdout)

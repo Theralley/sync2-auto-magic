@@ -179,7 +179,9 @@ without a failing test. The suite now also runs the real driver behind the real 
 (snapshot, failed-sampling records and Init refusal), and covers invalidation between reads,
 busy Close/Deinit, the registry `Dll` path, every snapshot header field, the run-ID rules
 separately from the executable-path binding, a failed stream open and a crash inside activation.
-The current 28 driver/controller tests and five parser tests pass. Thirteen additional
+A follow-up review added a status-only bad snapshot, each missing CEDDK export on its own, and
+invalidation immediately after Open or IOControl acquires its flag.
+The current 29 driver/controller tests and five parser tests pass. Thirteen additional
 launcher/import tests exercise the actual C producer, bounded copy failures, child exit and
 timeout handling, same-run and cross-run replay barriers, exact native-only staging, trusted
 job identity and source/artifact binding. The CLI stages this job even without `--no-pack`;
