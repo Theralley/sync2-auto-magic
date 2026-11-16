@@ -97,6 +97,21 @@ static const char *mode;
 static DWORD error;
 static WCHAR dll_path[MAX_PATH] = L"\\SyncExtendedPack\\_s2am\\jobs\\test-run\\s2amclkdrv.dll";
 static const WCHAR key_path[] = L"Drivers\\S2AMClock\\test-run";
+/* Independent fixture: do not let a mistaken production resource range/type
+ * change both the implementation and its expected registry bytes. */
+static const DWORD fixture_user_mode=0x10,fixture_internal=0,fixture_bus=0;
+static const WCHAR fixture_mem_base[]=L"83f80000\00073fd4000\000";
+static const WCHAR fixture_mem_len[]=L"30\00058\000";
+static const SCK_REG_VALUE fixture_values[] = {
+    {L"Dll",REG_SZ,NULL,0},
+    {L"Prefix",REG_SZ,L"SCK",4*sizeof(WCHAR)},
+    {L"Flags",REG_DWORD,&fixture_user_mode,sizeof(DWORD)},
+    {L"InterfaceType",REG_DWORD,&fixture_internal,sizeof(DWORD)},
+    {L"BusNumber",REG_DWORD,&fixture_bus,sizeof(DWORD)},
+    {L"MemBase",REG_MULTI_SZ,fixture_mem_base,sizeof(fixture_mem_base)},
+    {L"MemLen",REG_MULTI_SZ,fixture_mem_len,sizeof(fixture_mem_len)}
+};
+#define FIXTURE_VALUE_COUNT 7U
 static int ismode(const char *s) { return !strcmp(mode,s); }
 DWORD GetLastError(void) { return error; }
 void SetLastError(DWORD e) { error=e; }
@@ -114,29 +129,35 @@ HKEY OpenDeviceKey(LPCWSTR active) {
     if (ismode("openkey-invalid")) return (HKEY)INVALID_HANDLE_VALUE;
     puts("open-key"); return (HKEY)(intptr_t)11;
 }
-LONG RegCloseKey(HKEY key) { assert(key==(HKEY)(intptr_t)11); return 0; }
+LONG RegCloseKey(HKEY key) {
+    assert(key==(HKEY)(intptr_t)11);
+    return ismode("key-close-fail") ? ERROR_ACCESS_DENIED : 0;
+}
 LONG RegQueryValueExW(HKEY key,LPCWSTR name,DWORD *reserved,DWORD *type,BYTE *out,DWORD *size) {
     unsigned i; assert(key==(HKEY)(intptr_t)11 && !reserved);
-    for(i=0;i<SCK_VALUE_COUNT;i++) if(!wcscmp(name,sck_values[i].name)) {
-        const void *value=sck_values[i].data; DWORD length=sck_values[i].size;
+    for(i=0;i<FIXTURE_VALUE_COUNT;i++) if(!wcscmp(name,fixture_values[i].name)) {
+        const void *value=fixture_values[i].data; DWORD length=fixture_values[i].size;
         if(i==0) { value=dll_path; length=(DWORD)(wcslen(dll_path)+1)*sizeof(WCHAR); }
         if(ismode("missing-value") && i==5) return ERROR_FILE_NOT_FOUND;
         if(*size<length) return ERROR_INSUFFICIENT_BUFFER;
-        memcpy(out,value,length); *size=length; *type=sck_values[i].type;
+        memcpy(out,value,length); *size=length; *type=fixture_values[i].type;
         if(ismode("bad-type") && i==2) *type=REG_SZ;
         if(ismode("bad-flags") && i==2) *(DWORD *)out=0x12;
         if(ismode("bad-membase") && i==5) out[0]='9';
+        if(ismode("bad-memlen") && i==6) out[0]='4';
+        if(ismode("missing-double-nul") && i==6) *size-=sizeof(WCHAR);
+        if(ismode("bad-bus") && i==4) *(DWORD *)out=1;
         return 0;
     }
     return ERROR_FILE_NOT_FOUND;
 }
 LONG RegEnumValueW(HKEY key,DWORD i,LPWSTR name,DWORD *count,DWORD *reserved,DWORD *type,BYTE *data,DWORD *size) {
     (void)key;(void)reserved;(void)type;(void)data;(void)size;
-    if(i>=SCK_VALUE_COUNT) {
-        if(i==SCK_VALUE_COUNT && ismode("extra-value")) { wcscpy(name,L"Context"); *count=7; return 0; }
+    if(i>=FIXTURE_VALUE_COUNT) {
+        if(i==FIXTURE_VALUE_COUNT && ismode("extra-value")) { wcscpy(name,L"Context"); *count=7; return 0; }
         return ERROR_NO_MORE_ITEMS;
     }
-    assert(*count>wcslen(sck_values[i].name)); wcscpy(name,sck_values[i].name);
+    assert(*count>wcslen(fixture_values[i].name)); wcscpy(name,fixture_values[i].name);
     *count=(DWORD)wcslen(name); return 0;
 }
 LONG RegEnumKeyExW(HKEY key,DWORD i,LPWSTR name,DWORD *size,DWORD *r,LPWSTR cls,DWORD *cs,void *t) {
@@ -303,6 +324,11 @@ BOOL WriteFile(HANDLE h,const void *data,DWORD n,DWORD *done,void *overlap) {
 }
 BOOL FlushFileBuffers(HANDLE h) {
     assert(h==(HANDLE)(intptr_t)21);
+    if(!strncmp(mode,"flush-at-",9)) {
+        char marker[80]; assert(strlen(mode+9)<60);
+        snprintf(marker,sizeof(marker),"B|%s\r\n",mode+9);
+        if(strstr(journal,marker)) return 0;
+    }
     if(ismode("journal-flush-fail") ||
        (ismode("flush-before-activate") && strstr(journal,"B|activate\r\n")) ||
        (ismode("flush-before-ioctl") && strstr(journal,"B|snapshot\r\n")) ||
@@ -312,7 +338,7 @@ BOOL FlushFileBuffers(HANDLE h) {
 BOOL CloseHandle(HANDLE h) {
     assert(h!=activation);
     if(h==stream) { before("B|stream-close\r\n"); puts("stream-close"); return !ismode("stream-close-fail"); }
-    if(h==(HANDLE)(intptr_t)20) { held=0; puts("dll-close"); return 1; }
+    if(h==(HANDLE)(intptr_t)20) { held=0; puts("dll-close"); return !ismode("dll-close-fail"); }
     assert(h==(HANDLE)(intptr_t)21); return !ismode("journal-close-fail");
 }
 LONG RegCreateKeyExW(HKEY root,LPCWSTR path,DWORD zero,LPWSTR cls,DWORD opt,DWORD access,void *security,HKEY *key,DWORD *disposition) {
@@ -322,8 +348,8 @@ LONG RegCreateKeyExW(HKEY root,LPCWSTR path,DWORD zero,LPWSTR cls,DWORD opt,DWOR
     puts("key-create"); return ismode("key-create-fail") ? ERROR_ACCESS_DENIED : 0;
 }
 LONG RegSetValueExW(HKEY key,LPCWSTR name,DWORD zero,DWORD type,const BYTE *data,DWORD size) {
-    const SCK_REG_VALUE *value=&sck_values[values]; const void *expected=value->data; DWORD n=value->size;
-    assert(key==(HKEY)(intptr_t)11 && !zero && values<SCK_VALUE_COUNT);
+    const SCK_REG_VALUE *value=&fixture_values[values]; const void *expected=value->data; DWORD n=value->size;
+    assert(key==(HKEY)(intptr_t)11 && !zero && values<FIXTURE_VALUE_COUNT);
     assert(!wcscmp(name,value->name) && type==value->type);
     if(!values) { expected=dll_path; n=(DWORD)(wcslen(dll_path)+1)*sizeof(WCHAR); }
     assert(size==n && !memcmp(data,expected,n)); ++values;
@@ -336,7 +362,7 @@ LONG RegDeleteKeyW(HKEY root,LPCWSTR path) {
     return ismode("key-delete-fail") ? ERROR_ACCESS_DENIED : 0;
 }
 HANDLE ActivateDeviceEx(LPCWSTR path,LPCVOID reg,DWORD count,LPVOID param) {
-    assert(!wcscmp(path,key_path) && !reg && !count && !param && held && values==SCK_VALUE_COUNT);
+    assert(!wcscmp(path,key_path) && !reg && !count && !param && held && values==FIXTURE_VALUE_COUNT);
     before("B|activate\r\n"); ++activated; puts("activate");
     if(ismode("activate-crash")) exit(91);
     if(ismode("activate-null")) return NULL;
@@ -358,6 +384,7 @@ static BOOL info(DEVMGR_DEVICE_INFORMATION *out,int from_file) {
     if(ismode("legacy-unterminated")) out->szLegacyName[5]='X';
     if(ismode("key-unterminated")) { unsigned i; for(i=0;i<MAX_PATH;i++) out->szDeviceKey[i]='A'; }
     if(ismode("info-size-mismatch")) out->dwSize=0;
+    if(from_file && ismode("file-name-mismatch")) out->szLegacyName[3]='5';
     return 1;
 }
 BOOL GetDeviceInformationByDeviceHandle(HANDLE h,DEVMGR_DEVICE_INFORMATION *out) { assert(h==activation); before("B|activation-identity\r\n"); return info(out,0); }
@@ -438,7 +465,7 @@ class NativeClockDriver(unittest.TestCase):
         self.assertNotIn("load", output)
 
     def test_registry_is_an_exact_typed_contract(self):
-        for mode in ("openkey-null", "openkey-invalid", "missing-value", "bad-type", "bad-flags", "bad-membase", "extra-value", "subkey"):
+        for mode in ("openkey-null", "openkey-invalid", "missing-value", "bad-type", "bad-flags", "bad-membase", "bad-memlen", "missing-double-nul", "bad-bus", "key-close-fail", "extra-value", "subkey"):
             with self.subTest(mode=mode):
                 output = self.run_driver(mode)
                 self.assertIn("init-denied", output)
@@ -546,7 +573,7 @@ class NativeClockController(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout)
 
     def test_registry_failures_or_collisions_never_activate_or_delete(self):
-        for mode in ("key-exists", "key-create-fail", "key-set-fail", "key-flush-fail", "bad-type", "bad-flags", "extra-value", "subkey"):
+        for mode in ("key-exists", "key-create-fail", "key-set-fail", "key-flush-fail", "key-close-fail", "bad-type", "bad-flags", "bad-memlen", "missing-double-nul", "bad-bus", "extra-value", "subkey"):
             with self.subTest(mode=mode):
                 result = self.run_ctl(mode)
                 self.assertNotEqual(result.returncode, 0, result.stdout)
@@ -561,7 +588,7 @@ class NativeClockController(unittest.TestCase):
             self.assertIn("E|activate|", result.stdout)
 
     def test_identity_failures_prevent_any_snapshot(self):
-        for mode in ("device-info-fail", "device-handle-mismatch", "device-key-mismatch", "file-info-fail", "file-handle-mismatch", "file-key-mismatch", "legacy-invalid", "legacy-unterminated", "key-unterminated", "info-size-mismatch"):
+        for mode in ("device-info-fail", "device-handle-mismatch", "device-key-mismatch", "file-info-fail", "file-handle-mismatch", "file-key-mismatch", "file-name-mismatch", "legacy-invalid", "legacy-unterminated", "key-unterminated", "info-size-mismatch"):
             with self.subTest(mode=mode):
                 result = self.run_ctl(mode)
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -577,7 +604,7 @@ class NativeClockController(unittest.TestCase):
                 self.assertNotIn("T|complete", result.stdout)
 
     def test_cleanup_failure_is_distinct_and_preserves_key_on_failed_deactivation(self):
-        for mode, stage in (("stream-close-fail", "stream-close"), ("deactivate-fail", "deactivate"), ("key-delete-fail", "registry-delete")):
+        for mode, stage in (("stream-close-fail", "stream-close"), ("deactivate-fail", "deactivate"), ("key-delete-fail", "registry-delete"), ("dll-close-fail", "dll-close")):
             result = self.run_ctl(mode)
             self.assertNotEqual(result.returncode, 0, result.stdout)
             self.assertIn("E|" + stage + "|", result.stdout)
@@ -596,6 +623,20 @@ class NativeClockController(unittest.TestCase):
                     self.assertNotIn("\nactivate\n", result.stdout)
                 else:
                     self.assertNotIn("\ndeactivate\n", result.stdout)
+
+    def test_cleanup_flush_failure_preserves_the_last_confirmed_lifecycle_state(self):
+        cases = (("stream-close", "1 7 1 0 0 1", ("stream-close", "deactivate", "key-delete", "dll-close")),
+                 ("deactivate", "1 7 1 0 0 1", ("deactivate", "key-delete", "dll-close")),
+                 ("registry-delete", "1 7 1 1 0 1", ("key-delete", "dll-close")),
+                 ("dll-close", "1 7 1 1 1 1", ("dll-close",)))
+        for stage, counts, forbidden in cases:
+            with self.subTest(stage=stage):
+                result = self.run_ctl("flush-at-" + stage)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("COUNTS " + counts, result.stdout)
+                self.assertNotIn("T|complete", result.stdout)
+                for action in forbidden:
+                    self.assertNotIn("\n" + action + "\n", result.stdout)
 
     def test_final_storage_failure_still_requires_nonzero_child_status(self):
         for mode in ("final-flush-fail", "journal-close-fail"):
