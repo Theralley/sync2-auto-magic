@@ -340,9 +340,9 @@ class Scripts(unittest.TestCase):
         for job in self.swap_jobs():
             steps = "\n".join(swap_lines(job))
             with self.subTest(job.kind, restore=bool(job.params.get("restore"))):
-                first = min(m.start() for m in re.finditer(r'^\s*(Copy|MkDir|WriteFile\(out & "\\changing)', steps,
+                first = min(m.start() for m in re.finditer(r'^\s*(Copy|MkDir\((?!stick|out\))|WriteFile\(out & "\\changing)', steps,
                                                            re.M))
-                deleted = re.findall(r'^DelTree\(out & "\\(\w+)"\)$', steps, re.M)
+                deleted = re.findall(r'^  DelTree\(out & "\\(\w+)"\)$', steps, re.M)
                 written = set(re.findall(r'out & "\\(\w+)\\', steps))  # every folder it copies into on the stick
                 self.assertLessEqual({"applied"} if job.params.get("restore") else {"applied", "rolledback", "backup"},
                                      written)
@@ -354,10 +354,18 @@ class Scripts(unittest.TestCase):
                                         f'"{OLD_REPORT}")\n  Exit')
                     self.assertLess(gone, removed)
                     self.assertLess(removed, check)
+                    # both decoder jobs run in the car lost their report folder, and they were the
+                    # first to call DelTree on a folder that was not there: only on one that exists,
+                    # and the report folder is made again before anything is written to it
+                    self.assertIn(f'If (DirExists(out & "\\{name}"))\n  DelTree(out & "\\{name}")\n'
+                                  f'  RmDir(out & "\\{name}")\nEndIf', steps)
+                    self.assertLess(removed, steps.index("MkDir(out)"))
                     self.assertLess(check, first)  # before anything is copied, onto the stick or the car
                     self.assertLess(steps.index("If (NOT DirExists(th))"), gone)
                     if not job.params.get("restore"):  # a job cut short keeps the backup its restore may need
                         self.assertLess(steps.index("If (DirExists(bk))"), gone)
+                self.assertLess(steps.index("MkDir(out)"), min(
+                    m.start() for m in re.finditer(r'^\s*(Copy\(|WriteFile\(out & "\\changing)', steps, re.M)))
         self.assertIn("nothing changed", OLD_REPORT)
         self.assertEqual(stick.STOPPED[OLD_REPORT_MARKER], "failed")
 

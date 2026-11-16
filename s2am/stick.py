@@ -100,7 +100,7 @@ def prepare(stick: Path, install_bin: Path, job: Job, require_volume: bool = Tru
 
 def runs_again(job: Job) -> bool:
     """A job that measures: its second run on the car fetches what the first one started."""
-    return job.kind == "akcfg" and job.params.get("measure") is not None
+    return job.kind in ("akcfg", "guard") and job.params.get("measure") is not None
 
 
 def _used(updater: Path) -> bool:

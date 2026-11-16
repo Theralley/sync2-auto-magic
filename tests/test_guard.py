@@ -19,7 +19,7 @@ from s2am import apps, cli, mortscript, native, stick  # noqa: E402
 from s2am.fakecar import FakeCar  # noqa: E402
 from s2am.state import Store  # noqa: E402
 from s2am.job import (BOOST_LEVELS, BOOST_STUCK_OFF, BOOST_STUCK_ON, BOOST_STUCK_WRITE, GUARD_BOOST,  # noqa: E402
-                      MENU_XML, TOOLS_CE, Job, guard_script)
+                      MENU_XML, TOOLS_CE, Job, guard_script, load_folder)
 
 UPSTREAM = ROOT.parent / "syncextpack"
 HAVE_UPSTREAM = (UPSTREAM / "FullPack").is_dir()
@@ -1310,6 +1310,20 @@ class Script(unittest.TestCase):
             self.assertLess(script.index('"\\s2amrun.exe", tools & "\\SyncAppsRunner.exe"'), written)
             self.assertLess(written, script.index(f'If (ReadFile("{GUARD_BOOST}") ne "{level}")'))
             self.assertIn("the boost did not write; the guard is on, without the boost", script)
+
+    def test_a_guard_job_can_measure_once_the_guard_and_the_boost_are_in_place(self):
+        job = Job(SERIAL, "guard", params={**PARAMS, "action": "enable", "boost": 250, "measure": 600})
+        script = guard_script(job)
+        mortscript.check(script)
+        started = script.index('Run(logs & "\\s2amdrive.exe", "600 load " & logs)')
+        self.assertLess(script.index(f'If (ReadFile("{GUARD_BOOST}") ne "250")'), started)
+        self.assertIn(f'logs = "{load_folder(job.id)}"', script)
+        replay = script[script.index("replayed.txt"):script.index("tools = ")]
+        self.assertIn(f'Copy("{load_folder(job.id)}\\drive.log", out & "\\drive.log", TRUE)', replay)
+        self.assertTrue(stick.runs_again(job))
+        self.assertNotIn("s2amdrive.exe", self.script(action="enable", boost=250))
+        with self.assertRaises(ValueError):
+            self.script(action="disable", measure=600)
 
     def test_boost_off_removes_only_the_boost(self):
         script = self.script(action="enable", boost=0)

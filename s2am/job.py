@@ -536,6 +536,10 @@ def guard_script(job: Job) -> str:
 
     ``boost`` (on only): a level from BOOST_LEVELS writes the guard's boost file once the
     guard is in place, 0 removes it; without it the boost stays as it is.
+
+    ``measure`` (seconds, on only): once all of that is in place the job starts the watcher and
+    the load logger, as an AutoKit settings job does (_measure); the same stick, inserted again,
+    fetches their logs, so a boost can be compared in numbers.
     """
     action, stock = job.params.get("action"), job.params.get("stock_size")
     boost = job.params.get("boost")
@@ -545,9 +549,13 @@ def guard_script(job: Job) -> str:
         raise ValueError(f"invalid size of the stock runner {stock!r}")
     if boost is not None and (action != "enable" or isinstance(boost, bool) or boost not in (0, *BOOST_LEVELS)):
         raise ValueError(f"invalid runner guard boost {boost!r}")
+    measure = job.params.get("measure")
+    if measure is not None and action != "enable":
+        raise ValueError("only a job that turns the guard on can measure")
+    measuring = _measure(job, measure) if measure is not None else []
     runner, original = "tools & \"\\SyncAppsRunner.exe\"", "tools & \"\\SyncAppsRunner.orig.exe\""
     guard = f'{_quote(ce_path(job.job_dir))} & "\\s2amrun.exe"'
-    lines = _header(job) + [
+    lines = _header(job, _collect(job.id, "  ") if measuring else []) + [
         f"tools = {_quote(TOOLS_CE)}",
         'If (ProcExists("SyncAppsRunner.exe"))',
         *_stop("busy.txt", "an app is open: restart SYNC, then prepare the stick again", "  "),
@@ -598,6 +606,7 @@ def guard_script(job: Job) -> str:
         ]
         if boost is not None:  # only once the guard is in place
             lines += _boost_lines(boost)
+        lines += measuring
     else:
         lines += [
             f"If (FileExists({original}))",
@@ -699,7 +708,7 @@ def snapshot_script(job: Job) -> str:
 
 def load_folder(job_id: str) -> str:
     """The folder on the car where the logger job ``job_id`` writes (or a job that measures)."""
-    if not re.fullmatch(r"\d{8}-\d{6}-(log|akcfg)-[0-9a-f]{4}", job_id):
+    if not re.fullmatch(r"\d{8}-\d{6}-(log|akcfg|guard)-[0-9a-f]{4}", job_id):
         raise ValueError(f"not a logger job: {job_id!r}")
     return f"{LOAD_DIR}\\{job_id}"
 
@@ -936,10 +945,7 @@ def swap_lines(job: Job) -> list[str]:
     # Before anything is copied: the Mac checks only what this run puts on the stick. An apply job
     # gets here only if the car holds no backup of it (started-before above), so no earlier run of
     # it changed the car, and a restore carries its own originals: nothing here is the only copy.
-    for name in READBACK:
-        lines += [f'DelTree(out & "\\{name}")', f'RmDir(out & "\\{name}")']
-    for name in READBACK:
-        lines += [f'If (DirExists(out & "\\{name}"))', *_stop(OLD_REPORT_MARKER, OLD_REPORT, "  "), "EndIf"]
+    lines += _clear_readback()
     if p.get("restore"):
         if not JOB_ID.fullmatch(p["restore"]) or added:
             raise ValueError(f"invalid restore target {p['restore']!r}")
@@ -1022,6 +1028,25 @@ def swap_lines(job: Job) -> list[str]:
     return _clear_stops(lines, CHANGING)
 
 
+def _clear_readback() -> list[str]:
+    """Delete what an earlier run copied onto the stick (READBACK), and stop if any of it stays.
+
+    Both decoder jobs run in the car (2026-11-15 and 11-16) came back without their report folder,
+    and they were the first jobs to call DelTree on a folder that was not there: the likeliest
+    reading, not proven, is that MortScript's DelTree then takes the last part of the path for a
+    file mask and removes the emptied folder it searched, which is the report folder itself. So
+    DelTree runs only on a folder that exists, and the report folder is made again afterwards.
+    """
+    lines = []
+    for name in READBACK:
+        lines += [f'If (DirExists(out & "\\{name}"))', f'  DelTree(out & "\\{name}")',
+                  f'  RmDir(out & "\\{name}")', "EndIf"]
+    lines += ['MkDir(stick & "\\s2am")', 'MkDir(stick & "\\s2am\\reports")', "MkDir(out)"]
+    for name in READBACK:
+        lines += [f'If (DirExists(out & "\\{name}"))', *_stop(OLD_REPORT_MARKER, OLD_REPORT, "  "), "EndIf"]
+    return lines
+
+
 PHASE_LOG = "phase.txt"  # in the job's folder on the car: how far a decoder apply got, stick or no stick
 
 
@@ -1058,10 +1083,7 @@ def _decoder_apply_lines(job: Job, folder: str, files: dict) -> list[str]:
               *_stop("started-before.txt", STARTED_BEFORE, "    "),
               "  EndIf",
               "EndIf"]
-    for name in READBACK:
-        lines += [f'DelTree(out & "\\{name}")', f'RmDir(out & "\\{name}")']
-    for name in READBACK:
-        lines += [f'If (DirExists(out & "\\{name}"))', *_stop(OLD_REPORT_MARKER, OLD_REPORT, "  "), "EndIf"]
+    lines += _clear_readback()
     lines += ["If (swapped = 0)",
               '  If (ProcExists("AutoKit.exe"))',
               *_stop("busy.txt", AUTOKIT_BUSY, "    "),

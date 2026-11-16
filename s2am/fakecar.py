@@ -115,7 +115,7 @@ class FakeCar:
         self.stick = stick
         if self.exists(job.done_marker):
             (out / "replayed.txt").write_text(job.id)
-            if job.kind == "akcfg" and job.params.get("measure"):
+            if job.kind in ("akcfg", "guard") and job.params.get("measure"):
                 self._collect(out, job.id)
             for part in bundle_parts(job) if job.kind == "bundle" else []:
                 (out.parent / part.id).mkdir(exist_ok=True)
@@ -146,7 +146,7 @@ class FakeCar:
             self._snapshot(out)
         if job.kind == "log" and job.params.get("collect"):
             self._collect(out, job.params["collect"])
-        elif (job.kind == "log" and job.params.get("load")) or (job.kind == "akcfg" and job.params.get("measure")):
+        elif (job.kind == "log" and job.params.get("load")) or (job.kind in ("akcfg", "guard") and job.params.get("measure")):
             (out / "logger-started.txt").write_text("started")
             folder = load_folder(job.id)
             self.put(f"{folder}\\watch.log", "".join(f"{line}\r\n" for line in self.watch_lines).encode())
@@ -268,7 +268,7 @@ class FakeCar:
         if not th.is_dir():
             return stop("missing.txt")
         # as the script does: what an earlier run copied onto the stick goes, or the run stops (job.READBACK)
-        for name in re.findall(r'^DelTree\(out & "\\([\w.-]+)"\)$', script, re.M):
+        for name in re.findall(r'^\s*DelTree\(out & "\\([\w.-]+)"\)$', script, re.M):
             if self._ce(out / name).lower() not in self.stuck_files:
                 shutil.rmtree(out / name, ignore_errors=True)
         if any((out / name).exists() for name in re.findall(r'^If \(DirExists\(out & "\\([\w.-]+)"\)\)$', script,
