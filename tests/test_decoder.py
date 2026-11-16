@@ -23,7 +23,7 @@ from s2am import cli, decoder, stick  # noqa: E402
 from s2am.fakecar import FakeCar  # noqa: E402
 from s2am.job import (AUTOKIT_BUSY, AUTOKIT_BUSY_RESTORE, AUTOKIT_CE, BUNDLE_PARTS, CHANGING,  # noqa: E402
                       DECODER_FILES, OLD_REPORT, OLD_REPORT_MARKER, READBACK, RESTARTING, SCREENS, STICK_MOUNTS,
-                      SWAP_KINDS, Job, bundle_parts, meta, swap_lines, swap_script, swap_target)
+                      SWAP_KINDS, Job, bundle_parts, ce_path, meta, swap_lines, swap_script, swap_target)
 from s2am.state import Store  # noqa: E402
 
 SERIAL = "XV31M13H"
@@ -1042,19 +1042,47 @@ class Loop(unittest.TestCase):
         self.assertTrue((report / "busy.txt").is_file())  # still there, and read below the stop beside it
         self.assertFalse((report / CHANGING).exists())
 
-    def test_a_backup_that_did_not_reach_the_stick_whole_stops_before_any_change(self):
-        # the car's backup copied, the stick's copy of it did not (a short copy, or none at all)
+    def test_a_backup_that_did_not_reach_the_stick_whole_does_not_stop_the_swap_and_is_not_verified(self):
+        # the car's backup copied, the stick's copy of it did not (a short copy, or none at all):
+        # the car-first job swaps all the same, and the Mac says it could not check, not that all is well
         for knob in (self.car.broken_copies, self.car.locked_files):
             job, work, _ = self.build("--from", str(self.build_folder))
             knob.add(f"{STICK_MOUNTS[0]}\\s2am\\reports\\{job.id}\\backup\\{UTIL}".lower())
             imported = self.run_built(job, work)
             with self.subTest(knob=knob):
-                self.assertEqual(self.car_files(), ORIGINALS)
-                self.assertIn(f"{job.id}: failed", imported)
+                self.assertEqual(self.car_files(), NEW)
+                self.assertNotEqual(self.code, 0)
+                self.assertIn(f"{job.id}: not-verified", imported)
                 report = Store().report(SERIAL, job.id)
-                self.assertTrue((report / "backup-failed.txt").is_file())
-                self.assertFalse((report / CHANGING).exists())
-                self.assertNotIn("verified", imported)
+                self.assertFalse((report / "backup-failed.txt").exists())
+                self.assertTrue((report / "dec-applied.txt").is_file())
+                backup = self.car._resolve(f"\\SyncExtendedPack\\_s2am\\backup\\{job.id}")
+                self.assertEqual({p.name: p.read_bytes() for p in backup.iterdir()}, ORIGINALS)
+            _, _, _, undone = self.run_job("--restore", job.id)  # back to the originals for the next knob
+            self.assertEqual(self.car_files(), ORIGINALS)
+            knob.clear()
+
+    def test_a_second_visit_after_a_finished_swap_only_writes_the_report(self):
+        # the swap finished but its report never reached the stick (as in the car, 2026-11-16): the
+        # backup is on the car and the three new files are in place, so the same job put in again
+        # writes the report, AutoKit running or not, and changes nothing
+        job, work, _ = self.build("--from", str(self.build_folder))
+        self.prepared(work)
+        self.car.insert(self.stick, work, job)
+        self.assertEqual(self.car_files(), NEW)
+        shutil.rmtree(self.stick / "s2am" / "reports" / job.id)  # the report was lost
+        self.car._resolve(ce_path(job.done_marker)).unlink()     # and with it the done marker
+        self.prepared(work)
+        self.car.running.add("autokit.exe")
+        self.car.garbled_copies.add(f"{AUTOKIT_CE}\\{UTIL}".lower())  # would damage avutil, if it copied again
+        self.car.insert(self.stick, work, job)
+        self.assertEqual(self.car_files(), NEW)
+        imported = self.imported()
+        self.assertIn(f"{job.id}: applied", imported)
+        report = Store().report(SERIAL, job.id)
+        self.assertFalse((report / "busy.txt").exists())
+        self.assertFalse((report / "started-before.txt").exists())
+        self.assertEqual({p.name: p.read_bytes() for p in (report / "backup").iterdir()}, ORIGINALS)
 
     def test_a_backup_that_was_never_made_on_the_car_stops_before_any_change(self):
         job, work, _ = self.build("--from", str(self.build_folder))

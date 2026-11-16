@@ -261,6 +261,72 @@ class FakeCar:
                for marker in re.findall(r'^If \(FileExists\(out & "\\([\w.-]+)"\)\)$', script, re.M)):
             return stop(OLD_REPORT_MARKER)
         backup = self._resolve(f"{BACKUP_DIR}\\{job.id}")
+        def clear_readback() -> bool:
+            # MortScript 4.3's DelTree, as its code reads (interpreter sha256 392480ac...): with the
+            # folder there, it and what it holds go; with it missing, the search fails and the cleanup
+            # removes the folder searched, the report folder itself, when that is empty. Both decoder
+            # jobs run in the car lost their report this way, so the script only calls it on a folder
+            # that exists and makes the report folder again (job._clear_readback).
+            steps = script.split("\n")
+            for at, step in enumerate(steps):
+                found = re.fullmatch(r'\s*DelTree\(out & "\\([\w.-]+)"\)', step)
+                if not found:
+                    continue
+                name = found.group(1)
+                if (out / name).exists():
+                    if self._ce(out / name).lower() not in self.stuck_files:
+                        shutil.rmtree(out / name, ignore_errors=True)
+                elif steps[at - 1] != f'If (DirExists(out & "\\{name}"))' and out.is_dir() and not any(out.iterdir()):
+                    out.rmdir()
+            if not out.is_dir():
+                if "MkDir(out)" not in steps[max(at for at, step in enumerate(steps) if "DelTree(out" in step):]:
+                    return False  # nothing the script writes to the stick from here on arrives
+                out.mkdir(parents=True)
+            if any((out / name).exists() for name in re.findall(r'^If \(DirExists\(out & "\\([\w.-]+)"\)\)$', script,
+                                                                re.M)):
+                return stop(OLD_REPORT_MARKER)
+            return True
+        if job.kind == "dec" and not p.get("restore"):
+            # the car first, the stick's report after (job._decoder_apply_lines): only the car's own
+            # backup gates the swap, and nothing the stick does stops it once it runs
+            if not th.is_dir():
+                return stop("missing.txt")
+            swapped = backup.is_dir() and all(size(th / n) == f["new"] for n, f in files.items())
+            if backup.is_dir() and not swapped:
+                return stop("started-before.txt")  # a run cut short: only the undo goes on from here
+            if not clear_readback():
+                return False
+            if not swapped:
+                if self.autokit_running or "autokit.exe" in self.running:
+                    return stop("busy.txt")
+                if any(size(th / n) != f["old"] for n, f in files.items()):
+                    return stop("stale.txt")
+                if any(size(jd / f"new-{n}") != f["new"] for n, f in files.items()):
+                    return stop("payload-bad.txt")
+                for name in files:
+                    self._copy(th / name, backup / name)
+                if any(size(backup / n) != f["old"] for n, f in files.items()):
+                    return stop("backup-failed.txt")
+                (out / CHANGING).write_text(job.id)
+                for name in files:
+                    self._copy(jd / f"new-{name}", th / name)
+                if any(size(th / n) != f["new"] for n, f in files.items()):
+                    for name in files:
+                        self._copy(backup / name, th / name)
+                    if any(size(th / n) != f["old"] for n, f in files.items()):
+                        return stop("rollback-failed.txt")
+                    (out / "rolledback").mkdir(exist_ok=True)
+                    for name in files:
+                        self._copy(th / name, out / "rolledback" / name)
+                    return stop("copy-failed.txt")
+            (out / "backup").mkdir(exist_ok=True)
+            for name in files:  # what a restore would use, for the Mac to compare: after the swap
+                self._copy(backup / name, out / "backup" / name)
+            (out / "applied").mkdir(exist_ok=True)
+            for name in files:
+                self._copy(th / name, out / "applied" / name)
+            (out / "dec-applied.txt").write_text(job.id)
+            return True
         if not p.get("restore") and backup.is_dir():
             return stop("started-before.txt")  # first: a run cut short fails the checks below
         if job.kind == "dec" and (self.autokit_running or "autokit.exe" in self.running):
@@ -268,29 +334,8 @@ class FakeCar:
         if not th.is_dir():
             return stop("missing.txt")
         # as the script does: what an earlier run copied onto the stick goes, or the run stops (job.READBACK)
-        # MortScript 4.3's DelTree, as its code reads (interpreter sha256 392480ac...): with the
-        # folder there, it and what it holds go; with it missing, the search fails and the cleanup
-        # removes the folder searched, the report folder itself, when that is empty. Both decoder
-        # jobs run in the car lost their report this way, so the script only calls it on a folder
-        # that exists and makes the report folder again (job._clear_readback).
-        steps = script.split("\n")
-        for at, step in enumerate(steps):
-            found = re.fullmatch(r'\s*DelTree\(out & "\\([\w.-]+)"\)', step)
-            if not found:
-                continue
-            name = found.group(1)
-            if (out / name).exists():
-                if self._ce(out / name).lower() not in self.stuck_files:
-                    shutil.rmtree(out / name, ignore_errors=True)
-            elif steps[at - 1] != f'If (DirExists(out & "\\{name}"))' and out.is_dir() and not any(out.iterdir()):
-                out.rmdir()
-        if not out.is_dir():
-            if "MkDir(out)" not in steps[max(at for at, step in enumerate(steps) if "DelTree(out" in step):]:
-                return False  # nothing the script writes to the stick from here on arrives
-            out.mkdir(parents=True)
-        if any((out / name).exists() for name in re.findall(r'^If \(DirExists\(out & "\\([\w.-]+)"\)\)$', script,
-                                                            re.M)):
-            return stop(OLD_REPORT_MARKER)
+        if not clear_readback():
+            return False
         if p.get("restore"):
             if any((jd / f"orig-{n}").stat().st_size != size for n, size in files.items()):
                 return stop("payload-bad.txt")
