@@ -145,6 +145,15 @@ SHA-256 matches standard empty/`abc`/long vectors, one million `a` bytes, and pa
 boundaries. These are logic tests; they do not emulate CE process isolation or prove mapping
 permission, clock stability, runtime ABI behavior, or vehicle safety.
 
+The independent November 16 review found a test-oracle gap: the fake registry originally
+used the production value table as its expected data. Changing `Flags` from `0x10` to `0`
+therefore passed the original tests, even though that would request kernel-mode loading.
+The fixture now specifies all seven names, types and values independently. Additional cases
+cover malformed memory lengths/double NULs, bus mismatch, registry/DLL close failures,
+different valid stream names and journal-flush failure before each cleanup operation.
+The expanded 19 driver/controller tests and five parser tests pass. The production C and
+the server-built binaries are unchanged; their sources and hashes were rechecked.
+
 Run the focused checks with:
 
 ```sh
@@ -176,6 +185,49 @@ COREDLL. The DLL exports exactly the ten declared `SCK_*` entries. Candidate use
 has `HalTranslateBusAddress` at RVA `0x19d0`, `MmMapIoSpace` at `0x3d60`, and
 `MmUnmapIoSpace` at `0x3e28`. The controller binary contains the exact built DLL digest.
 These static checks establish candidate symbol availability, not actual-car binary identity.
+
+## Plan toward a controlled clock trial
+
+The next deliverable is a successful live clock-tree observation. The application-level
+mapping attempt failed before any register read, and this driver has not run in the car.
+The following sequence makes each later step depend on a concrete result from the earlier one.
+
+| Step | Work and required result | Current state |
+| --- | --- | --- |
+| 1. Review the observer | Independently review the DLL/controller, exercise the owned-registry and lifecycle failures, and match the reviewed source to the server artifacts. | Source review and focused checks complete; no activation performed. |
+| 2. Prepare one diagnostic | Add a separately reviewed, one-shot job and import contract that preserves the journal and native exit status. Confirm the target's user-driver host configuration and required runtime identities. A timeout must retain an unresolved outcome and prevent replay. | Job integration remains to be implemented; existing jobs do not load this DLL. |
+| 3. Establish the baseline | Obtain the 64-read snapshot with successful cleanup. Check both passes, CCM handshakes, active PLL parameter bank/reference configuration, ARM source/divider and DDR selection. Identify the remaining PLL1 consumers and transition state through exact-image analysis and any further reviewed read-only capture needed. Corroborate frequency with an independent timebase. | Live clock-tree registers are missing. The current subset does not enumerate every consumer; an AXI_A DDR selection alone does not establish that every dependent root is independent of PLL1. |
+| 4. Specify the transition | Trace a deployed CPU transition implementation or define the necessary platform adapter. Bind its exact preconditions, serialization with Ford policy, register ordering, bounded polls, readback and complete restoration to the observed baseline. Review suspend/resume and applicable silicon errata. | No CPU transition or restore implementation is verified. |
+| 5. Qualify a bounded experiment | Identify the fitted CPU/revision, effective rail and loaded voltage, thermal instrumentation, and a recovery method that still works after loss of CPU/DDR service. Exercise baseline-to-baseline transition and fault recovery on a recoverable bench. | Grade, active voltage, thermal observation and independent recovery remain unresolved. |
+| 6. Compare one temporary point | Only after those results, build the matching trial/undo artifacts and perform the reviewed baseline–target–baseline experiment with identical workload. Compare completed work, latency, errors and restoration; preserve any pending result. | No trial artifact exists. The observer adds no frequency/voltage write API. |
+
+### A concrete arithmetic candidate, subject to the live baseline
+
+The recovered candidate NK boot code at `0x801011e0–0x801011f4` writes PLL1
+`DP_OP=0x60`, `DP_MFN=1` and `DP_MFD=3`. With the assumed 24 MHz oscillator and
+the configuration used by [NXP AN4140 section 3.1](https://www.nxp.com/docs/en/application-note/AN4140.pdf#page=3),
+those constants calculate to `4 × 24 × (6 + 1/4) = 600 MHz`. Keeping the same factors
+except an MFN of 2 calculates to **624 MHz**, a 4% nominal PLL clock increase and a maximum
+3.85% reduction in time for perfectly CPU-scaled work. This narrows the earlier 620–630 MHz
+investigation range to a representable arithmetic candidate.
+
+It is not a proposed register-write recipe. Boot constants do not establish the active
+normal/high-frequency bank, reference path, dither/auto-restart state, locking behavior or
+other live consumers. Those must come from the snapshot, the exact transition code and
+any additional reviewed read-only evidence needed beyond the current 64-read subset.
+An application-visible mapping also does not provide exclusive ownership of the clock tree.
+The current native interface must remain a reader; any future writer needs its own reviewed
+contract and implementation.
+
+[NXP errata Rev. 5](https://www.nxp.com/docs/en/errata/IMX51CE.pdf) adds two concrete checks:
+ENGcm11208 (p.46) requires separate ARM-source and step-mux changes; ENGcm12051 (pp.155–156)
+describes a PLL restart workaround specifically for named consumer variants at 800 MHz.
+Neither its temporary 864 MHz value nor the reference BSP's 800 MHz point is a substitute
+for a small step on this unidentified fitted part. Actual applicability and restore/resume
+behavior must be established before implementing the transition.
+
+The [trial/restoration contract](CLOCK-OUTCOMES.md) continues to apply. Passing the observer's
+tests establishes its control logic and artifact identity, not overclock readiness.
 
 ## Primary API references
 
