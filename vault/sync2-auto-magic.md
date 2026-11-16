@@ -1,6 +1,30 @@
 # SYNC 2 clock investigation
 The November 16 car runs demonstrate PMIC reads and confirm the target binaries are ROM modules; no CPU-frequency selector has been discovered.
 
+## Firmware candidate obtained, November 16
+
+An unofficial `Gen2v310build16180updatepackageEULangpack2.rar` candidate was downloaded for
+offline inspection from `https://lg3gservice.home.pl/pub/ford/`. It is not authenticated or
+verified as the car's exact firmware, and its language-pack label differs from the Langpack5
+file referenced by the upstream installation guide. Nothing was installed or written to USB.
+
+- RAR: 627,971,109 bytes; SHA-256 `c671911a9dc8bde701585351cb9c6e00c928d5e06923b9c1ab31bf691c1aade5`.
+- Contained `EA5T-14D544-BA.ZIP`: 348,759,140 bytes; SHA-256 `3e98dc7049424e82d628cb7d2e564f03dbdf474780dcfa47d04ffa8be9dc3f60`.
+- Extracted `EA5T-14D544-BA.sec`: 2,104,594,708 bytes; SHA-256 `e7603abf483036a7836901c8f9656ab28e716bc39162e6b10542be71a2e6faff`. ZIP CRC verification passed.
+
+The image contains the clock/power module names. A bounded 128 MiB byte-pattern scan found
+timestamp/size combinations matching four car targets, including CSPDDK; this is preliminary
+correlation, not decoded module identity or proof of authenticity. A single linear mapping
+from candidate directory pointers to file offsets was not established. Next: understand the
+image layout, recover actual modules and validate their identity before interface analysis.
+No operating-point table or callable clock-changing method has been recovered yet.
+
+The upstream Mega link yielded no downloaded files in the installed client. A bounded search
+found no verified Ford-hosted EU 3.10 core package; exact candidate URLs on Ford's historical
+download host returned 404. An available Ford language package does not provide the OS image.
+The owner needs no new car/USB action; an existing original Ford package would help provenance
+if available. No code, build or CI changes were made for this research.
+
 ## Module diagnostic returned, November 16
 
 `20261116-082901-clock-d9b3` returned applied with both diagnostics complete. Fifteen return
