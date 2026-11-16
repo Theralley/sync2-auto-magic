@@ -1,0 +1,12 @@
+LIBRARY s2amclkdrv
+EXPORTS
+    SCK_Init
+    SCK_Deinit
+    SCK_Open
+    SCK_Close
+    SCK_PreClose
+    SCK_PreDeinit
+    SCK_IOControl
+    SCK_Read
+    SCK_Write
+    SCK_Seek
