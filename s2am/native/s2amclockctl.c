@@ -142,12 +142,33 @@ static int paths(LPCWSTR command, WCHAR key[MAX_PATH], WCHAR dll[MAX_PATH], WCHA
                       (command[n]>=L'0' && command[n]<=L'9') || command[n]==L'-')) return 0;
     }
     if (!n) return 0;
-    wcscpy(key,L"Drivers\\S2AMClock\\"); wcscat(key,command);
+    /* One exclusive key for every run: an unresolved earlier activation must
+     * block a fresh job ID as well as a replay of the same report. */
+    wcscpy(key,L"Drivers\\S2AMClock");
     wcscpy(dll,root); wcscat(dll,command); wcscat(dll,L"\\s2amclkdrv.dll");
     wcscpy(report,root); wcscat(report,command); wcscat(report,L"\\clock-user-driver.txt");
     wcscpy(expected,root); wcscat(expected,command); wcscat(expected,L"\\s2amclockctl.exe");
     length=GetModuleFileNameW(NULL,own,MAX_PATH);
     return length && length<MAX_PATH && own[length]==0 && !wcscmp(own,expected);
+}
+
+static int host_configuration(void)
+{
+    static const WCHAR *const names[]={L"ProcName",L"ProcVolPrefix"};
+    static const WCHAR *const expected[]={L"udevice.exe",L"$udevice"};
+    HKEY key=NULL;
+    WCHAR value[32];
+    unsigned int i;
+    int valid=1;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE,L"Drivers",0,0,&key)!=ERROR_SUCCESS) return 0;
+    for (i=0; i<2; ++i) {
+        DWORD type=0, size=sizeof(value);
+        DWORD expected_size=(DWORD)(wcslen(expected[i])+1)*sizeof(WCHAR);
+        if (RegQueryValueExW(key,names[i],NULL,&type,(BYTE *)value,&size)!=ERROR_SUCCESS ||
+            type!=REG_SZ || size!=expected_size || memcmp(value,expected[i],size)) valid=0;
+    }
+    if (RegCloseKey(key)!=ERROR_SUCCESS) valid=0;
+    return valid;
 }
 
 static int identity(const DEVMGR_DEVICE_INFORMATION *info, HANDLE activation, LPCWSTR key)
@@ -201,6 +222,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
      * denies a write/delete open while the verified DLL may be active. */
     dll=CreateFileW(dll_path,GENERIC_READ,FILE_SHARE_READ,NULL,OPEN_EXISTING,0,NULL);
     if (dll==INVALID_HANDLE_VALUE || !verify_dll(dll)) { failure("verify-dll",GetLastError()); goto cleanup; }
+    if (!progress("host-configuration")) goto finish;
+    if (!host_configuration()) { failure("host-configuration",ERROR_INVALID_PARAMETER); goto cleanup; }
     if (!progress("registry-create")) goto finish;
     reg_error=RegCreateKeyExW(HKEY_LOCAL_MACHINE,key_path,0,NULL,REG_OPTION_NON_VOLATILE,0,NULL,&key,&disposition);
     if (reg_error!=ERROR_SUCCESS || disposition!=REG_CREATED_NEW_KEY) {

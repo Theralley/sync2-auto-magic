@@ -75,7 +75,7 @@ JOB_KINDS = {"inventory": "inv", "autokit-stock": "akstock", "autokit-patched": 
              "snapshot": "snap", "logger": "log", "native-hello": "hello", "runner-guard": "guard",
              "theme": "theme", "apps-menu": "appmenu", "cleanup": "clean", "screen": "screen",
              "bundle": "bundle", "registry": "reg", "decoder": "dec", "pmic": "pmic", "clock": "clock",
-             "decoder-inspect": "decdiag"}
+             "decoder-inspect": "decdiag", "clock-inspect": "clkdiag"}
 MARK = {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
 
 
@@ -450,6 +450,12 @@ def cmd_job(args) -> int:
             if params["screen"] in STARTUP_SCREENS:
                 print("  this screen loads when SYNC starts: if the screen stays dark afterwards, insert the "
                       "undo stick anyway and wait two minutes (RECOVERY.md)")
+    elif args.kind == "clock-inspect":
+        from . import clock_driver
+        params, extra = clock_driver.artifacts(args.artifacts)
+        print("clock inspection: one isolated user-driver activation and 64 fixed register reads. "
+              "No frequency/voltage writes or restart. A timed-out activation remains unresolved; "
+              "the diagnostic preserves its journal and blocks another activation.")
     elif args.kind == "decoder-inspect":
         from . import decoder_inspect
         params = decoder_inspect.plan(Store().job(args.serial, args.target))
@@ -478,7 +484,7 @@ def cmd_job(args) -> int:
     if job.kind == "inst" and params["app"].lower() == "autokit":
         autokit.patch_folder(workdir / "payload" / "SyncExtendedPack/Apps/Media/AutoKit",
                              args.upstream / autokit.HOOK_SOURCE)
-    if args.no_pack:
+    if args.no_pack or job.kind == "clkdiag":
         print(f"staged {job.id} at {workdir} (not packed)")
         return 0
     install = pack.build(job, workdir, args.upstream, force=args.force)
@@ -575,6 +581,9 @@ def cmd_stick_import(args) -> int:
                 and record["status"] == "applied" and report:
             from . import modules
             print("  " + modules.summary(report))
+        if record.get("kind") == "clkdiag" and report:
+            from . import clock_driver
+            print("  " + clock_driver.summary(report, Job.from_json(json.dumps(record))))
         if record.get("kind") == "decdiag" and report:
             from . import clock_snapshot, decoder_inspect
             inspected = Job.from_json(json.dumps(record))
@@ -1100,6 +1109,11 @@ def parser() -> argparse.ArgumentParser:
     inspect.add_argument("--target", required=True, metavar="JOB_ID",
                          help="the original known decoder test job to inspect, without rerunning it")
     inspect.set_defaults(func=cmd_job)
+    clock_inspect = job_sub.add_parser("clock-inspect", parents=[common],
+                                      help="stage an isolated read-only PLL1/CCM diagnostic; package on ant-srv-001")
+    clock_inspect.add_argument("--artifacts", required=True, type=Path,
+                               help="verified clock bundle built on ant-srv-001; never builds locally")
+    clock_inspect.set_defaults(func=cmd_job)
     registry = job_sub.add_parser("registry", parents=[common],
                                   help="read-only: copy SYNC's Bluetooth, call, audio and other settings from "
                                        "the registry to the stick (link keys and PINs are not copied)")

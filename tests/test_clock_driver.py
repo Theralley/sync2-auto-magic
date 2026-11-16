@@ -71,6 +71,7 @@ LONG InterlockedCompareExchange(volatile LONG *,LONG,LONG);
 LONG InterlockedExchange(volatile LONG *,LONG);
 HKEY OpenDeviceKey(LPCWSTR);
 LONG RegCloseKey(HKEY);
+LONG RegOpenKeyExW(HKEY,LPCWSTR,DWORD,DWORD,HKEY *);
 LONG RegQueryValueExW(HKEY,LPCWSTR,DWORD *,DWORD *,BYTE *,DWORD *);
 LONG RegEnumValueW(HKEY,DWORD,LPWSTR,DWORD *,DWORD *,DWORD *,BYTE *,DWORD *);
 LONG RegEnumKeyExW(HKEY,DWORD,LPWSTR,DWORD *,DWORD *,LPWSTR,DWORD *,void *);
@@ -96,7 +97,7 @@ REGISTRY_SHIM = r'''
 static const char *mode;
 static DWORD error;
 static WCHAR dll_path[MAX_PATH] = L"\\SyncExtendedPack\\_s2am\\jobs\\test-run\\s2amclkdrv.dll";
-static const WCHAR key_path[] = L"Drivers\\S2AMClock\\test-run";
+static const WCHAR key_path[] = L"Drivers\\S2AMClock";
 /* Independent fixture: do not let a mistaken production resource range/type
  * change both the implementation and its expected registry bytes. */
 static const DWORD fixture_user_mode=0x10,fixture_internal=0,fixture_bus=0;
@@ -130,11 +131,27 @@ HKEY OpenDeviceKey(LPCWSTR active) {
     puts("open-key"); return (HKEY)(intptr_t)11;
 }
 LONG RegCloseKey(HKEY key) {
+    if(key==(HKEY)(intptr_t)12) return ismode("host-close-fail") ? ERROR_ACCESS_DENIED : 0;
     assert(key==(HKEY)(intptr_t)11);
     return ismode("key-close-fail") ? ERROR_ACCESS_DENIED : 0;
 }
+LONG RegOpenKeyExW(HKEY root,LPCWSTR path,DWORD reserved,DWORD access,HKEY *key) {
+    assert(root==HKEY_LOCAL_MACHINE && !wcscmp(path,L"Drivers") && !reserved && !access);
+    if(ismode("host-open-fail")) return ERROR_ACCESS_DENIED;
+    *key=(HKEY)(intptr_t)12; return 0;
+}
 LONG RegQueryValueExW(HKEY key,LPCWSTR name,DWORD *reserved,DWORD *type,BYTE *out,DWORD *size) {
-    unsigned i; assert(key==(HKEY)(intptr_t)11 && !reserved);
+    unsigned i; assert(!reserved);
+    if(key==(HKEY)(intptr_t)12) {
+        const WCHAR *expected=!wcscmp(name,L"ProcName") ? L"udevice.exe" : L"$udevice";
+        DWORD length=(DWORD)(wcslen(expected)+1)*sizeof(WCHAR);
+        assert(!wcscmp(name,L"ProcName") || !wcscmp(name,L"ProcVolPrefix"));
+        assert(*size>=length); memcpy(out,expected,length); *size=length; *type=REG_SZ;
+        if(ismode("host-proc-mismatch")) out[0]='x';
+        if(ismode("host-prefix-type")) *type=REG_MULTI_SZ;
+        return 0;
+    }
+    assert(key==(HKEY)(intptr_t)11);
     for(i=0;i<FIXTURE_VALUE_COUNT;i++) if(!wcscmp(name,fixture_values[i].name)) {
         const void *value=fixture_values[i].data; DWORD length=fixture_values[i].size;
         if(i==0) { value=dll_path; length=(DWORD)(wcslen(dll_path)+1)*sizeof(WCHAR); }
@@ -586,6 +603,14 @@ class NativeClockController(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, result.stdout)
             self.assertIn("COUNTS 1 7 1 0 0 0", result.stdout)
             self.assertIn("E|activate|", result.stdout)
+
+    def test_host_configuration_is_verified_before_creating_activation_state(self):
+        for mode in ("host-open-fail", "host-proc-mismatch", "host-prefix-type", "host-close-fail"):
+            with self.subTest(mode=mode):
+                result = self.run_ctl(mode)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("COUNTS 0 0 0 0 0 0", result.stdout)
+                self.assertNotIn("T|complete", result.stdout)
 
     def test_identity_failures_prevent_any_snapshot(self):
         for mode in ("device-info-fail", "device-handle-mismatch", "device-key-mismatch", "file-info-fail", "file-handle-mismatch", "file-key-mismatch", "file-name-mismatch", "legacy-invalid", "legacy-unterminated", "key-unterminated", "info-size-mismatch"):

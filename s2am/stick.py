@@ -188,6 +188,19 @@ def import_reports(stick: Path, store: Store, require_volume: bool = True) -> li
                 results.append({"id": job.id, "status": "rejected",
                                 "reason": "decoder inspection has no matching trusted local job"})
                 continue
+        if job.kind == "clkdiag" or job.id.split("-")[2] == "clkdiag" or stored.get("kind") == "clkdiag":
+            try:
+                from .clock_driver import validate_job
+                trusted = Job.from_json(json.dumps(stored))
+                validate_job(trusted)
+                if json.loads(trusted.to_json()) != json.loads(job.to_json()):
+                    raise ValueError("clock inspection identity differs from its local job")
+            except ValueError:
+                rejected.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(path), str(rejected / path.name))
+                results.append({"id": job.id, "status": "rejected",
+                                "reason": "clock inspection has no matching trusted local job"})
+                continue
         # A replayed job ran nothing: its report is the first run's, so it keeps that run's
         # place in time instead of looking like fresh evidence.
         record = {**json.loads(job.to_json()), "status": status, "replayed": replayed,

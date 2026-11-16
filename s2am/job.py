@@ -1250,6 +1250,12 @@ def clock_script(job: Job) -> str:
     return _script(_header(job) + pmic_lines(job) + lines + _inventory() + _footer(job))
 
 
+def clock_inspect_script(job: Job) -> str:
+    from .clock_driver import validate_job
+    validate_job(job)
+    return "# Native s2amclockjob.exe owns this diagnostic; no interpreter is staged.\n"
+
+
 SCRIPTS = {
     "inv": inventory_script,
     "akstock": lambda job: autokit_script(job, "orig"),
@@ -1272,6 +1278,7 @@ SCRIPTS = {
     "pmic": pmic_script,
     "clock": clock_script,
     "decdiag": decoder_inspect_script,
+    "clkdiag": clock_inspect_script,
 }
 MENU_CHANGING = ("rm", "undo", "inst")  # SYNC reads SyncApps.xml at start, so these restart it
 RESTARTING = MENU_CHANGING + SKIN_SWAPS + ("bundle",)  # and its theme, Apps menu and screens
@@ -1279,10 +1286,11 @@ RESTARTING = MENU_CHANGING + SKIN_SWAPS + ("bundle",)  # and its theme, Apps men
 
 def meta(job: Job) -> bytes:
     """The META UpdateService reads: UTF-16LE KEY=VALUE lines, as upstream packer.py writes."""
+    launcher = {"decdiag": "s2amdiag", "clkdiag": "s2amclockjob"}.get(job.kind, RUNNER_NAME)
     entries = {
         "HEADER": f"s2am {job.kind} job",
         "VERSION": f"s2am {job.id} for: {job.serial}",
-        "POST_APP": f"{job.job_dir}/{'s2amdiag' if job.kind == 'decdiag' else RUNNER_NAME}.exe",
+        "POST_APP": f"{job.job_dir}/{launcher}.exe",
     }
     if job.kind in RESTARTING:
         entries["NEED_REBOOT"] = "True"
@@ -1300,13 +1308,19 @@ def stage(job: Job, upstream: Path, workdir: Path, extra: dict[str, bytes] | Non
     if job.kind not in SCRIPTS:
         raise ValueError(f"unknown job kind {job.kind!r}")
     script = SCRIPTS[job.kind](job).encode("ascii")  # fails before anything is written
+    if job.kind == "clkdiag":
+        from .clock_driver import BINARIES
+        if payload or set(extra or {}) != set(BINARIES) or any(
+                hashlib.sha256(extra[name]).hexdigest() != job.params["artifacts"][name] for name in BINARIES):
+            raise ValueError("clock diagnostic payload differs from its bound artifacts")
     if workdir.exists():
         shutil.rmtree(workdir)
     target = workdir / "payload" / job.job_dir.lstrip("/")
     target.mkdir(parents=True)
-    shutil.copy2(upstream / MORTSCRIPT_SOURCE, target / "MortScript.exe")
-    shutil.copy2(upstream / MORTRUNNER_SOURCE, target / f"{RUNNER_NAME}.exe")
-    (target / f"{RUNNER_NAME}.mscr").write_bytes(script)
+    if job.kind != "clkdiag":
+        shutil.copy2(upstream / MORTSCRIPT_SOURCE, target / "MortScript.exe")
+        shutil.copy2(upstream / MORTRUNNER_SOURCE, target / f"{RUNNER_NAME}.exe")
+        (target / f"{RUNNER_NAME}.mscr").write_bytes(script)
     if job.kind == "decdiag":
         (target / "target.txt").write_text(job.params["target"] + "\n", encoding="ascii")
         (target / "probe.mscr").write_bytes(script)
