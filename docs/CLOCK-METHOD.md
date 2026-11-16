@@ -7,6 +7,14 @@ named file; no binaries copied. PMIC presets remain 1050/1050/700 mV, now with S
 SID disabled. See the [registry findings](CLOCK-CAPTURE-2026-11-16.md) and
 [module/mode findings](CLOCK-MODULE-CAPTURE-2026-11-16.md).
 
+**Later offline analysis:** all seven modules have been recovered from a firmware candidate
+with matching size/time/attribute metadata. The inspected CSPDDK frequency setter controls
+PLL3 at 216/297 MHz; it is not a CPU selector. Setpoint requests need an actual DVFC consumer,
+and their blocking path can wait indefinitely. AutoPM contains power-notification relay code,
+whose runtime operation is unverified; the PMIC
+SDK's STBYDVFS-named helpers are no-op stubs. See the
+[binary analysis and identity limits](CLOCK-FIRMWARE-ANALYSIS-2026-11-16.md).
+
 The [outcome plan and offline trial/undo rehearsal](CLOCK-OUTCOMES.md) cover a verified higher
 DVFC point, a genuine 600 MHz limit, and no discovered interface. The rehearsal has no live
 hardware backend or installable overclock job.
@@ -17,7 +25,7 @@ hardware backend or installable overclock job.
 |---|---|---|
 | Existing DVFC driver | Selects operating points compiled into that driver; the reference BSP exposes CPU and peripheral domains separately | A matching Ford driver, its API contract and its actual operating-point table |
 | Existing `PMI1:` driver | Identification, SW1 preset and mode/SID reads demonstrated in the car | Other requests and active rail interpretation remain unverified; this is not a CPU clock selector |
-| `cspddk.dll` clock services | The reference BSP has clock-query and configuration services | Ford's exports, callable context and implementation; a function name does not prove arbitrary CPU-frequency support |
+| `cspddk.dll` clock services | Candidate exports inspected: cached queries, PLL3 configuration and event-based setpoint requests | A working CPU DVFC consumer, its actual policy and callable context; no arbitrary CPU-frequency export found |
 | New board-specific platform support | Would be needed if the deployed software has no suitable operating point/interface | Actual CPU grade, clock tree, DDR/AXI dependencies, rail control, synchronization and suspend/resume behavior |
 
 Source: Freescale's [i.MX51 CE 6.0 BSP manual](https://community.nxp.com/pwmxy87654/attachments/pwmxy87654/imx-processors/9897/1/481-WCE600_MX51_ER_1104_ReferenceManual.pdf), chapters 7, 9 and 19.
@@ -58,7 +66,9 @@ register-28 capture shows SID disabled in that snapshot; standby state is still 
 ([accessible Rev. 14 copy with the same accuracy specification](https://www.nxp.com/docs/pcn_attachments/14928A_MC13892.pdf#page=15)).
 
 The car's OEM metadata reports 600 MHz and timing loops repeatedly estimate 599–600 MHz against
-an 8 MHz performance counter. This corroborates the baseline; it is not a PLL-register reading
+an 8 MHz performance counter. The inspected OEM processor-info handler copies shared boot
+metadata into a field defined as maximum clock speed, not a live measurement. Together these
+corroborate the baseline; they are not a PLL-register reading
 or calibrated proof of a 1–3% change. Empty catalog and zero revision fields in that metadata
 do not identify the fitted ordering code or silicon revision. The timing reference must also
 be shown independent of the clock being changed.

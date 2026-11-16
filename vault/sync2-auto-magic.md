@@ -1,7 +1,37 @@
 # SYNC 2 clock investigation
-The November 16 car runs demonstrate PMIC reads and confirm the target binaries are ROM modules; no CPU-frequency selector has been discovered.
+All seven target modules have been recovered offline with metadata matching the November 16 car capture; no usable CPU-frequency selector has been established.
 
-## Firmware candidate obtained, November 16
+## Candidate binaries recovered and inspected, November 16
+
+The SEC chunk wrapper and NAND page framing are decoded. Region id6 contains the matching
+modules: 51-module XIP supplies CSPDDK/NK/kernel/COREDLL; targeted IMGFS extraction supplies
+AutoPM and both PMIC drivers. All seven match the car's attributes, FILETIME and reported
+size. The separate id7 image has different modules and must not be substituted. Matching
+metadata is not proof of byte identity or independently trusted provenance.
+
+Verification: 1,302 XIP page trailers, 18 selected IMGFS page trailers, exact stream lengths,
+independent hashes of the three IMGFS code streams, and byte comparisons for all four
+sections of CSPDDK/AutoPM/PMIC Pdk/PMIC SDK passed. The first 15 SEC chunks match the signed
+catalog; its mathematical signature verifies with the embedded certificate. Independent
+certificate trust and the remaining 236 chunks were not verified. No firmware was executed.
+
+Actual implementation: CSPDDK's SetFreq accepts only PLL3 at 216/297 MHz; its setpoint APIs
+use reference counts/events and need an actual consumer. A blocking call can wait forever.
+AutoPM contains power-notification relay code, whose runtime operation is unverified.
+PMIC STBYDVFS-named helpers are successful no-op stubs.
+NK's fixed PLL1 startup configuration is consistent with 600 MHz. Its 800 MHz initialized
+metadata is overwritten from boot data, not exposed as a selectable operating point.
+
+See [offline analysis](../docs/CLOCK-FIRMWARE-ANALYSIS-2026-11-16.md) for precise scope,
+source references and extraction provenance. Local reconstructed modules and disassembly
+remain under ignored build artifacts. Public changes are documentation only; no full CI,
+production/native build, USB operation or frequency/voltage change ran.
+
+Next: identify a functioning CPU transition consumer/policy or specify the missing platform
+support. No 620–630 MHz trial is ready, and another ordinary-file-copy car diagnostic is
+unnecessary for these seven modules.
+
+## Earlier: firmware candidate obtained, November 16
 
 An unofficial `Gen2v310build16180updatepackageEULangpack2.rar` candidate was downloaded for
 offline inspection from `https://lg3gservice.home.pl/pub/ford/`. It is not authenticated or

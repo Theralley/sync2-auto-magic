@@ -3,6 +3,10 @@
 The car completed `20261116-082901-clock-d9b3`. Both diagnostic reports validate, but no
 program binaries were recovered and no CPU-frequency control interface was established.
 
+Later [offline firmware analysis](CLOCK-FIRMWARE-ANALYSIS-2026-11-16.md) recovered candidate
+versions of all seven modules with matching metadata. This does not change the car-capture
+outcome: no binaries were copied from the car, and no clock setting was changed.
+
 ## Evidence and verification
 
 The returned `installed.bin` is byte-identical to the prepared 179,240-byte pack, SHA-256
