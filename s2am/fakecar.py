@@ -268,9 +268,26 @@ class FakeCar:
         if not th.is_dir():
             return stop("missing.txt")
         # as the script does: what an earlier run copied onto the stick goes, or the run stops (job.READBACK)
-        for name in re.findall(r'^\s*DelTree\(out & "\\([\w.-]+)"\)$', script, re.M):
-            if self._ce(out / name).lower() not in self.stuck_files:
-                shutil.rmtree(out / name, ignore_errors=True)
+        # MortScript 4.3's DelTree, as its code reads (interpreter sha256 392480ac...): with the
+        # folder there, it and what it holds go; with it missing, the search fails and the cleanup
+        # removes the folder searched, the report folder itself, when that is empty. Both decoder
+        # jobs run in the car lost their report this way, so the script only calls it on a folder
+        # that exists and makes the report folder again (job._clear_readback).
+        steps = script.split("\n")
+        for at, step in enumerate(steps):
+            found = re.fullmatch(r'\s*DelTree\(out & "\\([\w.-]+)"\)', step)
+            if not found:
+                continue
+            name = found.group(1)
+            if (out / name).exists():
+                if self._ce(out / name).lower() not in self.stuck_files:
+                    shutil.rmtree(out / name, ignore_errors=True)
+            elif steps[at - 1] != f'If (DirExists(out & "\\{name}"))' and out.is_dir() and not any(out.iterdir()):
+                out.rmdir()
+        if not out.is_dir():
+            if "MkDir(out)" not in steps[max(at for at, step in enumerate(steps) if "DelTree(out" in step):]:
+                return False  # nothing the script writes to the stick from here on arrives
+            out.mkdir(parents=True)
         if any((out / name).exists() for name in re.findall(r'^If \(DirExists\(out & "\\([\w.-]+)"\)\)$', script,
                                                             re.M)):
             return stop(OLD_REPORT_MARKER)

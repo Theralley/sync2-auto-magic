@@ -899,6 +899,25 @@ class Loop(unittest.TestCase):
         self.assertEqual((report / "applied" / CODEC).read_bytes(), ORIGINALS[CODEC])  # this run's
         self.assertNotEqual(self.car_files()[UTIL], ORIGINALS[UTIL])
 
+    def test_deltree_on_a_folder_that_is_not_there_takes_the_report_folder_with_it(self):
+        # the car, 2026-11-15 and 11-16: both decoder jobs came back without their report folder.
+        # MortScript's DelTree on a missing folder removes the empty folder it searched. Run on the
+        # simulated car: the script as it was loses the report, the script as it is keeps it.
+        from s2am import job as job_module
+        unguarded = [line for name in READBACK
+                     for line in (f'DelTree(out & "\\{name}")', f'RmDir(out & "\\{name}")')]
+        with mock.patch.object(job_module, "_clear_readback", lambda: unguarded):
+            job, work, _ = self.build("--from", str(self.build_folder))
+            self.prepared(work)
+            self.car.insert(self.stick, work, job)
+            self.assertFalse((self.stick / "s2am" / "reports" / job.id).exists())
+        job, work, _ = self.build("--from", str(self.build_folder))
+        self.prepared(work)
+        self.car.insert(self.stick, work, job)
+        report = self.stick / "s2am" / "reports" / job.id
+        self.assertTrue((report / "dec-applied.txt").is_file())
+        self.assertEqual({p.name: p.read_bytes() for p in (report / "backup").iterdir()}, ORIGINALS)
+
     def test_copies_that_cannot_be_deleted_stop_the_run_before_it_changes_anything(self):
         undo, undo_work, applied = self.cut_restore()
         self.car.stuck_files.add(applied.lower())
