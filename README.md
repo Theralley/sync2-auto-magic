@@ -8,19 +8,24 @@ and free software.** It also includes a Mac tool that shows what is installed on
 > [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Leaving AutoKit froze the screen; the runner guard
 > fixes that (verified in the car). Try it only if you are comfortable with the recovery steps.
 >
-> **Where it stands (16 November 2026):**
-> - **Measured:** with CarPlay running, the processor is at 100%. Most of it goes on AutoKit's
->   video decoding in software.
-> - **Decoder test unresolved:** the November 16 return contains no job report, so installation
->   is unverified. An [independent native inspection](docs/DECODER-INSPECTION.md) is prepared
->   before repeating the 640×384/10 comparison. Hardware-decoder
->   selection and 800×480/10 have already been tried without a CPU-load improvement.
+> **Development update — 16 November 2026:**
+> Our next goals are a **custom decoder verified in the car**, **more CPU time for foreground
+> CarPlay**, and a **controlled overclock experiment**. Read the
+> [current results and next steps](docs/PROGRESS-2026-11-16.md).
+> - **Measured:** 800×480 CarPlay saturated the processor. The current 640×384/10 setting
+>   reduces load but leaves black borders; the latest Maps/Spotify test showed no obvious gain.
+> - **Decoder identity still matters:** the first native inspection found the original decoder.
+>   A later installation returned no report. We identified and fixed a report-folder deletion
+>   defect; a fresh read-only inspection will establish which DLLs that installation left behind.
+> - **Clock work is active:** a temporary read-only driver prototype has been built and host-tested.
+>   Review and car validation come next. No overclock package or measured clock increase is ready.
 > - **Calls over CarPlay don't work yet** (the microphone). Don't rely on CarPlay for calls.
 
 ## Tested and working
 
 Tested in a real car: a **2016 Ford Mondeo Mk5, 8" SYNC 2, software 3.10 (EU)**, on
-**30 October to 15 November 2026**. Details in [docs/P1-TESTLOG.md](docs/P1-TESTLOG.md).
+**30 October to 16 November 2026**. Details in [docs/P1-TESTLOG.md](docs/P1-TESTLOG.md) and the
+[latest development update](docs/PROGRESS-2026-11-16.md).
 
 | What | Result in the car |
 |---|---|
@@ -98,9 +103,10 @@ run the same system, but nothing is guaranteed.
 | AutoKit in English | **Works in the car**; new installs start in English (the stock app is Chinese; `autokit-config --lang` changes it) |
 | Apple CarPlay over a cable | **Works in the car, very slow** (2026-11-04): [docs/PERFORMANCE.md](docs/PERFORMANCE.md) |
 | A smaller CarPlay picture to lower the load (`autokit-config --screen 640,384,10`) | **Works in the car** (2026-11-15): the processor is no longer full all the time and CarPlay feels much faster; the picture sits in the middle with a black frame. The car is left on this setting |
-| Faster video decoder files for AutoKit, our own FFmpeg build (`s2am job decoder`, with its undo stick) | Built, about 20% fewer emulated instructions with identical test pictures; **November 16 return has no job report; installation and car performance unverified**. The files themselves are not in this repository; see the [current test procedure](docs/PERFORMANCE.md#next-useful-tests-november-16) |
-| A higher processor clock (overclocking) | **No validated CPU transition yet.** Matching candidate binaries have been analyzed. A fixed PLL1/CCM read probe through ordinary CEDDK APIs is prepared; live mapping permission and clock dependencies remain unverified ([inspection](docs/DECODER-INSPECTION.md)) |
-| Independently inspect a decoder attempt (`s2am job decoder-inspect --target JOB_ID`) | Prepared and host-tested; **first car validation pending**. Native startup captures active/backup/staged files, tests a fresh harmless script, and attempts fixed clock-register reads. It changes no decoder or clock setting |
+| Faster video decoder files for AutoKit, our own FFmpeg build (`s2am job decoder`, with its undo stick) | About 20% fewer emulated instructions with matching test pictures; **no measured car speed gain yet**. First inspection found stock DLLs; the latest installation awaits byte verification. The binaries are not in this repository ([next tests](docs/PERFORMANCE.md#next-useful-tests-november-16)) |
+| More CPU time for foreground CarPlay (`runner-guard --boost 250 --measure`) | Guarded priority comparison prepared in source, **not yet tested in the car**. Priority restoration and actual sampling gaps must be checked ([plan](docs/PROGRESS-2026-11-16.md#goal-2-give-foreground-carplay-more-processor-time)) |
+| A higher processor clock (overclocking) | **Active research; no validated CPU transition yet.** The standalone clock reader failed with mapping error 87. A separate read-only driver prototype has passed host tests and a server build; independent review and car activation remain pending ([clock goals](docs/PROGRESS-2026-11-16.md#goal-3-a-controlled-overclock-experiment)) |
+| Independently inspect a decoder attempt (`s2am job decoder-inspect --target JOB_ID`) | **File collection worked in the car on November 16.** Active/backup/staged DLLs were verified; the separate clock child failed explicitly. A fresh inspection targets the later decoder attempt. It changes no decoder or clock setting |
 | Read MC13892 voltage presets through the existing driver (`s2am job pmic`) | **Registers 7/24/28 work in this car** (2026-11-16, as part of `clock`): presets 1050/1050/700 mV, SW1MODE 9, SID disabled. Active CPU voltage remains unmeasured; no voltage or clock changes ([findings](docs/CLOCK-MODULE-CAPTURE-2026-11-16.md)) |
 | Collect clock evidence in one visit (`s2am job clock`) | **Original profile works in the car** (2026-11-16): both reports completed; registry has 950 keys and 3,792 values. The later targeted profile also validates the new PMIC mode read. No reboot or clock/voltage changes; each diagnostic's outcome is checked separately on import |
 | Inspect clock/power files and PMIC mode (`s2am job clock --modules`) | **Completed in the car** (2026-11-16): seven ROM modules, one missing named file, zero binaries copied. PMIC mode read succeeded. The ordinary-file copy branch remains untested in this car; no overclock is applied ([findings](docs/CLOCK-MODULE-CAPTURE-2026-11-16.md)) |
@@ -117,7 +123,7 @@ run the same system, but nothing is guaranteed.
 | Android Auto with the same dongle | Not tried yet (`autokit-config` sets the picture; [plan](docs/P2-AA-AUTOSTART-PLAN.md)) |
 | See what is installed on SYNC 2 from your Mac | **Works in the car** |
 | Drive logger for a redesign: system facts, processor load, every file, a copy of Ford's screens (`logger --drive`) | **Works in the car** (one 22-minute drive). Its screen copies show only the coloured background, not the Flash screens. Findings: [sync-redesign](https://github.com/Theralley/sync-redesign/blob/main/docs/FINDINGS.md) |
-| Measure speed: the processor's load per program and thread (`logger --load`, then `logger --collect` on a second stick) | Built and tested on the computer; first car run to come ([docs/PERFORMANCE.md](docs/PERFORMANCE.md)) |
+| Measure speed: the processor's load per program and thread (`logger --load`, then `logger --collect` on a second stick) | **Load traces collected in the car**, including 800×480 and 640×384 comparisons. These are CPU samples, not frame-rate measurements ([docs/PERFORMANCE.md](docs/PERFORMANCE.md)) |
 | Remove apps from your Mac (one or several per stick, menu only or with their files) | **Works in the car** |
 | Install apps from your Mac (SyncExtPack apps, AutoKit with the sound fix) | **Works in the car**: the full app pack, and single apps (Video Player) |
 | CarPlay starts by itself when you plug in the phone | Being investigated: diagnostic jobs ready (`snapshot`, `logger`), the auto-start itself not built yet ([plan](docs/P2-AA-AUTOSTART-PLAN.md)) |
@@ -251,7 +257,7 @@ python3 -m s2am native build                                         # build the
 python3 -m s2am job native-hello --serial YOURSERIAL                 # prove compiled code runs on your SYNC 2
 python3 -m s2am job runner-guard --serial YOURSERIAL                 # fix: no frozen screen after leaving an app
 python3 -m s2am job runner-guard --off --serial YOURSERIAL           # put SyncExtPack's original launcher back
-python3 -m s2am job runner-guard --boost 251 --serial YOURSERIAL     # untried: more processor for CarPlay's video
+python3 -m s2am job runner-guard --boost 250 --measure 600 --serial YOURSERIAL  # untried priority comparison
 python3 -m s2am job runner-guard --boost off --serial YOURSERIAL     # the guard stays, the boost goes
 python3 -m s2am job logger --native --serial YOURSERIAL              # also record AutoKit's window messages
 python3 -m s2am job logger --drive --serial YOURSERIAL               # while you drive, up to 4 h: load, files, Ford's screens

@@ -1,15 +1,20 @@
 # Independent decoder and clock inspection
 
-The November 16 decoder return contains the correct consumed package but no job report.
-AutoKit reportedly still works; that does not identify which decoder files are installed.
-The new `decoder-inspect` job collects that evidence independently of MortRunner.
+The `decoder-inspect` job collects active, backup and staged files independently of MortRunner.
+Its first car run on November 16 completed and verified that the active decoder was still stock.
+The later revised decoder installation also returned the correct consumed package without a
+job report; AutoKit works, but its current file identity remains unresolved. A fresh inspection
+targets that later attempt. See the [current development update](PROGRESS-2026-11-16.md).
 
 ## Why a new launch path is needed
 
 Inspection of the shipped binaries found two gaps: UpdateService ignores POST_APP creation
 failure and child exit status, and MortRunner silently returns zero when its script is missing
 or MortScript cannot start. Thus a success screen and `installed.bin` do not prove the swap
-script ran. These are possible explanations, not an established cause of this return.
+script ran. Separately, analysis of the exact packaged MortScript interpreter confirmed that
+`DelTree` on a missing child can delete the empty report directory. The generator now guards
+those calls and recreates the report directory. Neither defect identifies the files currently
+installed; direct file evidence is still required.
 
 The new job selects `s2amdiag.exe` directly as POST_APP. It first leaves a native-entry trace
 in its own new job folder, locates exactly one USB pending record, and creates a fresh report.
@@ -47,7 +52,10 @@ After the file evidence is flushed, a separate `s2amclock.exe` child loads the i
 `\Windows\ceddk.dll` and calls its ordinary `MmMapIoSpace`/`MmUnmapIoSpace` exports.
 [Microsoft documents these mapping APIs](https://learn.microsoft.com/en-us/previous-versions/windows/embedded/aa447863(v=msdn.10));
 the candidate's user-space CEDDK implementation was also inspected. Successful access on the
-actual Ford CE6 image is unverified. Mapping denial is a useful explicit result.
+actual Ford CE6 image failed in the first car run with error 87 at the PLL1 mapping call.
+No register values were returned. This failure is separate from the successful decoder-file
+capture. A temporary user-mode driver prototype is the next clock-access experiment; it is
+not part of this inspection package.
 
 The helper samples only fixed PLL1 and CCM registers at physical bases `0x83f80000` and
 `0x73fd4000`, using [Freescale's register definitions](https://github.com/torvalds/linux/blob/v3.0/arch/arm/mach-mx5/crm_regs.h).

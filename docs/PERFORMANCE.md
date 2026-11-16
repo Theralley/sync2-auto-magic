@@ -12,66 +12,67 @@ samples while CarPlay ran. The details are in [P1-TESTLOG.md](P1-TESTLOG.md), 20
 
 ## Next useful tests, November 16
 
-**First: the rebuilt decoder without NEON, at the existing 640×384/10/software setting.**
-The candidate and its matching undo are available locally; their twelve payload-file hashes
-were checked again on November 16. Both belong to the current installer window: use them
-before **November 17, 10:35 Swedish time**. Rewriting the sticks does not extend that deadline.
-Neither has a recorded successful car test. The earlier decoder test was displaced by clock
-diagnostics, so the historical "on the sticks now" entry is not current readiness evidence.
+The [development update](PROGRESS-2026-11-16.md) brings the decoder, priority and clock tracks
+up to date. The immediate next step is **identify the decoder actually installed**, followed by
+separate decoder and scheduling comparisons at the existing **640×384/10/software** setting.
 
-**Prepared again November 16:** the red SYNC stick was loaded with `dec-edc8`, verified after
-unmount/remount and safely ejected. The 2 GB stick's matching `dec-393a` undo and pending
-record matched their originals; its instructions were updated and it was safely ejected.
-Both sticks were backed up first. This readiness check is not a successful car run.
+The first native inspection completed in the car and found stock active DLLs, stock backups
+and correctly staged candidate DLLs. The revised decoder installation then returned without
+its report again. The same Maps/Spotify test worked, but the owner noticed no improvement.
+Neither the installer success message nor that subjective result proves which DLLs are active.
 
-**Returned November 16, unresolved:** `dec-edc8` imported as `processed-no-report`. Its
-`installed.bin` matches the prepared pack byte for byte, but the entire job report directory
-is absent. The two-line installer log also occurs in successful jobs; it does not establish
-script completion. Launcher/interpreter hashes and script structure pass comparison with the
-successful clock job. No deterministic package defect was found. Preserve the return and
-establish the observed screen/error and current AutoKit behavior before a fresh attempt;
-neither installation success nor an unchanged car can be inferred from the missing report.
+Independent source and exact-binary analysis confirmed a reporting defect: MortScript's
+`DelTree` can remove the empty parent report folder when a requested child does not exist.
+Cleanup now checks child existence and recreates the report directory. A fresh
+[read-only native inspection](DECODER-INSPECTION.md) targets the latest installation. It does
+not repeat the swap or apply a priority/frequency change. The matching decoder undo remains
+available. Current prepared test packages expire **November 17, 10:35 Swedish time**; rewriting
+the sticks does not extend that window.
 
-**Next diagnostic prepared:** `20261116-182444-decdiag-4e4c` starts a native collector directly,
-captures the actual active/backup/staged files and independently tests a fresh harmless script.
-It also attempts a fixed PLL1/CCM snapshot through the installed CEDDK APIs. See the
-[inspection and car procedure](DECODER-INSPECTION.md). This replaces the consumed package
-on the red stick; it is not another decoder swap or an overclock. Car validation is pending.
+### Verify the custom decoder
 
-Once that failure is understood, the trial establishes loading, correct picture/audio and a possible visible benefit:
+The non-NEON candidate uses about 20% fewer emulated instructions on the existing test material
+with matching pictures. That is not a measured CarPlay speed improvement. After active files
+are identified and the install/report path is verified, compare original and candidate:
 
-1. Restart SYNC. With the original decoder, use the same phone, adapter and Maps/Spotify sequence for
-   5–8 minutes after a two-minute warm-up. Note picture lag, repeated tap response and audio
-   interruptions. Keep 640×384, 10 fps, software decoding and the existing thread priority.
-2. Restart SYNC, leave AutoKit closed, install the decoder test and wait for completion.
-   Repeat the two-minute warm-up, then run the same sequence with the new decoder. Change
-   no other setting in this comparison.
-3. Check the picture, sound, exit and reopening, and access to Ford's screens. Existing
-   microphone/parking-popup failures are baseline issues, not newly passing checks.
-   If AutoKit fails to load or the result regresses, restart SYNC and use the matching undo.
+1. Restart SYNC, warm up for two minutes, then use the same phone, adapter and Maps/Spotify
+   sequence for 5–8 minutes. Keep resolution, frame rate, software decoding and priority fixed.
+2. Verify the candidate DLLs after installation, then repeat the same restart, warm-up and
+   workload. Record picture lag, repeated tap response and audio interruptions.
+3. Check picture, sound, exit/reopening and access to Ford's screens. Existing microphone and
+   parking-popup failures remain baseline issues. If the candidate regresses, use its matching undo.
 
-The existing decoder package **does not start a load logger**. Quantitative CPU comparison
-requires separate `logger --load` runs and collection for A and B. Its 10-second CPU samples
-do not measure frame rate or tap latency; repeated filmed interactions can measure those.
-An emulator instruction reduction is not a measured percentage improvement in the car.
+The decoder package does not itself start a load logger. Use matched load recordings for a
+quantitative comparison. CPU sampling does not measure frame rate or tap latency; film repeated
+interactions for those. Test 800×480 separately if a repeatable benefit is established.
 
-If B shows a repeatable improvement, test 800×480 as a separate change. A small or inconsistent
-difference needs repeated matched measurements before keeping the new build. Do not change
-resolution and decoder together and attribute the combined result to the decoder.
+### Compare foreground priority
 
-**Then:** independently test the guarded priority boost to 251, verifying both the requested
-priority and restoration when CarPlay loses the foreground. It reallocates CPU time and has
-not been tried in the car. NEON needs a separate correctness/context-switch probe before a
-NEON decoder can be called ready; no separate NEON test binary was located in this audit.
-NXP documents [NEON-optimized multimedia codecs for i.MX51](https://www.nxp.com/docs/en/supporting-information/ANDROID.pdf),
-but that does not verify this Ford image's runtime support or AutoKit's detection.
-The [candidate's integrated D0–D31 save/restore routines](CLOCK-FIRMWARE-ANALYSIS-2026-11-16.md#neon-follow-up-evidence)
-give a concrete basis for that probe, without replacing the car test.
+The existing 640×384 trace puts the busiest AutoKit thread at priority 252, with about 36% CPU
+on average. The main Desktop thread used about 17% at priority 250, sometimes 248. The next
+comparison targets **250**, rather than the previously proposed 251, using the foreground guard.
 
-The hardware-decoder flag and 800×480/10 fps have already been tried without a CPU-load
-improvement; repeating those settings unchanged is not the next experiment. Overclocking
-remains separate [platform work](CLOCK-FIRMWARE-ANALYSIS-2026-11-16.md), with no installable
-CPU-frequency trial yet.
+`runner-guard --boost 250 --measure 600` can request a ten-minute load recording. Compare it
+with boost disabled under the same decoder/settings/workload. Check the guard log for both
+raising and restoring priority when AutoKit loses the foreground; `--boost off` disables the
+boost. Ford's required processes remain running. No car result for this comparison exists yet.
+
+The sampler runs below normal priority and may be delayed by boosted runnable work. Check
+actual timestamps and missing intervals before comparing CPU samples; the intended ten-second
+cadence is not guaranteed. More CPU share does not by itself prove better responsiveness.
+
+### NEON and clock work
+
+NEON needs a separate instruction/context-switch probe before a NEON decoder trial.
+NXP documents [NEON multimedia support for i.MX51](https://www.nxp.com/docs/en/supporting-information/ANDROID.pdf),
+and the [candidate's D0–D31 context routines](CLOCK-FIRMWARE-ANALYSIS-2026-11-16.md#neon-follow-up-evidence)
+provide a basis for the probe. Neither establishes live Ford compatibility or AutoKit detection.
+
+The hardware-decoder flag and 800×480/10 have already been tried without a CPU-load improvement.
+The standalone clock reader failed at mapping with error 87. A separate temporary read-only
+clock-driver prototype has passed host tests and a server build; it still needs review and car
+validation. No installable CPU-frequency trial is available. See the
+[clock research goal](PROGRESS-2026-11-16.md#goal-3-a-controlled-overclock-experiment).
 
 ## What we know
 
@@ -151,8 +152,8 @@ given above; this table also preserves the already tested options:
 | Hardware decoding | The video leaves the processor. The decoding is the biggest single cost, and the chip has a hardware decoder | `autokit-config --decoder hardware` (exists). **Tried in the car 2026-11-15: no effect on the load** (`akcfg-9b10`, measured with `akcfg-f021`; undo `akcfg-da1b`) | Its code path was made for other chips, so the picture may go black. `--restore` undoes it |
 | Frame rate | Requests 10 frames per second instead of 15 | `autokit-config --screen 800,480,10`. **Tried November 15: no measured CPU-load improvement**; actual frame admission/queueing was not measured | Some audio interruptions were observed; no proven decoding-cost reduction |
 | NEON | AutoKit's faster path, if its check is what holds it back | Not known yet: first find out how AutoKit checks | Unknown |
-| AutoKit's priority | AutoKit's video (252) runs at 251 or 250 while CarPlay is alone on the screen: 251 is still below `Desktop.exe` (250), 250 shares with it. Never above it: a busy video there could keep Ford's screens from ever coming up, and their coming up is what ends the boost. Back to 252 as soon as SYNC or anything else is on the screen; JasonACT's runner on XDA sets thread priority too | `runner-guard --boost 251` (written 2026-11-15, **not tried in the car**); `--boost off` undoes it, `--off` too | Can slow Ford's screens behind it, so it needs testing with calls, climate and the parking sensors. Try 251 first, then 250 |
-| A faster decoder build | AutoKit's three decoder files, FFmpeg 2.6.9, built again for this processor, without NEON. In an emulator, AutoKit's own build needs about 1.25 times as many instructions per frame. The picture is identical on the test videos. The decoder files themselves are not in this repository yet | `s2am job decoder --from FOLDER` (written 2026-11-15, **not tried in the car**). AutoKit must be closed: restart SYNC and insert the stick before opening AutoKit. Build the undo stick at the same time | AutoKit does not start, or crashes. `s2am job decoder --restore JOB` undoes it. If a run is cut short, AutoKit may not start until the undo stick has run |
+| AutoKit's priority | AutoKit's video (252) runs at 251 or 250 while CarPlay is alone on the screen: 251 is still below `Desktop.exe` (250), 250 shares with it. Never above it: a busy video there could keep Ford's screens from ever coming up, and their coming up is what ends the boost. Back to 252 as soon as SYNC or anything else is on the screen; JasonACT's runner on XDA sets thread priority too | `runner-guard --boost 250 --measure 600` (**next comparison; not tried in the car**); `--boost off` undoes it, `--off` too | Can slow Ford's screens behind it, so it needs testing with calls, climate and the parking sensors. Compare boost off against 250 at the same decoder and resolution |
+| A faster decoder build | AutoKit's three decoder files, FFmpeg 2.6.9, built again for this processor, without NEON. In an emulator, AutoKit's own build needs about 1.25 times as many instructions per frame. The picture is identical on the test videos. The decoder files themselves are not in this repository yet | `s2am job decoder --from FOLDER` (**installation attempted; latest active DLL identity and performance unverified**). AutoKit must be closed: restart SYNC and insert the stick before opening AutoKit. Build the undo stick at the same time | AutoKit does not start, or crashes. `s2am job decoder --restore JOB` undoes it. If a run is cut short, AutoKit may not start until the undo stick has run |
 | Flash quality | Ford's screens drawn at a lower quality setting, which may cost less to draw | New, a small patch in the frame | Rougher text. Whether Ford's player honours the setting is not known |
 | Lighter screens | Fewer and simpler things to draw | sync-redesign, plan step S7 | Slow work, screen by screen |
 
