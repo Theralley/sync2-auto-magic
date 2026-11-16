@@ -97,7 +97,10 @@ REGISTRY_SHIM = r'''
 static const char *mode;
 static DWORD error;
 static WCHAR dll_path[MAX_PATH] = L"\\SyncExtendedPack\\_s2am\\jobs\\test-run\\s2amclkdrv.dll";
+static WCHAR exe_path[MAX_PATH] = L"\\SyncExtendedPack\\_s2am\\jobs\\test-run\\s2amclockctl.exe";
 static const WCHAR key_path[] = L"Drivers\\S2AMClock";
+/* Lets a test invalidate the driver at an exact state read, between two loads. */
+static void (*state_hook)(void);
 /* Independent fixture: do not let a mistaken production resource range/type
  * change both the implementation and its expected registry bytes. */
 static const DWORD fixture_user_mode=0x10,fixture_internal=0,fixture_bus=0;
@@ -117,11 +120,13 @@ static int ismode(const char *s) { return !strcmp(mode,s); }
 DWORD GetLastError(void) { return error; }
 void SetLastError(DWORD e) { error=e; }
 LONG InterlockedCompareExchange(volatile LONG *p,LONG x,LONG c) {
+    if(state_hook && !x && !c) state_hook();
     return __sync_val_compare_and_swap(p,c,x);
 }
 LONG InterlockedExchange(volatile LONG *p,LONG x) { return __sync_lock_test_and_set(p,x); }
 DWORD GetModuleFileNameW(HMODULE module,LPWSTR out,DWORD count) {
-    const WCHAR *path=module ? dll_path : L"\\SyncExtendedPack\\_s2am\\jobs\\test-run\\s2amclockctl.exe";
+    const WCHAR *path=module ? dll_path : exe_path;
+    if(module && ismode("relative-dll")) wcscpy(dll_path,L"s2amclkdrv.dll");
     assert(wcslen(path)<count); wcscpy(out,path); return (DWORD)wcslen(path);
 }
 HKEY OpenDeviceKey(LPCWSTR active) {
@@ -149,6 +154,8 @@ LONG RegQueryValueExW(HKEY key,LPCWSTR name,DWORD *reserved,DWORD *type,BYTE *ou
         assert(*size>=length); memcpy(out,expected,length); *size=length; *type=REG_SZ;
         if(ismode("host-proc-mismatch")) out[0]='x';
         if(ismode("host-prefix-type")) *type=REG_MULTI_SZ;
+        if(ismode("host-proc-unterminated")) *size=length-sizeof(WCHAR);
+        if(ismode("host-proc-long")) { memset(out+length,0,sizeof(WCHAR)); *size=length+sizeof(WCHAR); }
         return 0;
     }
     assert(key==(HKEY)(intptr_t)11);
@@ -158,6 +165,8 @@ LONG RegQueryValueExW(HKEY key,LPCWSTR name,DWORD *reserved,DWORD *type,BYTE *ou
         if(ismode("missing-value") && i==5) return ERROR_FILE_NOT_FOUND;
         if(*size<length) return ERROR_INSUFFICIENT_BUFFER;
         memcpy(out,value,length); *size=length; *type=fixture_values[i].type;
+        if(ismode("bad-dll-path") && i==0) out[sizeof(WCHAR)]='X';
+        if(ismode("dll-path-unterminated") && i==0) *size-=sizeof(WCHAR);
         if(ismode("bad-type") && i==2) *type=REG_SZ;
         if(ismode("bad-flags") && i==2) *(DWORD *)out=0x12;
         if(ismode("bad-membase") && i==5) out[0]='9';
@@ -183,7 +192,7 @@ LONG RegEnumKeyExW(HKEY key,DWORD i,LPWSTR name,DWORD *size,DWORD *r,LPWSTR cls,
 }
 '''
 
-DRIVER_SHIM = REGISTRY_SHIM + r'''
+DRIVER_FAKES = r'''
 #include <pthread.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -196,7 +205,10 @@ BOOL DllMain(HINSTANCE,DWORD,LPVOID);
 static void *regions[2];
 static unsigned maps,unmaps,translates;
 static volatile LONG blocked,release_map;
-static DWORD device,stream;
+static int blocking(void) {
+    return ismode("concurrent") || ismode("preclose") || ismode("predeinit") ||
+           ismode("close-busy") || ismode("deinit-busy");
+}
 static int64_t physicals[2]={0x83f80000,0x73fd4000};
 static BOOL translate(int type,ULONG bus,LARGE_INTEGER address,ULONG *space,LARGE_INTEGER *physical) {
     assert(type==0 && bus==0 && *space==0);
@@ -212,7 +224,7 @@ static LPVOID map_io(LARGE_INTEGER address,ULONG length,BYTE cached) {
     assert(index<2 && address.QuadPart==physicals[index] && !cached);
     assert(length==(index ? 0x58 : 0x30)); printf("map %u\n",index);
     if(ismode("map-fail") || (index==1 && ismode("partial-map"))) return NULL;
-    if(index==0 && (ismode("concurrent") || ismode("preclose") || ismode("predeinit"))) {
+    if(index==0 && blocking()) {
         __sync_lock_test_and_set(&blocked,1);
         while(!release_map) usleep(1000);
     }
@@ -240,6 +252,18 @@ FARPROC GetProcAddress(HMODULE module,LPCWSTR name) {
     assert(!wcscmp(name,L"MmUnmapIoSpace")); return (FARPROC)(void *)unmap_io;
 }
 BOOL FreeLibrary(HMODULE module) { assert(module==(HMODULE)(intptr_t)1); puts("free"); return !ismode("free-fail"); }
+'''
+
+DRIVER_SHIM = REGISTRY_SHIM + DRIVER_FAKES + r'''
+static DWORD device,stream;
+static unsigned state_reads,abort_after;
+static int in_hook;
+/* Each sampled register is preceded by two state reads (device, then open).
+ * PreClose at read 2k+1 after both mappings exist stops after exactly k loads. */
+static void abort_hook(void) {
+    if(maps<2 || in_hook || !abort_after) return;
+    if(++state_reads==abort_after) { in_hook=1; assert(SCK_PreClose(stream)); in_hook=0; }
+}
 static SCK_SNAPSHOT snap;
 static void *snapshot_thread(void *unused) {
     DWORD done=0; (void)unused;
@@ -251,14 +275,21 @@ int main(int argc,char **argv) {
     assert(argc==2); mode=argv[1]; setvbuf(stdout,NULL,_IONBF,0);
     assert(sizeof(DWORD)==4 && sizeof(SCK_SNAPSHOT)==1056);
     assert(DllMain((HINSTANCE)(intptr_t)3,DLL_PROCESS_ATTACH,NULL));
+    assert(!SCK_Init(NULL,0));
+    assert(!SCK_Init(L"Drivers\\Active\\42",1));
     device=SCK_Init(L"Drivers\\Active\\42",0);
     if(!device) { assert(!maps); puts("init-denied"); return 0; }
+    assert(!SCK_Init(L"Drivers\\Active\\42",0));
     assert(!maps && !translates);
+    assert(!SCK_Open(device,GENERIC_READ,FILE_SHARE_READ));
     assert(!SCK_Open(device,GENERIC_WRITE,0));
     assert(!SCK_Open(device,GENERIC_READ|GENERIC_WRITE,0));
     assert(!SCK_Open(device+1,GENERIC_READ,0));
     stream=SCK_Open(device,GENERIC_READ,0); assert(stream && !maps);
     assert(!SCK_Open(device,GENERIC_READ,0));
+    if(ismode("abort-read-5")) abort_after=11;
+    if(ismode("abort-read-64")) abort_after=129;
+    state_hook=abort_hook;
     if(ismode("invalid-ioctl")) {
         assert(!SCK_IOControl(stream,SCK_IOCTL_SNAPSHOT+4,NULL,0,(BYTE *)&snap,sizeof(snap),&done));
         assert(done==0);
@@ -273,20 +304,22 @@ int main(int argc,char **argv) {
         assert(SCK_Write(stream,&snap,sizeof(snap))==(DWORD)-1);
         assert(SCK_Seek(stream,0,0)==(DWORD)-1); assert(!maps);
         puts("invalid-denied");
-    } else if(ismode("concurrent") || ismode("preclose") || ismode("predeinit")) {
+    } else if(blocking()) {
         assert(!pthread_create(&thread,NULL,snapshot_thread,NULL));
         while(!blocked) usleep(1000);
         assert(!SCK_IOControl(stream,SCK_IOCTL_SNAPSHOT,NULL,0,(BYTE *)&second,sizeof(second),&done));
         assert(GetLastError()==ERROR_BUSY && !unmaps);
         if(ismode("preclose")) assert(SCK_PreClose(stream));
         if(ismode("predeinit")) assert(SCK_PreDeinit(device));
+        if(ismode("close-busy")) { assert(!SCK_Close(stream)); assert(GetLastError()==ERROR_BUSY); }
+        if(ismode("deinit-busy")) { assert(!SCK_Deinit(device)); assert(GetLastError()==ERROR_BUSY); }
         assert(!unmaps);
         __sync_lock_test_and_set(&release_map,1); assert(!pthread_join(thread,NULL));
-        printf("result %u %u %u\n",snap.status,snap.count,snap.error);
+        printf("result %u %u %u stage %u\n",snap.status,snap.count,snap.error,snap.stage);
     } else {
         snapshot_thread(NULL);
-        assert(snap.magic==SCK_MAGIC && snap.version==1 && snap.bytes==sizeof(snap));
-        printf("result %u %u %u\n",snap.status,snap.count,snap.error);
+        assert(snap.magic==SCK_MAGIC && snap.version==1 && snap.bytes==sizeof(snap) && !snap.reserved);
+        printf("result %u %u %u stage %u\n",snap.status,snap.count,snap.error,snap.stage);
         for(i=0;i<snap.count;i++) printf("R|%u|%u|%u|%u\n",snap.reads[i].pass,snap.reads[i].block,snap.reads[i].offset,snap.reads[i].value);
     }
     assert(SCK_PreClose(stream)); assert(SCK_Close(stream));
@@ -298,8 +331,12 @@ int main(int argc,char **argv) {
 }
 '''
 
-CONTROLLER_SHIM = REGISTRY_SHIM + r'''
+CONTROLLER_REST = r'''
 static char journal[20000],durable[20000];
+static WCHAR report_path[MAX_PATH] = L"\\SyncExtendedPack\\_s2am\\jobs\\test-run\\clock-user-driver.txt";
+#ifdef INTEGRATED
+static DWORD driver_device,driver_stream;
+#endif
 static size_t used,dll_position;
 static unsigned created,values,activated,deactivated,deleted,ioctls;
 static HANDLE activation=(HANDLE)(intptr_t)55,stream=(HANDLE)(intptr_t)56;
@@ -315,9 +352,13 @@ HANDLE CreateFileW(LPCWSTR path,DWORD access,DWORD share,void *security,DWORD di
     }
     if(!wcscmp(path,L"SCK4:")) {
         before("B|stream-open\r\n"); assert(access==GENERIC_READ && !share && disposition==OPEN_EXISTING && held);
-        puts("stream-open"); return ismode("stream-open-fail") ? INVALID_HANDLE_VALUE : stream;
+        puts("stream-open"); if(ismode("stream-open-fail")) return INVALID_HANDLE_VALUE;
+#ifdef INTEGRATED
+        driver_stream=SCK_Open(driver_device,access,share); if(!driver_stream) return INVALID_HANDLE_VALUE;
+#endif
+        return stream;
     }
-    assert(!wcscmp(path,L"\\SyncExtendedPack\\_s2am\\jobs\\test-run\\clock-user-driver.txt"));
+    assert(!wcscmp(path,report_path));
     assert(access==GENERIC_WRITE && share==FILE_SHARE_READ && disposition==CREATE_NEW);
     return ismode("journal-exists") ? INVALID_HANDLE_VALUE : (HANDLE)(intptr_t)21;
 }
@@ -354,7 +395,13 @@ BOOL FlushFileBuffers(HANDLE h) {
 }
 BOOL CloseHandle(HANDLE h) {
     assert(h!=activation);
-    if(h==stream) { before("B|stream-close\r\n"); puts("stream-close"); return !ismode("stream-close-fail"); }
+    if(h==stream) {
+        before("B|stream-close\r\n"); puts("stream-close");
+#ifdef INTEGRATED
+        if(!SCK_PreClose(driver_stream) || !SCK_Close(driver_stream)) return 0;
+#endif
+        return !ismode("stream-close-fail");
+    }
     if(h==(HANDLE)(intptr_t)20) { held=0; puts("dll-close"); return !ismode("dll-close-fail"); }
     assert(h==(HANDLE)(intptr_t)21); return !ismode("journal-close-fail");
 }
@@ -381,14 +428,21 @@ LONG RegDeleteKeyW(HKEY root,LPCWSTR path) {
 HANDLE ActivateDeviceEx(LPCWSTR path,LPCVOID reg,DWORD count,LPVOID param) {
     assert(!wcscmp(path,key_path) && !reg && !count && !param && held && values==FIXTURE_VALUE_COUNT);
     before("B|activate\r\n"); ++activated; puts("activate");
-    if(ismode("activate-crash")) exit(91);
+    if(ismode("activate-crash")) { printf("DURABLE\n%s",durable); exit(91); }
     if(ismode("activate-null")) return NULL;
     if(ismode("activate-invalid")) return INVALID_HANDLE_VALUE;
+#ifdef INTEGRATED
+    assert(DllMain((HINSTANCE)(intptr_t)3,DLL_PROCESS_ATTACH,NULL));
+    driver_device=SCK_Init(L"Drivers\\Active\\42",0); if(!driver_device) return NULL;
+#endif
     return activation;
 }
 BOOL DeactivateDevice(HANDLE h) {
     assert(h==activation && held); before("B|deactivate\r\n"); puts("deactivate");
     if(ismode("deactivate-fail")) return 0;
+#ifdef INTEGRATED
+    if(!SCK_PreDeinit(driver_device) || !SCK_Deinit(driver_device)) return 0;
+#endif
     ++deactivated; return 1;
 }
 static BOOL info(DEVMGR_DEVICE_INFORMATION *out,int from_file) {
@@ -398,6 +452,7 @@ static BOOL info(DEVMGR_DEVICE_INFORMATION *out,int from_file) {
     if(ismode(from_file ? "file-handle-mismatch" : "device-handle-mismatch")) out->hDevice=(HANDLE)(intptr_t)57;
     if(ismode(from_file ? "file-key-mismatch" : "device-key-mismatch")) out->szDeviceKey[0]='X';
     if(ismode("legacy-invalid")) wcscpy(out->szLegacyName,L"COM4:");
+    if(ismode("legacy-nondigit")) out->szLegacyName[3]='x';
     if(ismode("legacy-unterminated")) out->szLegacyName[5]='X';
     if(ismode("key-unterminated")) { unsigned i; for(i=0;i<MAX_PATH;i++) out->szDeviceKey[i]='A'; }
     if(ismode("info-size-mismatch")) out->dwSize=0;
@@ -407,9 +462,13 @@ static BOOL info(DEVMGR_DEVICE_INFORMATION *out,int from_file) {
 BOOL GetDeviceInformationByDeviceHandle(HANDLE h,DEVMGR_DEVICE_INFORMATION *out) { assert(h==activation); before("B|activation-identity\r\n"); return info(out,0); }
 BOOL GetDeviceInformationByFileHandle(HANDLE h,DEVMGR_DEVICE_INFORMATION *out) { assert(h==stream); before("B|stream-identity\r\n"); return info(out,1); }
 BOOL DeviceIoControl(HANDLE h,DWORD code,void *input,DWORD in_size,void *output,DWORD out_size,DWORD *done,void *overlap) {
-    SCK_SNAPSHOT *s=output; DWORD pass,block,i; assert(h==stream && code==SCK_IOCTL_SNAPSHOT && !input && !in_size && !overlap);
-    assert(out_size==sizeof(*s) && held); before("B|snapshot\r\n"); ++ioctls; puts("snapshot");
+    assert(h==stream && code==SCK_IOCTL_SNAPSHOT && !input && !in_size && !overlap);
+    assert(out_size==sizeof(SCK_SNAPSHOT) && held); before("B|snapshot\r\n"); ++ioctls; puts("snapshot");
     if(ismode("ioctl-fail")) return 0;
+#ifdef INTEGRATED
+    return SCK_IOControl(driver_stream,code,input,in_size,output,out_size,done);
+#else
+    SCK_SNAPSHOT *s=output; DWORD pass,block,i;
     memset(s,0,sizeof(*s)); s->magic=SCK_MAGIC; s->version=1; s->bytes=sizeof(*s); s->stage=SCK_STAGE_COMPLETE;
     for(pass=1;pass<=2;pass++) for(block=1;block<=3;block++) for(i=0;i<(block==2 ? 10U : 11U);i++) {
         SCK_READING *r=&s->reads[s->count++]; r->pass=pass; r->block=block;
@@ -422,7 +481,13 @@ BOOL DeviceIoControl(HANDLE h,DWORD code,void *input,DWORD in_size,void *output,
     if(ismode("snapshot-bad-order")) s->reads[3].pass=2;
     if(ismode("snapshot-short")) --*done;
     if(ismode("snapshot-failed")) { s->status=1; s->stage=SCK_STAGE_MAP_PLL; s->error=87; s->count=0; }
+    if(ismode("snapshot-bad-version")) s->version=2;
+    if(ismode("snapshot-bad-bytes")) s->bytes-=4;
+    if(ismode("snapshot-bad-stage")) s->stage=SCK_STAGE_READ;
+    if(ismode("snapshot-error")) s->error=5;
+    if(ismode("snapshot-reserved")) s->reserved=1;
     return 1;
+#endif
 }
 int WinMain(HINSTANCE,HINSTANCE,LPWSTR,int);
 int main(int argc,char **argv) {
@@ -430,11 +495,35 @@ int main(int argc,char **argv) {
     assert(argc>=2); mode=argv[1];
     for(i=0;argv[argc-1][i] && i<255;i++) command[i]=(WCHAR)argv[argc-1][i]; command[i]=0;
     if(argc==2) wcscpy(command,L"test-run");
+    /* The executable normally lives in the directory named by its run ID, so a
+     * rejected ID is rejected by the ID rules themselves, not by a path mismatch. */
+    if(!ismode("exe-elsewhere")) {
+        swprintf(exe_path,MAX_PATH,L"\\SyncExtendedPack\\_s2am\\jobs\\%ls\\s2amclockctl.exe",command);
+        swprintf(dll_path,MAX_PATH,L"\\SyncExtendedPack\\_s2am\\jobs\\%ls\\s2amclkdrv.dll",command);
+        swprintf(report_path,MAX_PATH,L"\\SyncExtendedPack\\_s2am\\jobs\\%ls\\clock-user-driver.txt",command);
+    }
     result=WinMain(NULL,NULL,command,0);
     printf("COUNTS %u %u %u %u %u %u\n",created,values,activated,deactivated,deleted,ioctls);
     printf("JOURNAL\n%s",journal); return result;
 }
 '''
+
+CONTROLLER_SHIM = REGISTRY_SHIM + CONTROLLER_REST
+# The real driver behind the controller's Device Manager fakes: activation runs
+# SCK_Init, the stream open runs SCK_Open and the IOCTL reaches SCK_IOControl.
+INTEGRATED_SHIM = REGISTRY_SHIM + DRIVER_FAKES + "#define INTEGRATED 1\n" + CONTROLLER_REST
+CC = ["cc", "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter", "-Wno-unused-const-variable"]
+PLL_OFFSETS = (0, 4, 8, 12, 16, 28, 32, 36, 40, 44)
+CCM_OFFSETS = (0, 8, 12, 16, 20, 24, 28, 32, 72, 76, 84)
+
+
+def expected_reads(names):
+    """The 64 records the fake MMIO pages must produce, in wire order."""
+    lines = []
+    for sample in (1, 2):
+        for block, offsets, bias in ((1, CCM_OFFSETS, 0x1000), (2, PLL_OFFSETS, 0), (3, CCM_OFFSETS, 0x1000)):
+            lines.extend(f"R|{sample}|{names[block]}|{offset}|{0xf0000000+bias+offset}" for offset in offsets)
+    return lines
 
 
 @unittest.skipUnless(shutil.which("cc"), "needs a host C compiler")
@@ -466,14 +555,9 @@ class NativeClockDriver(unittest.TestCase):
 
     def test_exact_bracketed_reads_from_readonly_fake_mmio(self):
         output = self.run_driver("ok")
-        expected = []
-        pll = (0, 4, 8, 12, 16, 28, 32, 36, 40, 44)
-        ccm = (0, 8, 12, 16, 20, 24, 28, 32, 72, 76, 84)
-        for sample in (1, 2):
-            for block, offsets, bias in ((1, ccm, 0x1000), (2, pll, 0), (3, ccm, 0x1000)):
-                expected.extend(f"R|{sample}|{block}|{offset}|{0xf0000000+bias+offset}" for offset in offsets)
+        expected = expected_reads({1: 1, 2: 2, 3: 3})
         self.assertEqual([line for line in output.splitlines() if line.startswith("R|")], expected)
-        self.assertIn("result 0 64 0", output)
+        self.assertIn("result 0 64 0 stage 9\n", output)
         self.assertLess(output.index("unmap 1"), output.index("unmap 0"))
 
     def test_rejects_unknown_and_malformed_requests_without_loading(self):
@@ -482,17 +566,20 @@ class NativeClockDriver(unittest.TestCase):
         self.assertNotIn("load", output)
 
     def test_registry_is_an_exact_typed_contract(self):
-        for mode in ("openkey-null", "openkey-invalid", "missing-value", "bad-type", "bad-flags", "bad-membase", "bad-memlen", "missing-double-nul", "bad-bus", "key-close-fail", "extra-value", "subkey"):
+        for mode in ("openkey-null", "openkey-invalid", "missing-value", "bad-type", "bad-flags", "bad-membase", "bad-memlen", "missing-double-nul", "bad-bus", "key-close-fail", "extra-value", "subkey",
+                     "bad-dll-path", "dll-path-unterminated", "relative-dll"):
             with self.subTest(mode=mode):
                 output = self.run_driver(mode)
                 self.assertIn("init-denied", output)
                 self.assertNotIn("load", output)
 
     def test_mapping_and_translation_failures_do_not_sample(self):
-        for mode in ("load-fail", "missing-export", "translate-fail", "translate-space", "translate-address", "map-fail", "partial-map"):
+        for mode, stage in (("load-fail", 1), ("missing-export", 2), ("translate-fail", 3), ("translate-space", 3),
+                            ("translate-address", 3), ("map-fail", 4), ("partial-map", 6)):
             with self.subTest(mode=mode):
                 output = self.run_driver(mode)
                 self.assertIn("result 1 0", output)
+                self.assertIn(f" stage {stage}\n", output)
                 self.assertNotIn("R|", output)
                 if mode == "partial-map":
                     self.assertIn("unmap 0", output)
@@ -506,7 +593,23 @@ class NativeClockDriver(unittest.TestCase):
                 self.assertIn("unmap 0", output)
 
     def test_library_cleanup_failure_is_not_a_complete_sample(self):
-        self.assertIn("result 1 64", self.run_driver("free-fail"))
+        self.assertIn("result 1 64 0 stage 8\n", self.run_driver("free-fail"))
+
+    def test_invalidation_between_reads_stops_sampling_and_still_unmaps(self):
+        for mode, count in (("abort-read-5", 5), ("abort-read-64", 64)):
+            with self.subTest(mode=mode):
+                output = self.run_driver(mode)
+                self.assertIn(f"result 1 {count} 995 stage 7\n", output)
+                reads = [line for line in output.splitlines() if line.startswith("R|")]
+                self.assertEqual(reads, expected_reads({1: 1, 2: 2, 3: 3})[:count])
+                self.assertLess(output.index("unmap 1"), output.index("unmap 0"))
+
+    def test_close_and_deinit_refuse_a_busy_context_without_unmapping(self):
+        for mode in ("close-busy", "deinit-busy"):
+            with self.subTest(mode=mode):
+                output = self.run_driver(mode)
+                self.assertIn("result 1 0 995 stage 4\n", output)
+                self.assertIn("unmap 0", output)
 
 
 @unittest.skipUnless(shutil.which("cc"), "needs a host C compiler")
@@ -523,6 +626,18 @@ class NativeClockController(unittest.TestCase):
              "-DSCK_EXPECTED_DLL_SIZE=3", '-DSCK_EXPECTED_DLL_SHA256="' + hashlib.sha256(b"abc").hexdigest() + '"',
              "-I", str(cls.work), "-I", str(ROOT / "s2am/native"),
              str(ROOT / "s2am/native/s2amclockctl.c"), str(cls.work / "controller-shim.c"), "-o", str(cls.program)],
+            capture_output=True, text=True,
+        )
+        if result.returncode:
+            raise AssertionError(result.stderr)
+        (cls.work / "integrated-shim.c").write_text(INTEGRATED_SHIM)
+        cls.integrated = cls.work / "integrated"
+        result = subprocess.run(
+            CC + ["-pthread", "-DSCK_EXPECTED_DLL_SIZE=3",
+                  '-DSCK_EXPECTED_DLL_SHA256="' + hashlib.sha256(b"abc").hexdigest() + '"',
+                  "-I", str(cls.work), "-I", str(ROOT / "s2am/native"),
+                  str(ROOT / "s2am/native/s2amclockctl.c"), str(ROOT / "s2am/native/s2amclkdrv.c"),
+                  str(cls.work / "integrated-shim.c"), "-o", str(cls.integrated)],
             capture_output=True, text=True,
         )
         if result.returncode:
@@ -548,8 +663,8 @@ class NativeClockController(unittest.TestCase):
     def tearDownClass(cls):
         shutil.rmtree(cls.work)
 
-    def run_ctl(self, mode="ok", argument=None):
-        command = [str(self.program), mode]
+    def run_ctl(self, mode="ok", argument=None, program=None):
+        command = [str(program or self.program), mode]
         if argument is not None:
             command.append(argument)
         return subprocess.run(command, capture_output=True, text=True, timeout=5)
@@ -567,6 +682,50 @@ class NativeClockController(unittest.TestCase):
                                   "wait": 0, "error": 0, "marker": True})
         self.assertTrue(parsed["complete"])
         self.assertTrue(parsed["stable"])
+
+    def test_real_driver_snapshot_is_accepted_by_real_controller_and_parser(self):
+        result = self.run_ctl(program=self.integrated)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("COUNTS 1 7 1 1 1 1", result.stdout)
+        self.assertTrue(result.stdout.endswith("T|complete\n"))
+        self.assertIn("B|snapshot-result|0|9|0|64\n", result.stdout)
+        self.assertEqual([line for line in result.stdout.splitlines() if line.startswith("R|")],
+                         expected_reads({1: "ccm-before", 2: "pll1", 3: "ccm-after"}))
+        order = [result.stdout.index(marker) for marker in
+                 ("\nactivate\n", "open-key\n", "\nstream-open\n", "\nsnapshot\n", "load\n", "map 0\n",
+                  "map 1\n", "unmap 1\n", "unmap 0\n", "free\n", "\nstream-close\n", "\ndeactivate\n",
+                  "\nkey-delete\n")]
+        self.assertEqual(order, sorted(order))
+        from s2am.clock_snapshot import analyze
+        report = self.work / "integrated-report.txt"
+        report.write_text(result.stdout.split("JOURNAL\n", 1)[1])
+        parsed = analyze(report, {"status": "exited", "exit_valid": True, "exit": 0,
+                                  "wait": 0, "error": 0, "marker": True})
+        self.assertTrue(parsed["complete"])
+        self.assertEqual(parsed["ccm"], {offset: 0xf0001000 + offset for offset in CCM_OFFSETS})
+        self.assertEqual(parsed["pll1"], {offset: 0xf0000000 + offset for offset in PLL_OFFSETS})
+        # The fake pages hold an address pattern, so the handshake register at
+        # offset 72 is nonzero and the parser must not call this snapshot stable.
+        self.assertFalse(parsed["stable"])
+
+    def test_real_driver_sampling_failures_reach_the_controller_as_failed_records(self):
+        for mode, record in (("load-fail", "1|1|0|0"), ("missing-export", "1|2|0|0"), ("translate-fail", "1|3|0|0"),
+                             ("map-fail", "1|4|0|0"), ("partial-map", "1|6|0|0"), ("free-fail", "1|8|0|64")):
+            with self.subTest(mode=mode):
+                result = self.run_ctl(mode, program=self.integrated)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("B|snapshot-result|" + record + "\n", result.stdout)
+                self.assertIn("E|snapshot-record|", result.stdout)
+                self.assertNotIn("R|", result.stdout)
+                self.assertNotIn("T|complete", result.stdout)
+                self.assertIn("COUNTS 1 7 1 1 1 1", result.stdout)
+
+    def test_real_driver_init_refusal_is_an_activation_failure_that_keeps_the_key(self):
+        result = self.run_ctl("openkey-null", program=self.integrated)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("E|activate|", result.stdout)
+        self.assertIn("COUNTS 1 7 1 0 0 0", result.stdout)
+        self.assertNotIn("T|complete", result.stdout)
 
     def test_sha256_known_answers_and_padding_boundaries(self):
         vectors = [b"", b"abc", b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq", b"a" * 1000000]
@@ -590,7 +749,8 @@ class NativeClockController(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout)
 
     def test_registry_failures_or_collisions_never_activate_or_delete(self):
-        for mode in ("key-exists", "key-create-fail", "key-set-fail", "key-flush-fail", "key-close-fail", "bad-type", "bad-flags", "bad-memlen", "missing-double-nul", "bad-bus", "extra-value", "subkey"):
+        for mode in ("key-exists", "key-create-fail", "key-set-fail", "key-flush-fail", "key-close-fail", "bad-type", "bad-flags", "bad-memlen", "missing-double-nul", "bad-bus", "extra-value", "subkey",
+                     "bad-dll-path", "dll-path-unterminated"):
             with self.subTest(mode=mode):
                 result = self.run_ctl(mode)
                 self.assertNotEqual(result.returncode, 0, result.stdout)
@@ -605,7 +765,8 @@ class NativeClockController(unittest.TestCase):
             self.assertIn("E|activate|", result.stdout)
 
     def test_host_configuration_is_verified_before_creating_activation_state(self):
-        for mode in ("host-open-fail", "host-proc-mismatch", "host-prefix-type", "host-close-fail"):
+        for mode in ("host-open-fail", "host-proc-mismatch", "host-prefix-type", "host-close-fail",
+                     "host-proc-unterminated", "host-proc-long"):
             with self.subTest(mode=mode):
                 result = self.run_ctl(mode)
                 self.assertNotEqual(result.returncode, 0, result.stdout)
@@ -613,7 +774,7 @@ class NativeClockController(unittest.TestCase):
                 self.assertNotIn("T|complete", result.stdout)
 
     def test_identity_failures_prevent_any_snapshot(self):
-        for mode in ("device-info-fail", "device-handle-mismatch", "device-key-mismatch", "file-info-fail", "file-handle-mismatch", "file-key-mismatch", "file-name-mismatch", "legacy-invalid", "legacy-unterminated", "key-unterminated", "info-size-mismatch"):
+        for mode in ("device-info-fail", "device-handle-mismatch", "device-key-mismatch", "file-info-fail", "file-handle-mismatch", "file-key-mismatch", "file-name-mismatch", "legacy-invalid", "legacy-unterminated", "key-unterminated", "info-size-mismatch", "legacy-nondigit"):
             with self.subTest(mode=mode):
                 result = self.run_ctl(mode)
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -621,7 +782,8 @@ class NativeClockController(unittest.TestCase):
                 self.assertIn("\ndeactivate\n", result.stdout)
 
     def test_malformed_or_failed_snapshot_has_no_read_records_or_completion(self):
-        for mode in ("ioctl-fail", "snapshot-bad-magic", "snapshot-bad-count", "snapshot-bad-offset", "snapshot-bad-order", "snapshot-short", "snapshot-failed"):
+        for mode in ("ioctl-fail", "snapshot-bad-magic", "snapshot-bad-count", "snapshot-bad-offset", "snapshot-bad-order", "snapshot-short", "snapshot-failed", "snapshot-bad-version", "snapshot-bad-bytes",
+                     "snapshot-bad-stage", "snapshot-error", "snapshot-reserved"):
             with self.subTest(mode=mode):
                 result = self.run_ctl(mode)
                 self.assertNotEqual(result.returncode, 0, result.stdout)
@@ -636,6 +798,20 @@ class NativeClockController(unittest.TestCase):
             self.assertNotIn("T|complete", result.stdout)
             if mode in ("stream-close-fail", "deactivate-fail"):
                 self.assertNotIn("key-delete", result.stdout)
+
+    def test_failed_stream_open_takes_no_snapshot_and_still_cleans_up(self):
+        result = self.run_ctl("stream-open-fail")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("E|stream-open|", result.stdout)
+        self.assertIn("COUNTS 1 7 1 1 1 0", result.stdout)
+        self.assertNotIn("\nstream-close\n", result.stdout)
+        self.assertNotIn("T|complete", result.stdout)
+
+    def test_crash_inside_activation_leaves_the_entered_phase_in_the_flushed_journal(self):
+        result = self.run_ctl("activate-crash")
+        self.assertEqual(result.returncode, 91, result.stdout + result.stderr)
+        self.assertTrue(result.stdout.endswith("B|activate\n"), result.stdout)
+        self.assertNotIn("E|", result.stdout.split("DURABLE\n", 1)[1])
 
     def test_failed_journal_stops_before_next_potentially_blocking_operation(self):
         for mode in ("journal-exists", "journal-write-fail", "journal-flush-fail", "flush-before-activate", "flush-before-ioctl"):
@@ -670,10 +846,24 @@ class NativeClockController(unittest.TestCase):
             self.assertIn("T|complete", result.stdout)
 
     def test_only_a_bounded_run_id_is_accepted(self):
-        for argument in ("", "../test-run", "test-run extra", "test/run", "x" * 41, "TEST-RUN"):
-            result = self.run_ctl(argument=argument)
-            self.assertNotEqual(result.returncode, 0, result.stdout)
-            self.assertIn("COUNTS 0 0 0 0 0 0", result.stdout)
+        # The fake places the executable in the directory each ID names, so only
+        # the ID rules can reject these.
+        for argument in ("", "../test-run", "test-run extra", "test/run", "x" * 41, "TEST-RUN", "test_run", "test.run"):
+            with self.subTest(argument=argument):
+                result = self.run_ctl(argument=argument)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("COUNTS 0 0 0 0 0 0", result.stdout)
+        for argument in ("x" * 40, "a", "0-9-z"):
+            with self.subTest(argument=argument):
+                result = self.run_ctl(argument=argument)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertTrue(result.stdout.endswith("T|complete\n"))
+
+    def test_valid_run_id_is_refused_when_the_executable_is_in_another_job_directory(self):
+        result = self.run_ctl("exe-elsewhere", "other-run")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("COUNTS 0 0 0 0 0 0", result.stdout)
+        self.assertEqual(result.stdout.split("JOURNAL\n", 1)[1], "")
 
 
 if __name__ == "__main__":

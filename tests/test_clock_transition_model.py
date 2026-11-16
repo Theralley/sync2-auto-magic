@@ -151,6 +151,15 @@ class Transition(unittest.TestCase):
         self.run.restore(112, self.observed(112, self.target, 624), journal_ready=True)
         self.assertEqual(self.run.pending.action, "stage_baseline_mfn")
 
+    def test_timeout_starts_exactly_at_the_operation_bound(self):
+        self.stage()  # the load request was issued at 10 ms
+        self.run.tick(109)
+        self.assertEqual(self.run.state, "pending")
+        self.run.tick(110)
+        self.assertEqual(self.run.state, "unresolved")
+        self.assertEqual(self.run.reason, "pending_timeout")
+        self.assertIsNotNone(self.run.pending)
+
     def test_fault_after_staging_does_not_claim_unchanged_or_issue_load_request(self):
         self.start()
         self.run.fault(5, "journal-failed")

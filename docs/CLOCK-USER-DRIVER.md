@@ -174,7 +174,12 @@ therefore passed the original tests, even though that would request kernel-mode 
 The fixture now specifies all seven names, types and values independently. Additional cases
 cover malformed memory lengths/double NULs, bus mismatch, registry/DLL close failures,
 different valid stream names and journal-flush failure before each cleanup operation.
-The current 20 driver/controller tests and five parser tests pass. Thirteen additional
+A mutation check on November 16 then showed that several stated checks could be removed
+without a failing test. The suite now also runs the real driver behind the real controller
+(snapshot, failed-sampling records and Init refusal), and covers invalidation between reads,
+busy Close/Deinit, the registry `Dll` path, every snapshot header field, the run-ID rules
+separately from the executable-path binding, a failed stream open and a crash inside activation.
+The current 28 driver/controller tests and five parser tests pass. Thirteen additional
 launcher/import tests exercise the actual C producer, bounded copy failures, child exit and
 timeout handling, same-run and cross-run replay barriers, exact native-only staging, trusted
 job identity and source/artifact binding. The CLI stages this job even without `--no-pack`;
@@ -242,7 +247,7 @@ The following sequence makes each later step depend on a concrete result from th
 | 1. Review the observer | Independently review the DLL/controller, exercise the owned-registry and lifecycle failures, and match the reviewed source to the server artifacts. | Source review and focused checks complete; server-built source/artifact identity checked; no activation performed. |
 | 2. Prepare one diagnostic | Add a separately reviewed, one-shot job and import contract that preserves the journal and native exit status. Confirm the target's user-driver host configuration and required runtime identities. A timeout must retain an unresolved outcome and prevent replay. | Native job, importer, persistent cross-run barrier and runtime host checks implemented and independently reviewed. Server package passed unpack comparison. Not run in the car. |
 | 3. Establish the baseline | Obtain the 64-read snapshot with successful cleanup. Check both passes, CCM handshakes, active PLL parameter bank/reference configuration, ARM source/divider and DDR selection. Identify the remaining PLL1 consumers and transition state through exact-image analysis and any further reviewed read-only capture needed. Corroborate frequency with an independent timebase. | Live clock-tree registers are missing. The current subset does not enumerate every consumer; an AXI_A DDR selection alone does not establish that every dependent root is independent of PLL1. |
-| 4. Specify the transition | Trace a deployed CPU transition implementation or define the necessary platform adapter. Bind its exact preconditions, serialization with Ford policy, register ordering, bounded polls, readback and complete restoration to the observed baseline. Review suspend/resume and applicable silicon errata. | An inert MFN-only transition/restore model and 15 synthetic tests exist. The Ford candidate remains blocked on 19 evidence requirements, with zero operations; no hardware backend or transition implementation exists. |
+| 4. Specify the transition | Trace a deployed CPU transition implementation or define the necessary platform adapter. Bind its exact preconditions, serialization with Ford policy, register ordering, bounded polls, readback and complete restoration to the observed baseline. Review suspend/resume and applicable silicon errata. | An inert MFN-only transition/restore model and 16 synthetic tests exist. The Ford candidate remains blocked on 19 evidence requirements, with zero operations; no hardware backend or transition implementation exists. |
 | 5. Qualify a bounded experiment | Identify the fitted CPU/revision, effective rail and loaded voltage, thermal instrumentation, and a recovery method that still works after loss of CPU/DDR service. Exercise baseline-to-baseline transition and fault recovery on a recoverable bench. | Grade, active voltage, thermal observation and independent recovery remain unresolved. |
 | 6. Compare one temporary point | Only after those results, build the matching trial/undo artifacts and perform the reviewed baseline–target–baseline experiment with identical workload. Compare completed work, latency, errors and restoration; preserve any pending result. | No trial artifact exists. The observer adds no frequency/voltage write API. |
 
@@ -277,7 +282,7 @@ tests establishes its control logic and artifact identity, not overclock readine
 ### Offline transition and restoration specification
 
 `tools/clock_transition_model.py` emits a blocked candidate specification and five explicitly
-synthetic traces. It has no device access, backend or install job. Its 15 tests cover individual
+synthetic traces. It has no device access, backend or install job. Its 16 tests cover individual
 missing prerequisites, stale/partial readbacks, pending apply versus undo, timeout and late
 completion, duplicate completions, controller loss, and full-baseline restoration mismatches.
 Generate fresh artifacts with:
