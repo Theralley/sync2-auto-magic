@@ -404,10 +404,17 @@ def cmd_job(args) -> int:
                   "s2am job apps-menu --restore <this job>")
     elif args.kind == "pmic":
         extra = {"s2ampmic.exe": native.binary("s2ampmic.exe")}
-        print("pmic: reads identification and SW1 voltage presets through the existing PMI1 driver. "
-              "Ford compatibility is unverified. No voltage or clock changes. Presets do not identify "
+        print("pmic: reads identification, SW1 voltage presets and mode/SID configuration through PMI1. "
+              "The new mode read is untested in the car. No voltage or clock changes. Presets do not identify "
               "the active rail voltage. Leave the stick in until 'Install successfully completed', "
               "then import it; check pmic.txt for the result")
+    elif args.kind == "clock" and args.modules:
+        params = {"modules": True}
+        extra = {name: native.binary(name) for name in ("s2ampmic.exe", "s2ammodules.exe")}
+        print("clock modules: reads PMIC presets and mode/SID configuration; records attributes and "
+              "ordinary-file copy results for eight fixed clock/power modules. ROM modules are metadata-only. "
+              "No frequency/voltage change, DLL loading or restart. New helpers need car validation. "
+              "Leave the stick in until 'Install successfully completed', then import both reports")
     elif args.kind in ("registry", "clock"):
         params = {"roots": args.root or list(REGISTRY_ROOTS), "depth": args.depth}
         if args.fetch:
@@ -415,9 +422,9 @@ def cmd_job(args) -> int:
         extra = {"s2amreg.exe": native.binary("s2amreg.exe")}
         if args.kind == "clock":
             extra["s2ampmic.exe"] = native.binary("s2ampmic.exe")
-            print("clock: also reads MC13892 identification and SW1 presets through PMI1 first. "
+            print("clock: also reads MC13892 identification, SW1 presets and mode/SID through PMI1 first. "
                   "No clock/voltage changes or restart. Presets are not active-voltage measurements; "
-                  "Ford compatibility and its frequency table remain unverified")
+                  "the new mode read and any frequency-control interface remain unverified")
         print(f"registry: read-only; copies {', '.join(params['roots'])} ({args.depth} levels) to the stick. "
               "A paired phone's link key and PINs are not copied. Insert and leave it in until 'Install "
               "successfully completed': the screen may stay at 100% for several minutes. "
@@ -548,13 +555,18 @@ def cmd_stick_import(args) -> int:
                 if (report / "cleanup.txt").is_file() else []
             gone, stuck = sum(x.startswith("D|") for x in listed), [x[2:] for x in listed if x.startswith("S|")]
             print(f"  removed {gone} old job folders" + (f"; still there: {stuck}" if stuck else ""))
-        if record.get("kind") in ("reg", "clock") and record["status"] == "applied" and report:
+        if record.get("kind") in ("reg", "clock") and record["status"] == "applied" and report \
+                and not (record.get("kind") == "clock" and record.get("params", {}).get("modules") is True):
             done = report / "registry-done.txt"
             print("  " + (done.read_text(errors="replace").strip().replace("|", ", ") if done.is_file() else
                           "NOT complete: s2amreg.exe did not finish in time; registry.txt may be partial"))
         if record.get("kind") in ("pmic", "clock") and record["status"] == "applied" and report:
             from . import pmic
             print("  " + pmic.summary(report))
+        if record.get("kind") == "clock" and record.get("params", {}).get("modules") is True \
+                and record["status"] == "applied" and report:
+            from . import modules
+            print("  " + modules.summary(report))
         if verdict:
             print(f"  {verdict}")
         if record.get("kind") in apps.MENU_KINDS and record["status"] == "applied":
@@ -1079,12 +1091,15 @@ def parser() -> argparse.ArgumentParser:
                                "(e.g. '\\Windows\\boot.rgu'); matched against the last drive log")
     registry.set_defaults(func=cmd_job)
     pmic = job_sub.add_parser("pmic", parents=[common],
-                              help="read-only MC13892 identification and SW1 voltage presets through PMI1; "
-                                   "Ford compatibility unverified, no clock/voltage changes")
+                              help="read-only MC13892 identification, SW1 presets and mode/SID through PMI1; "
+                                   "no clock/voltage changes")
     pmic.set_defaults(func=cmd_job)
     clock = job_sub.add_parser("clock", parents=[common],
                               help="one read-only job: PMIC presets plus driver, service and system registry; "
                                    "no clock/voltage changes or restart")
+    clock.add_argument("--modules", action="store_true",
+                       help="targeted follow-up: PMIC mode/SID and fixed module attributes/copies, "
+                            "instead of another registry capture; no overclock")
     clock.set_defaults(func=cmd_job, root=list(CLOCK_ROOTS), depth=8, fetch=[])
     bundle = job_sub.add_parser("bundle", parents=[common],
                                 help="several jobs already built, in one run (theme, apps-menu, screen "

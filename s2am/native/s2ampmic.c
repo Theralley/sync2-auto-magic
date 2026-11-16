@@ -1,11 +1,12 @@
 /*
- * Read MC13892 identification and SW1 presets through the existing PMI1: driver.
+ * Read MC13892 identification, SW1 presets and mode configuration through PMI1:.
  * Usage: s2ampmic.exe <report folder>. Ordinary application, COREDLL only.
  * No SDK DLL, driver installation, physical memory access, voltage/clock writes,
- * ADC or interrupt reads. Only registers 7 and 24; no caller-supplied register.
+ * ADC or interrupt reads. Only registers 7, 24 and 28; no caller-supplied register.
  *
  * ABI: Freescale MC13892 pmic_ioctl.h / SDK pmic_lla.cpp (PDK1_9), corroborated
- * by the i.MX51 CE 6.0 BSP manual, chapter 19. Ford compatibility is UNVERIFIED.
+ * by the i.MX51 CE 6.0 BSP manual, chapter 19. Reads 7/24 worked in the car on
+ * 2026-11-16; the register-28 read has not been tried there.
  * See docs/CLOCK-METHOD.md for provenance and what the output cannot establish.
  */
 #include <windows.h>
@@ -15,7 +16,7 @@
 typedef int (*RegisterReader)(unsigned long, unsigned long *, void *);
 
 static int sample_pmic(RegisterReader read_register, void *context,
-                       unsigned long *identity, unsigned long *sw1)
+                       unsigned long *identity, unsigned long *sw1, unsigned long *mode_config)
 {
     if (!read_register(7, identity, context))
         return 1;
@@ -26,7 +27,15 @@ static int sample_pmic(RegisterReader read_register, void *context,
         return 2;
     if (!read_register(24, sw1, context))
         return 3;
-    return *sw1 <= 0xffffffUL ? 0 : 4;
+    /* MC13892 Rev.19 table 47, note 71: SW1 does not support the high range.
+     * Reject SW1HI rather than decoding its fields as ordinary 600 mV presets. */
+    if (*sw1 > 0xffffffUL || (*sw1 & 0x800000UL))
+        return 4;
+    if (!read_register(28, mode_config, context))
+        return 7;
+    /* MC13892 Rev.19 table 140: bits 9 and 23 are reserved and read as zero.
+     * Keep a mismatched response unavailable instead of interpreting its mode. */
+    return *mode_config <= 0xffffffUL && !(*mode_config & 0x800200UL) ? 0 : 8;
 }
 
 static unsigned long sw1_mv(unsigned long value, unsigned int shift)
@@ -78,7 +87,7 @@ static void line_end(void)
 static int device_read(unsigned long index, unsigned long *value, void *context)
 {
     DWORD selector = (DWORD)index, result = 0xffffffffUL;
-    if (index != 7 && index != 24)
+    if (index != 7 && index != 24 && index != 28)
         return 0;
     /* DWORD input/output, matching PmicRegisterRead. The reference driver does
      * not populate bytes-returned; use the same NULL argument as its SDK.
@@ -101,7 +110,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
 {
     WCHAR folder[MAX_PATH], path[MAX_PATH], *end;
     HANDLE device;
-    unsigned long identity = 0, sw1 = 0;
+    unsigned long identity = 0, sw1 = 0, mode_config = 0;
     int result;
     (void)instance;
     (void)previous;
@@ -123,7 +132,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
                          FILE_ATTRIBUTE_NORMAL, NULL);
     if (output == INVALID_HANDLE_VALUE)
         return 2;
-    put("S|s2am-pmic-v1|PMI1:|reference ABI; Ford compatibility unverified");
+    put("S|s2am-pmic-v2|PMI1:|R7/R24 car-verified; R28 untested in car");
     line_end();
     /* The reference driver uses a shared read/write handle even for its read
      * request. This program never sends a write or power-state request. */
@@ -134,7 +143,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
         device_error = GetLastError();
         result = 5;
     } else {
-        result = output_failed ? 6 : sample_pmic(device_read, device, &identity, &sw1);
+        result = output_failed ? 6 : sample_pmic(device_read, device, &identity, &sw1, &mode_config);
         CloseHandle(device);
     }
     if (!result) {

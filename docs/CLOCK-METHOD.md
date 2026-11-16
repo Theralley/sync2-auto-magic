@@ -74,14 +74,16 @@ thermal observation. Check the transition implementation against applicable sili
 including [ENGcm11208, ARM clock-source switching, p.46](https://www.nxp.com/docs/en/errata/IMX51CE.pdf#page=46).
 A small frequency increment does not remove transition requirements. If the next actual
 operating point is 800 MHz, this comparison does not authorize substituting it for 630 MHz.
-The [trial and restoration contract](CLOCK-OUTCOMES.md) still applies; no trial pack was made.
+The [trial and restoration contract](CLOCK-OUTCOMES.md) still applies; no clock-changing trial pack was made.
 
 ## Implemented now: `s2am job pmic`
 
 This ordinary Windows CE application opens the existing `PMI1:` device and sends one fixed
 register-read request. It reads identification first, checks the MC13892 identity, then reads
-SW1's configuration. There is no SDK DLL load, new driver, physical-memory mapping, register
-write, power-state request, or ADC/interrupt access. No clock-change command is implemented.
+SW1's presets and mode/SID configuration. Version 2 adds register 28 to the car-tested reads
+of registers 7 and 24. **Register 28 has not been tested in the car.** There is no SDK DLL load,
+new driver, physical-memory mapping, register write, power-state request, or ADC/interrupt
+access. No clock-change command is implemented.
 
 The report contains **normal, DVS and standby presets**, not a measurement of active core
 voltage. The active selection and board rail mapping still need evidence. Temperature remains
@@ -92,7 +94,7 @@ Reference ABI provenance, inspected at commit `3b70b2690782acfcba7f4b0e43e05b5b0
 - [Freescale PMIC IOCTL definitions](https://github.com/KunYi/em-works/blob/3b70b2690782acfcba7f4b0e43e05b5b070ed0da/WINCE600/PLATFORM/COMMON/SRC/SOC/COMMON_FSL_V2_PDK1_9/PMIC/MC13892/INC/pmic_ioctl.h): fixed read request, `0x00224000`.
 - [Freescale SDK adapter](https://github.com/KunYi/em-works/blob/3b70b2690782acfcba7f4b0e43e05b5b070ed0da/WINCE600/PLATFORM/COMMON/SRC/SOC/COMMON_FSL_V2_PDK1_9/PMIC/MC13892/SDK/pmic_lla.cpp): DWORD input/output. The driver does not fill bytes-returned; the SDK passes NULL.
 - [Reference driver](https://github.com/KunYi/em-works/blob/3b70b2690782acfcba7f4b0e43e05b5b070ed0da/WINCE600/PLATFORM/COMMON/SRC/SOC/COMMON_FSL_V2_PDK1_9/PMIC/MC13892/PDK/pmicpdk.cpp): register-read dispatch and identity check.
-- [MC13892 datasheet](https://www.nxp.com/docs/en/data-sheet/MC13892.pdf): identification register 7 and SW1 register 24. Each SW1 preset is 600 mV plus 25 mV per code, with fields at bits 0–4, 5–9 and 10–14.
+- [MC13892 datasheet](https://www.nxp.com/docs/en/data-sheet/MC13892.pdf): identification register 7 and SW1 register 24. Each SW1 preset is 600 mV plus 25 mV per code, with fields at bits 0–4, 5–9 and 10–14. Table 47 note 71 requires SW1HI (bit 23) to be zero; both native sampling and v1/v2 import reject it otherwise. Register 28/table 140 supplies SW1MODE bits 0–3 and SIDEN bit 8; reserved bits 9 and 23 must be zero. The report preserves the mode code without claiming which preset is active.
 
 This source is a reference BSP mirror, not Ford's source. Matching the device/DLL names is
 evidence for a testable interface hypothesis, not proof of binary compatibility. A nonzero
@@ -101,6 +103,7 @@ unwritten or malformed results do not become a voltage result.
 
 ```sh
 python3 -m s2am job clock --serial YOURSERIAL  # both captures in one install
+python3 -m s2am job clock --modules --serial YOURSERIAL  # targeted follow-up, no registry repeat
 python3 -m s2am job pmic --serial YOURSERIAL
 python3 -m s2am job registry --root 'HKLM\Drivers' --root 'HKLM\Services' --serial YOURSERIAL
 ```
@@ -118,17 +121,49 @@ of compiled operating-point tables from ROM modules or establish a usable freque
 Use the usual job/stick workflow. `--no-pack` stages files without building an install pack.
 The normal pack-window check still applies. A PMIC job needs no settings undo because it
 changes no settings; the job runner still stages its executable and writes its normal records.
-The standalone jobs remain available; the combined job completed in the car on November 16.
+The standalone jobs remain available; the combined v1 job completed in the car on November 16.
 
 After importing, the PMIC job prints presets only when its completion marker and full report
 agree. `pmic.txt` retains raw decimal values and failure details. Stage 1 = identification read
 failed; 2 = identity mismatch/invalid data; 3 = SW1 read failed; 4 = invalid SW1 data; 5 = device
-open failed; 6 = report output failed before sampling. System error 0 can accompany a validation
+open failed; 6 = report output failed before sampling; 7 = mode read failed; 8 = invalid mode
+data. Stage 4 includes the unsupported SW1HI high range. System error 0 can accompany a validation
 failure; it does not mean the read was verified.
 
 The script waits up to 15 seconds for the helper before continuing with its normal inventory.
 That bounds the script's wait, **not** a blocked driver/filesystem call. A blocked helper could
 remain running. A completed snapshot is preserved if the overall job was interrupted later.
+
+## Prepared follow-up: `clock --modules`
+
+This profile runs the v2 PMIC reader and a new ordinary-file inspector instead of repeating
+the registry capture. It examines exactly these eight names under `\Windows`: `cspddk.dll`,
+`autopmdrv.dll`, `pmicPdk_mc13892.dll`, `pmicSdk_mc13892.dll`, `dvfc_mc13892.dll`, `nk.exe`,
+`kernel.dll` and `coredll.dll`. Neither helper changes frequency, voltage, power state or boot
+configuration. Normal job staging and report writing still occur. Both new helpers need car
+validation; this profile is not an overclock test.
+
+The inspector records attributes, size, modification time, the operation outcome and its system
+error. It uses [GetFileAttributesEx](https://learn.microsoft.com/en-us/previous-versions/windows/embedded/ms890909(v=msdn.10))
+before opening a source. A `ROMMODULE` attribute produces metadata only: Microsoft distinguishes
+these executable ROM modules from ordinary read-only `INROM` files in its
+[attribute documentation](https://learn.microsoft.com/en-us/previous-versions/windows/embedded/ms890895(v=msdn.10)).
+It never loads a DLL or opens a device. Ordinary files are read through `CreateFile`/`ReadFile`,
+at most 4 MiB each (32 MiB overall), in 4 KiB chunks.
+
+Import counts a copy only when its exact length and CRC32 agree with the report. Changed,
+partial, oversized, missing and inaccessible files have separate outcomes; partial files do
+not count as recovered binaries. A complete inspection can still recover zero binaries.
+The 60-second cooperative copy budget is checked before each copy I/O call, including repeated
+short writes and final verification. Cleanup and report writes continue after the deadline.
+The script waits up to 90 seconds for the module helper, separately from the PMIC wait;
+neither limit cancels a blocked operating-system call or bounds the whole install.
+
+If the needed files are ROM modules, the next source is the matching firmware image for
+offline extraction. The car's recorded CCPU is `3.10.16180.EA` (EU). A filename mentioning
+build 16180 does not prove its modules match this car; no matching firmware payload has yet
+been obtained or verified. This profile does not dump ROM, extract exports or establish a
+clock-control interface.
 
 ## What a small increase could buy
 
@@ -167,13 +202,16 @@ not an established requirement.
 
 ## Verification and next decision
 
-The PMIC and corrected registry helpers compile with CeGCC `-Wall -Wextra -Werror` on
+The PMIC, module inspector and corrected registry helpers compile with CeGCC `-Wall -Wextra -Werror` on
 `ant-srv-001`; their PE headers/imports validate as Windows CE ARM, COREDLL only. Focused host
 tests execute the actual PMIC C application against an API shim and cover successful readings,
 wrong identity, no-op success, read errors, partial writes and report validation. This verifies
 application logic and buildability. The November 16 car run additionally demonstrates the
-two tested PMIC reads and corrected registry capture, not arbitrary driver operations or a
-measured active voltage.
+two tested PMIC reads and corrected registry capture, not the new register-28 read, file
+inspector, arbitrary driver operations or a measured active voltage. Focused module tests
+execute the actual C code through an API shim, including ROM skips, short writes, deadlines,
+I/O failures and completion markers; import tests reject corrupt copies, symlinks and special
+files. Full CI is not run for this experimental development change.
 
 The returned captures now support the interface-discovery route. Identify the actual
 CPU-domain interface and operating-point table in the exact modules. If none provides the target, the remaining work

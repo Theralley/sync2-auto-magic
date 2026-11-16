@@ -88,15 +88,21 @@ int DeviceIoControl(HANDLE f, DWORD code, void *in, DWORD in_size, void *out,
                     DWORD out_size, DWORD *returned, void *overlapped) {
     DWORD index=*(DWORD *)in;
     assert(f==device && code==0x00224000 && in_size==4 && out_size==4);
-    assert(!returned && !overlapped && (index==7 || index==24));
+    assert(!returned && !overlapped && (index==7 || index==24 || index==28));
     printf("read %u\n", index);
     if ((index==7 && !strcmp(mode,"read7fail")) ||
-        (index==24 && !strcmp(mode,"read24fail"))) return 0;
-    if (!strcmp(mode,"noop")) return 1;
-    *(DWORD *)out = index==7 ? 0x41d1 : 14672;
+        (index==24 && !strcmp(mode,"read24fail")) ||
+        (index==28 && !strcmp(mode,"read28fail"))) return 0;
+    if (!strcmp(mode,"noop") || (index==28 && !strcmp(mode,"noop28"))) return 1;
+    *(DWORD *)out = index==7 ? 0x41d1 : index==24 ? 14672 : 0x10a;
     if (index==7 && !strcmp(mode,"badid")) *(DWORD *)out=0x40c1;
     if (index==7 && !strcmp(mode,"wrongcode")) *(DWORD *)out=0x61d1;
     if (index==24 && !strcmp(mode,"wide24")) *(DWORD *)out=0x1000000;
+    if (index==24 && !strcmp(mode,"sw1hi")) *(DWORD *)out=0x803950;
+    if (index==28 && !strcmp(mode,"wide28")) *(DWORD *)out=0x1000000;
+    if (index==28 && !strcmp(mode,"reserved9")) *(DWORD *)out=0x30a;
+    if (index==28 && !strcmp(mode,"reserved23")) *(DWORD *)out=0x80010a;
+    if (index==28 && !strcmp(mode,"sidoff")) *(DWORD *)out=0x0a;
     return 1;
 }
 int WinMain(HINSTANCE, HINSTANCE, LPWSTR, int);
@@ -149,10 +155,12 @@ class Native(unittest.TestCase):
         done = (folder / "pmic-done.txt").read_text() if (folder / "pmic-done.txt").exists() else ""
         return result, log, done
 
-    def test_valid_identity_reads_only_two_registers_and_decodes_all_presets(self):
+    def test_valid_identity_reads_only_three_registers_and_decodes_all_presets(self):
         result, log, done = self.sample("ok")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.splitlines(), ["read 7", "read 24", "closed device"])
+        self.assertEqual(result.stdout.splitlines(), ["read 7", "read 24", "read 28", "closed device"])
+        self.assertTrue(log.startswith("S|s2am-pmic-v2|PMI1:|"))
+        self.assertIn("R|28|266\n", log)
         for preset, mv in (("normal", 1000), ("DVS", 850), ("standby", 950)):
             self.assertIn(f"V|SW1 {preset} preset mV|{mv}\n", log)
         self.assertIn("active voltage, CPU rail mapping and temperature remain unknown", log)
@@ -162,6 +170,7 @@ class Native(unittest.TestCase):
             (report / "pmic.txt").write_text(log)
             (report / "pmic-done.txt").write_text(done)
             self.assertEqual(pmic.summary(report), "SW1 presets: normal 1000 mV, DVS 850 mV, standby 950 mV; "
+                                                  "SW1 mode code 10, SID enabled; "
                                                   "active rail voltage remains unknown")
             for bad in ("", log.replace("1000", "1100"), log.replace("R|7|16849", "R|7|0"),
                         log.replace("T|complete", "T|unavailable"), log + "x" * 4097):
@@ -184,7 +193,11 @@ class Native(unittest.TestCase):
     def test_unsupported_or_failed_device_never_reports_presets(self):
         for mode, reads, stage in (("openfail", [], 5), ("read7fail", [7], 1),
                                    ("badid", [7], 2), ("wrongcode", [7], 2), ("noop", [7], 2),
-                                   ("read24fail", [7, 24], 3), ("wide24", [7, 24], 4)):
+                                   ("read24fail", [7, 24], 3), ("wide24", [7, 24], 4),
+                                   ("sw1hi", [7, 24], 4),
+                                   ("read28fail", [7, 24, 28], 7), ("noop28", [7, 24, 28], 8),
+                                   ("wide28", [7, 24, 28], 8), ("reserved9", [7, 24, 28], 8),
+                                   ("reserved23", [7, 24, 28], 8)):
             with self.subTest(mode=mode):
                 result, log, done = self.sample(mode)
                 self.assertNotEqual(result.returncode, 0)
@@ -196,6 +209,19 @@ class Native(unittest.TestCase):
                 self.assertIn(f"E|stage {stage}|", log)
                 self.assertEqual(done, "T|unavailable\n")
 
+    def test_sid_disabled_is_a_configuration_result_not_active_voltage(self):
+        result, log, done = self.sample("sidoff")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(done, "T|complete\n")
+        self.assertIn("R|28|10\n", log)
+        with tempfile.TemporaryDirectory() as temp:
+            report = Path(temp)
+            (report / "pmic.txt").write_text(log)
+            (report / "pmic-done.txt").write_text(done)
+            self.assertEqual(pmic.summary(report), "SW1 presets: normal 1000 mV, DVS 850 mV, standby 950 mV; "
+                                                  "SW1 mode code 10, SID disabled; "
+                                                  "active rail voltage remains unknown")
+
     def test_partial_writes_are_completed_and_write_failure_has_no_done_marker(self):
         result, log, done = self.sample("shortwrite")
         self.assertEqual(result.returncode, 0)
@@ -206,6 +232,53 @@ class Native(unittest.TestCase):
                 result, _, done = self.sample(mode)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(done, "")
+
+
+class Reports(unittest.TestCase):
+    V1 = ("S|s2am-pmic-v1|PMI1:|reference ABI; Ford compatibility unverified\n"
+          "R|7|17876\nR|24|4526674\n"
+          "V|SW1 normal preset mV|1050\nV|SW1 DVS preset mV|1050\nV|SW1 standby preset mV|700\n"
+          "N|active voltage, CPU rail mapping and temperature remain unknown\nT|complete\n")
+    V2 = V1.replace("s2am-pmic-v1", "s2am-pmic-v2").replace("R|24|4526674\n", "R|24|4526674\nR|28|266\n")
+
+    def summary(self, text):
+        with tempfile.TemporaryDirectory() as temp:
+            report = Path(temp)
+            (report / "pmic.txt").write_text(text)
+            (report / "pmic-done.txt").write_text("T|complete\n")
+            return pmic.summary(report)
+
+    def test_historical_v1_summary_remains_compatible_without_inventing_mode(self):
+        self.assertEqual(self.summary(self.V1), "SW1 presets: normal 1050 mV, DVS 1050 mV, standby 700 mV; "
+                                               "active rail voltage remains unknown")
+
+    def test_v2_mode_and_sid_fields_are_decoded_independently(self):
+        for raw, mode, sid in ((0, 0, "disabled"), (15, 15, "disabled"), (256, 0, "enabled"),
+                               (271, 15, "enabled"), (0x40010a, 10, "enabled")):
+            with self.subTest(raw=raw):
+                result = self.summary(self.V2.replace("R|28|266", f"R|28|{raw}"))
+                self.assertIn(f"SW1 mode code {mode}, SID {sid}; active rail voltage remains unknown", result)
+
+    def test_malformed_or_mixed_versions_never_fall_back_to_v1(self):
+        for text in (self.V1.replace("v1", "v3"), self.V2.replace("v2", "v20"),
+                     self.V2.replace("v2", "v1"), self.V1.replace("v1", "v2"),
+                     self.V2.replace("R|28|266\n", ""), self.V2.replace("R|28|266\n", "R|28|266\n" * 2),
+                     self.V2.replace("R|24|4526674\nR|28|266", "R|28|266\nR|24|4526674"),
+                     self.V2.replace("PMI1:", "PMI2:"), self.V2.replace("R|28|266", "R|28|-1"),
+                     self.V2.replace("R|28|266", "R|28|16777216"), self.V2 + "extra\n"):
+            with self.subTest(text=text[:100]):
+                self.assertIn("NOT verified", self.summary(text))
+
+    def test_reserved_mode_bits_are_compatibility_failures(self):
+        for raw in (266 | (1 << 9), 266 | (1 << 23)):
+            with self.subTest(raw=raw):
+                self.assertIn("NOT verified", self.summary(self.V2.replace("R|28|266", f"R|28|{raw}")))
+
+    def test_unsupported_sw1_high_range_is_rejected_in_both_versions(self):
+        for text in (self.V1, self.V2):
+            with self.subTest(version=text.split("|")[1]):
+                high_range = text.replace("R|24|4526674", f"R|24|{4526674 | (1 << 23)}")
+                self.assertIn("NOT verified", self.summary(high_range))
 
 
 class Workflow(unittest.TestCase):

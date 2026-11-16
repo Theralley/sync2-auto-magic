@@ -1,6 +1,36 @@
 # SYNC 2 clock investigation
 The November 16 car run demonstrates the PMIC read route and corrected registry capture; no CPU-frequency selector has been discovered.
 
+## Targeted follow-up prepared, November 16
+
+`s2am job clock --modules` pairs the v2 PMIC reader with a fixed eight-file inspector.
+Register 28 adds SW1 mode/SID configuration; registers 7/24 retain their demonstrated read
+route. The v2 helper is still untested in the car. SW1HI is rejected before any voltage
+interpretation, including historical v1 reports.
+
+The inspector records per-file attributes/errors and copies only ordinary files, with a
+4 MiB per-file cap and a cooperative 60-second budget. ROM modules remain metadata only.
+Length/CRC checks distinguish verified copies from partial files; completion does not imply
+any module was recovered. Details and source references are in
+[CLOCK-METHOD.md](../docs/CLOCK-METHOD.md#prepared-follow-up-clock---modules).
+
+Thirty-three focused tests pass across PMIC, module and combined-job behavior. Independent
+security, performance and correctness/tests review found and resolved unsupported SW1HI
+decoding and missing deadline checks during short writes/final verification. The final
+helpers are built on `ant-srv-001`, with warnings as errors and CE ARM/COREDLL-only checks.
+No full CI runs for this experimental change. The USB remains with its owner; this preparation
+does not write to it. No frequency/voltage change or installable overclock is available.
+
+Job `20261116-082901-clock-d9b3` is available locally after server compilation and packing:
+179,240 bytes, six payload files, byte-identical unpack verification. Three native binary
+checks also pass; the optional local Docker build test is skipped. The pack expires on
+November 17, 2026, at 10:35 Swedish time; rebuild the pack after that window rather than
+using the expired artifact. USB preparation and the car run are still outstanding.
+
+Next: run this diagnostic after preparing the identified stick, import both reports, then
+analyze any verified files. If the key files are ROM modules, obtain and match the firmware
+image offline; the exact `3.10.16180.EA` payload has not yet been obtained.
+
 ## Latest car result, November 16
 
 Both diagnostics in `20261115-214729-clock-9792` completed. The returned pack and imported

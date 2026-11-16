@@ -1214,8 +1214,30 @@ def pmic_lines(job: Job) -> list[str]:
 
 
 def clock_script(job: Job) -> str:
-    """One install collects PMIC presets and driver registry, with no reboot or settings change."""
-    return _script(_header(job) + pmic_lines(job) + registry_lines(job) + _inventory() + _footer(job))
+    """Collect PMIC plus either registry or targeted module evidence, without settings changes."""
+    modules = job.params.get("modules", False)
+    if not isinstance(modules, bool):
+        raise ValueError("modules profile must be boolean")
+    if modules:
+        lines = [
+            "n = 0",
+            'If (FileExists(out & "\\modules-done.txt"))',
+            "  n = 90",
+            "Else",
+            f'  Run({_quote(ce_path(job.job_dir))} & "\\s2ammodules.exe", out)',
+            "EndIf",
+            "While (n < 90)",
+            '  If (FileExists(out & "\\modules-done.txt"))',
+            "    n = 90",
+            "  Else",
+            "    Sleep(1000)",
+            "    n = n + 1",
+            "  EndIf",
+            "EndWhile",
+        ]
+    else:
+        lines = registry_lines(job)
+    return _script(_header(job) + pmic_lines(job) + lines + _inventory() + _footer(job))
 
 
 SCRIPTS = {
