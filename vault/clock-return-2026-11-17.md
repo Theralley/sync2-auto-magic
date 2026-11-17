@@ -40,3 +40,25 @@ baseline, operating limits, dependencies, independent measurement and recovery m
 established first. No automatic progression from observation to clock writes is included.
 
 Related: [[sync2-auto-magic]].
+
+## Additional adversarial verification, November 17 evening
+
+A further independent pass found two importer consistency gaps: a positive prior-DLL match
+could carry a contradictory length, and claim attributes could describe a directory. Both
+are now rejected, including ROM-module claims, without changing native artifacts or the USB.
+Twelve hostile-report/artifact tests and three extra I/O fault tests pass; eight deliberately
+broken scratch copies of the native helper are caught by the regression tests. The mutation
+runner also verifies the production source is unchanged.
+
+An independent fresh decryption verifies all three packaged payload files and metadata,
+with no activation controller, DLL, scripts or reboot directive. Seven separate launcher
+fault scenarios cover one-byte I/O, timeout despite a complete report, mid-copy budget
+exhaustion, zero output writes and both sides of the 32 KiB report limit. The prior claim is
+unchanged in all cases.
+
+Candidate Toolhelp disassembly independently confirms the 564-byte process and 1,076-byte
+module layouts, seven required exports and normal terminal code 18. Candidate/live firmware
+identity is still unproven. CeGCC runtime self-exit/protection imports are not physical-memory
+mapping or termination of another process. Static and host-fault evidence strengthen the
+observation-only assurance; they cannot guarantee target runtime behavior or overclock safety.
+The ejected USB package and its recorded SHA-256 are unchanged.
