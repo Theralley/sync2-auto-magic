@@ -38,7 +38,7 @@ from pathlib import Path
 
 from . import apps, autokit, bootstrap, decoder, diskcheck, native, pack, stick, theme, window
 from .container import REPO, ContainerError
-from .job import (AUTOKIT_CE, AUTOKIT_LANGS, AUTOKIT_MODULES, BOOST_LEVELS, DRIVE_SECONDS, LOAD_SECONDS,
+from .job import (AUTOKIT_CE, AUTOKIT_LANGS, AUTOKIT_MODULES, BOOST_LEVELS, CALM_LEVEL, DRIVE_SECONDS, LOAD_SECONDS,
                   NEON_CHECK, NEON_REPORT,
                   CLOCK_ROOTS, REGISTRY_ROOTS, RESTARTING,
                   SCREENS, SERIAL, STARTUP_SCREENS, SWAP_KINDS, Job, autokit_lang_file, bundle_parts, stage)
@@ -391,6 +391,17 @@ def cmd_job(args) -> int:
             print(f"boost {args.boost}: while the app is alone on the screen, its threads at priority 252 "
                   f"(AutoKit's video) run at {args.boost}, {where[params['boost']]}. Test calls, climate "
                   "and the parking sensors with CarPlay open. Undo: --boost off (or --off for the whole guard)")
+        if args.calm is not None:
+            if args.off:
+                raise ValueError("--calm goes with a job that turns the guard on; --off takes the calm away too")
+            params["calm"] = args.calm == "on"
+            if params["calm"] and params.get("boost"):
+                raise ValueError("--calm on and a boost do not go together: the guard would leave the calm off")
+            print("calm on: while the app is alone on the screen, Desktop.exe's threads at priority 250 "
+                  "(Ford's screens, which keep drawing behind the app) run at 252, level with AutoKit's "
+                  "video. Test calls, climate, volume and the reversing camera with CarPlay open. "
+                  "Undo: --calm off (or --off for the whole guard)" if params["calm"] else
+                  "calm off: the guard stays on; Desktop.exe's threads keep their priority")
         if args.measure is not None:
             if args.off:
                 raise ValueError("--measure goes with a job that turns the guard on, not with --off")
@@ -753,6 +764,31 @@ def _guard_boost(report: Path | None) -> str | None:
     return path.read_text(errors="replace").strip() if path and path.is_file() else None
 
 
+def _guard_calm(report: Path | None) -> str | None:
+    """What the car's calm file held when the report was written (every inventory copies it)."""
+    path = report / "guard-calm.txt" if report else None
+    return path.read_text(errors="replace").strip() if path and path.is_file() else None
+
+
+_BLANK = b" \t\r\n"
+
+
+def _calm_acts(report: Path | None) -> bool:
+    """Would the guard take the calm file as it is? As start_calm reads it: under 16 bytes,
+    "252" with only blanks after it."""
+    path = report / "guard-calm.txt" if report else None
+    data = path.read_bytes() if path and path.is_file() else b""
+    return len(data) < 16 and data.rstrip(_BLANK) == str(CALM_LEVEL).encode()
+
+
+def _boost_acts(report: Path | None) -> bool:
+    """Would the guard take the boost file as it is? As start_boost reads it: under 16 bytes,
+    one of BOOST_LEVELS with only blanks around it."""
+    path = report / "guard-boost.txt" if report else None
+    data = path.read_bytes() if path and path.is_file() else b""
+    return len(data) < 16 and data.strip(_BLANK) in [str(level).encode() for level in BOOST_LEVELS]
+
+
 def _verify_guard(store: Store, record: dict) -> str:
     """Check the runner guard's state after a runner-guard job, from its own report."""
     report = store.report(record["serial"], record["id"])
@@ -770,14 +806,30 @@ def _verify_guard(store: Store, record: dict) -> str:
             return f"NOT verified: the guard is on, but its boost file holds {now!r}, not {boost}"
         if boost == 0 and now is not None:
             return f"NOT verified: the guard is on, but its boost file is still there ({now!r})"
+        calm, calm_now = record["params"].get("calm"), _guard_calm(report)
+        if calm is True and calm_now != str(CALM_LEVEL):
+            return f"NOT verified: the guard is on, but its calm file holds {calm_now!r}, not {CALM_LEVEL}"
+        if calm is False and calm_now is not None:
+            return f"NOT verified: the guard is on, but its calm file is still there ({calm_now!r})"
         verdict = f"verified: runner guard is on (self-test: {seen})"
-        if boost and "|priority 1" not in seen:
-            return verdict + f", boost {boost} written, but this SYNC lacks a thread function: it will not act"
+        able = "|priority 1" in seen
         if boost is None:  # the job left the boost as it was
-            return verdict + (f", boost {now} as before" if now else "")
-        return verdict + (f", boost {boost}" if boost else ", boost off")
+            verdict += f", boost {now} as before" if now else ""
+        elif boost and not able:
+            verdict += f", boost {boost} written, but this SYNC lacks a thread function: it will not act"
+        else:
+            verdict += f", boost {boost}" if boost else ", boost off"
+        if _calm_acts(report):  # what the guard itself does with the file (start_calm)
+            verdict += (", calm written, but the boost is on and the two do not go together: it will not act"
+                        if _boost_acts(report) else ", calm on" if able else
+                        ", calm written, but this SYNC lacks a thread function: it will not act")
+        elif calm_now is not None:
+            verdict += f", calm file holds {calm_now!r}: it will not act"
+        return verdict
     if on:
         return "NOT verified: the guard is still on"
+    if _guard_calm(report) is not None:
+        return "NOT verified: the guard is off, but its calm file is still there"
     return "verified: runner guard is off" if now is None else \
         "NOT verified: the guard is off, but its boost file is still there"
 
@@ -852,8 +904,9 @@ def cmd_status(args) -> int:
     print(f"  AutoKit audio modules: {autokit_variant(entries)}")
     print(f"  AutoKit video: {autokit_settings(store.report(args.serial, job_id), entries)}")
     boost = _guard_boost(store.report(args.serial, job_id))
+    calm = _calm_acts(store.report(args.serial, job_id)) and not _boost_acts(store.report(args.serial, job_id))
     print(f"  runner guard (fixes the freeze when leaving an app): "
-          f"{('on' + (f', boost {boost}' if boost else '')) if _guard_on(entries) else 'off'}")
+          f"{('on' + (f', boost {boost}' if boost else '') + (', calm on' if calm else '')) if _guard_on(entries) else 'off'}")
     guard_log = store.report(args.serial, job_id) / "guard.log"
     if guard_log.is_file():
         lines = guard_log.read_text(errors="replace").strip().splitlines()
@@ -1135,6 +1188,10 @@ def parser() -> argparse.ArgumentParser:
                             help="also run the app's lowest-priority threads (AutoKit's video, 252) at "
                                  "LEVEL (250 or 251) while it is alone on the screen; 'off' turns "
                                  "only the boost off. Without it the boost stays as it is")
+    guard.add_argument("--calm", choices=["on", "off"],
+                       help="on: while the app is alone on the screen, Desktop.exe's threads at 250 "
+                            "(Ford's screens) run at 252, level with the app's video thread; they go "
+                            "back as soon as anything else shows. Without it the calm stays as it is")
     guard.add_argument("--measure", metavar="SECONDS", type=int, nargs="?", const=LOAD_SECONDS,
                        help="also record the processor's load per program and thread afterwards (default "
                             "30 minutes), on the car; the same stick fetches the logs when it is inserted again")

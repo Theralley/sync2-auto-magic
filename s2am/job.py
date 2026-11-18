@@ -44,6 +44,10 @@ GUARD_BOOST = "\\SyncExtendedPack\\_s2am\\guard-boost.txt"
 # 252 is AutoKit's video thread; Ford's Desktop.exe runs at 250. Never above it: a busy video there
 # could keep Ford's screens from ever showing the window that ends the boost.
 BOOST_LEVELS = (250, 251)
+# The runner guard's calm (s2amrun.c): holds 252 = while the app is alone on the screen,
+# Desktop.exe's threads at 250 run at 252, level with the app's video thread. Absent = off.
+GUARD_CALM = "\\SyncExtendedPack\\_s2am\\guard-calm.txt"
+CALM_LEVEL = 252
 DRIVE_SECONDS = 4 * 3600  # s2amdrive.exe and s2amwatch.exe stop by themselves after this
 LOAD_SECONDS = 1800  # logger --load: long enough for each screen and CarPlay in turn
 LOAD_DIR = "\\SyncExtendedPack\\_s2am\\load"  # logger --load writes here, so the stick can leave
@@ -228,6 +232,9 @@ def _inventory() -> list[str]:
         "EndIf",
         f"If (FileExists({_quote(GUARD_BOOST)}))",
         f'  Copy({_quote(GUARD_BOOST)}, out & "\\guard-boost.txt", TRUE)',
+        "EndIf",
+        f"If (FileExists({_quote(GUARD_CALM)}))",
+        f'  Copy({_quote(GUARD_CALM)}, out & "\\guard-calm.txt", TRUE)',
         "EndIf",
         *[line for name in AUTOKIT_LOGS for line in (  # AutoKit's own log
             f'If (FileExists({_quote(AUTOKIT_CE + chr(92) + name)}))',
@@ -573,6 +580,9 @@ def guard_script(job: Job) -> str:
         raise ValueError(f"invalid size of the stock runner {stock!r}")
     if boost is not None and (action != "enable" or isinstance(boost, bool) or boost not in (0, *BOOST_LEVELS)):
         raise ValueError(f"invalid runner guard boost {boost!r}")
+    calm = job.params.get("calm")
+    if calm is not None and (action != "enable" or not isinstance(calm, bool)):
+        raise ValueError(f"invalid runner guard calm {calm!r}")
     measure = job.params.get("measure")
     if measure is not None and action != "enable":
         raise ValueError("only a job that turns the guard on can measure")
@@ -630,6 +640,8 @@ def guard_script(job: Job) -> str:
         ]
         if boost is not None:  # only once the guard is in place
             lines += _boost_lines(boost)
+        if calm is not None:  # likewise
+            lines += _calm_lines(calm)
         lines += measuring
     else:
         lines += [
@@ -652,8 +664,36 @@ def guard_script(job: Job) -> str:
             f'  Copy({_quote(GUARD_BOOST)}, out & "\\guard-boost-before.txt", TRUE)',
             *_remove_boost(BOOST_STUCK_OFF, "  "),
             "EndIf",
+            *_calm_lines(False, CALM_STUCK_OFF),
         ]
     return _script(lines + _inventory() + _footer(job))
+
+
+CALM_STUCK_ON = "the calm file could not be removed: the guard is on, and the calm stays on"
+CALM_STUCK_OFF = ("the guard is off (the original runner is in place), but its calm file could not be "
+                  "removed: it does nothing without the guard, but turning the guard on again "
+                  "would bring the calm back")
+
+
+def _calm_lines(calm: bool, stuck: str = CALM_STUCK_ON) -> list[str]:
+    """Turn the guard's calm on (its file holds CALM_LEVEL) or off (no file), checked on the
+    car. The inventory then copies what is there. The guard reads the file each time it starts
+    an app."""
+    cf = _quote(GUARD_CALM)
+    gone = [f"Delete({cf})", f"If (FileExists({cf}))"]
+    if calm:
+        return [
+            'MkDir("\\SyncExtendedPack\\_s2am")',
+            f'WriteFile({cf}, "{CALM_LEVEL}")',
+            f'If (ReadFile({cf}) ne "{CALM_LEVEL}")',
+            *["  " + line for line in gone],
+            f'    Copy({cf}, out & "\\guard-calm.txt", TRUE)',
+            "  EndIf",
+            *_stop("copy-failed.txt", "the calm did not write; the guard is on, and uses the file "
+                   f"(copied as guard-calm.txt if it is still there) only if it holds {CALM_LEVEL}", "  "),
+            "EndIf",
+        ]
+    return [*gone, *_stop("copy-failed.txt", stuck, "  "), "EndIf"]
 
 
 def _boost_lines(boost: int) -> list[str]:

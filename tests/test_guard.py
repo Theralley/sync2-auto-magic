@@ -18,7 +18,8 @@ sys.path.insert(0, str(ROOT))
 from s2am import apps, cli, mortscript, native, stick  # noqa: E402
 from s2am.fakecar import FakeCar  # noqa: E402
 from s2am.state import Store  # noqa: E402
-from s2am.job import (BOOST_LEVELS, BOOST_STUCK_OFF, BOOST_STUCK_ON, BOOST_STUCK_WRITE, GUARD_BOOST,  # noqa: E402
+from s2am.job import (BOOST_LEVELS, BOOST_STUCK_OFF, BOOST_STUCK_ON, BOOST_STUCK_WRITE, CALM_STUCK_OFF,  # noqa: E402
+                      CALM_STUCK_ON, GUARD_BOOST, GUARD_CALM,
                       MENU_XML, TOOLS_CE, Job, guard_script, load_folder)
 
 UPSTREAM = ROOT.parent / "syncextpack"
@@ -626,8 +627,9 @@ class Boost(unittest.TestCase):
 
     def test_sets_priorities_only_through_held_handles_and_on_itself(self):
         calls = re.findall(r"set_priority\(((?:[^()]|\([^()]*\))*)\)", SOURCE)
-        self.assertEqual(sorted(calls), ["GetCurrentThread(), boost_level - 1",
-                                         "boosted[i].thread, BOOST_FROM", "boosted[i].thread, boost_level"])
+        self.assertEqual(sorted(calls), ["GetCurrentThread(), CALM_FROM - 1", "GetCurrentThread(), boost_level - 1",
+                                         "boosted[i].thread, BOOST_FROM", "boosted[i].thread, boost_level",
+                                         "calmed[i].thread, CALM_FROM", "calmed[j].thread, CALM_LEVEL"])
 
     def test_imports_nothing_new_by_name(self):
         for name in ("OpenThread", "CeSetThreadPriority", "Thread32First", "Thread32Next"):
@@ -1544,6 +1546,87 @@ class Loop(unittest.TestCase):
         self.assertEqual(left.read_bytes(), self.boost_file())  # what the guard will find
         self.assertEqual(self.runner(), GUARD)
 
+    def calm_file(self):
+        path = self.car._resolve(GUARD_CALM)
+        return path.read_bytes() if path.exists() else None
+
+    def test_calm_on_then_off_keeps_the_guard(self):
+        imported = self.run_job("runner-guard", "--calm", "on")
+        self.assertIn("verified: runner guard is on (self-test: s2amrun ok", imported)
+        self.assertIn("priority 1), calm on", imported)
+        self.assertEqual(self.calm_file(), b"252")
+        self.assertIsNone(self.boost_file())
+        self.assertIn("runner guard (fixes the freeze when leaving an app): on, calm on", self.status())
+        self.assertIn(", calm on", self.run_job("runner-guard"))  # turned on again: it stays
+        imported = self.run_job("runner-guard", "--calm", "off")
+        self.assertIn("verified: runner guard is on", imported)
+        self.assertNotIn("calm on", imported)
+        self.assertIsNone(self.calm_file())
+        self.assertEqual(self.runner(), GUARD)
+
+    def test_off_removes_the_calm_too(self):
+        self.run_job("runner-guard", "--calm", "on")
+        self.assertIn("verified: runner guard is off", self.run_job("runner-guard", "--off"))
+        self.assertIsNone(self.calm_file())
+        self.assertEqual(self.runner(), STOCK)
+
+    def test_a_calm_that_does_not_write_fails_and_leaves_none(self):
+        self.car.broken_copies.add(GUARD_CALM.lower())
+        self.assertIn("failed", self.run_job("runner-guard", "--calm", "on"))
+        self.assertIsNone(self.calm_file())
+        self.assertEqual(self.runner(), GUARD)
+
+    def test_a_stuck_calm_file_is_reported(self):
+        self.run_job("runner-guard", "--calm", "on")
+        self.car.stuck_files.add(GUARD_CALM.lower())
+        imported = self.run_job("runner-guard", "--calm", "off")
+        self.assertIn("failed", imported)
+        self.assertEqual(self.marker(imported), CALM_STUCK_ON)
+        imported = self.run_job("runner-guard", "--off")
+        self.assertIn("failed", imported)
+        self.assertEqual(self.marker(imported), CALM_STUCK_OFF)
+        self.assertEqual(self.runner(), STOCK)
+
+    def test_calm_beside_a_boost_is_refused_and_reported(self):
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+            code = cli.main(["job", "runner-guard", "--boost", "250", "--calm", "on", "--serial", SERIAL,
+                             "--no-pack", "--work", str(self.tmp / "both-on")])
+        self.assertNotEqual(code, 0)
+        self.run_job("runner-guard", "--boost", "251")
+        imported = self.run_job("runner-guard", "--calm", "on")  # the boost file is still on the car
+        self.assertIn("boost 251 as before, calm written, but the boost is on", imported)
+        self.assertNotIn("calm on", self.status())
+        self.car.thread_priority = False
+        imported = self.run_job("runner-guard", "--boost", "off", "--calm", "on")
+        self.assertIn("calm written, but this SYNC lacks a thread function", imported)
+
+    def test_status_reads_the_files_as_the_guard_does(self):
+        report = self.tmp / "report"
+        report.mkdir()
+        for calm, boost, acts in ((b"252", None, True), (b"252\r\n", None, True), (b"252" + b" " * 13, None, False),
+                                  (b" 252", None, False), (b"252", b"251", False), (b"252", b"junk", True),
+                                  (b"252", b" 250\r\n", False), (b"250", None, False)):
+            (report / "guard-calm.txt").write_bytes(calm)
+            (report / "guard-boost.txt").unlink(missing_ok=True)
+            if boost is not None:
+                (report / "guard-boost.txt").write_bytes(boost)
+            self.assertEqual(cli._calm_acts(report) and not cli._boost_acts(report), acts, (calm, boost))
+
+    def test_calm_script_passes_the_car_rules_and_comes_after_the_guard(self):
+        script = guard_script(Job(SERIAL, "guard", params={"action": "enable", "calm": True, **PARAMS}))
+        mortscript.check(script)
+        self.assertLess(script.index('"\\s2amrun.exe", tools & "\\SyncAppsRunner.exe"'),
+                        script.index(f'WriteFile("{GUARD_CALM}", "252")'))
+        mortscript.check(guard_script(Job(SERIAL, "guard", params={"action": "enable", "calm": False, **PARAMS})))
+        for bad in ({"action": "disable", "calm": True}, {"action": "enable", "calm": 252}):
+            with self.subTest(bad), self.assertRaises(ValueError):
+                guard_script(Job(SERIAL, "guard", params={**PARAMS, **bad}))
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+            code = cli.main(["job", "runner-guard", "--off", "--calm", "on", "--serial", SERIAL, "--no-pack",
+                             "--work", str(self.tmp / "never")])
+        self.assertNotEqual(code, 0)
+        self.assertFalse((self.tmp / "never" / "job.json").exists())
+
     def test_boost_and_off_cannot_be_combined(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             cli.main(["job", "runner-guard", "--off", "--boost", "250", "--serial", SERIAL, "--no-pack",
@@ -1553,6 +1636,298 @@ class Loop(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             cli.main(["job", "runner-guard", "--boost", "249", "--serial", SERIAL, "--no-pack",
                       "--work", str(self.tmp / "high")])
+
+
+
+@unittest.skipUnless(shutil.which("cc"), "needs a C compiler")
+class StartCalm(unittest.TestCase):
+    """The calm from s2amrun.c over a fake kernel that counts every handle by itself: Desktop.exe
+    (pid 9) has threads 20 and 22 at 250 and 21 at 251; another process has thread 30 at 250."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.work = Path(tempfile.mkdtemp())
+        names = ("put_uint", "put_text", "is_blank", "read_threads", "listed_at", "note_calm", "calm_drop",
+                 "calm_back", "calm_pin", "calm", "calm_end", "start_calm")
+        cls.program = build(cls.work, [
+            *WINDOWS, define("CALM_PATH"), define("CALM_NAME"), define("CALM_FROM"), define("CALM_LEVEL"),
+            define("MAX_CALMED"), define("CALM_END_TRIES"), define("TICK_MS"), define("MAX_LISTED"),
+            define("TH32CS_SNAPPROCESS"), define("TH32CS_SNAPTHREAD"), define("TH32CS_SNAPNOHEAPS"),
+            "#define GENERIC_READ 0x80000000", "#define FILE_SHARE_READ 1", "#define OPEN_EXISTING 3",
+            "#define FILE_ATTRIBUTE_NORMAL 0x80",
+            "#ifndef WAIT_OBJECT_0\n#define WAIT_OBJECT_0 0\n#endif",
+            "#ifndef WAIT_TIMEOUT\n#define WAIT_TIMEOUT 258\n#endif",
+            declared(r"typedef struct \{[^}]*\} ThreadEntry;"),
+            declared(r"typedef struct \{[^}]*\} Listed;"),
+            declared(r"typedef struct \{(?:[^}]|\*/)*?\} Calmed;"),
+            declared(r"static BOOL calm_on;"), declared(r"static Calmed calmed\[MAX_CALMED\];"),
+            declared(r"static int calmed_count;"), declared(r"static DWORD calm_pid;"),
+            declared(r"static HANDLE calm_process;"),
+            r"""
+#define OWN ((HANDLE)4000)
+static const char *content;  /* the calm file's text; NULL: there is none */
+static int boost_level, functions = 1, own_allowed = 1, shown = 1, refuse_back, cut, lists = 1;
+static int desktop = 9, desktop_ended, moved, sets, sleeps, at, wrong;
+static int ids[4] = {20, 21, 22, 30}, owners[4] = {9, 9, 9, 8}, real[4] = {250, 251, 250, 250};
+static int alive[4] = {1, 1, 1, 1};
+static const int first[4] = {250, 251, 250, 250};
+static int held[8000];  /* open handles, each by its own value */
+
+static HANDLE CreateFileW(const WCHAR *path, DWORD access, DWORD share, void *security, DWORD disposition,
+                          DWORD attributes, HANDLE template_file)
+{
+    (void)path; (void)access; (void)share; (void)security; (void)disposition; (void)attributes;
+    (void)template_file;
+    return content ? (HANDLE)2000 : INVALID_HANDLE_VALUE;
+}
+
+static BOOL ReadFile(HANDLE file, void *buffer, DWORD size, DWORD *got, void *overlapped)
+{
+    (void)file; (void)overlapped;
+    *got = (DWORD)strlen(content) < size ? (DWORD)strlen(content) : size;
+    memcpy(buffer, content, *got);
+    return TRUE;
+}
+
+static BOOL CloseHandle(HANDLE handle)
+{
+    long value = (long)handle;
+    if (value >= 5000 && --held[value] < 0) {
+        printf("closed twice %ld\n", value);
+        wrong++;
+    }
+    return TRUE;
+}
+
+static int slot(int id)
+{
+    int i;
+    for (i = 0; i < 4; i++)
+        if (ids[i] == id)
+            return i;
+    return -1;
+}
+
+static DWORD WaitForSingleObject(HANDLE handle, DWORD ms)
+{
+    long value = (long)handle;
+    (void)ms;
+    if (held[value] <= 0) {
+        printf("waited on a closed handle %ld\n", value);
+        wrong++;
+    }
+    if (value >= 6000)
+        return value - 6000 == 9 && desktop_ended ? WAIT_OBJECT_0 : WAIT_TIMEOUT;
+    return alive[slot((int)value - 5000)] ? WAIT_TIMEOUT : WAIT_OBJECT_0;
+}
+
+static void Sleep(DWORD ms) { (void)ms; sleeps++; }
+static HANDLE GetCurrentThread(void) { return OWN; }
+static BOOL load_priority(void) { return functions; }
+
+static BOOL find_process(const WCHAR *name, DWORD *pid, int *count)
+{
+    (void)name; (void)count;
+    *pid = 0;
+    if (!lists)
+        return FALSE;
+    *pid = (DWORD)desktop;
+    if (moved)  /* the id changes hands between the first look at the list and the second */
+        desktop = 8;
+    return TRUE;
+}
+
+static HANDLE OpenProcess(DWORD access, BOOL inherit, DWORD pid)
+{
+    (void)access; (void)inherit;
+    held[6000 + pid]++;
+    return (HANDLE)(long)(6000 + pid);
+}
+
+static HANDLE snapshot(DWORD flags, DWORD pid)
+{
+    (void)flags; (void)pid;
+    at = 0;
+    return lists ? (HANDLE)3000 : INVALID_HANDLE_VALUE;
+}
+
+static BOOL next_thread(HANDLE list, ThreadEntry *entry)
+{
+    (void)list;
+    while (at < 4 && !alive[at])
+        at++;
+    if (at >= (cut ? 2 : 4))  /* cut: the list ends early, threads 22 and 30 are missing */
+        return FALSE;
+    entry->th32ThreadID = (DWORD)ids[at];
+    entry->th32OwnerProcessID = (DWORD)owners[at];
+    entry->tpBasePri = shown ? real[at] : first[at];  /* or a list that never shows a change */
+    at++;
+    return TRUE;
+}
+
+static BOOL first_thread(HANDLE list, ThreadEntry *entry) { return next_thread(list, entry); }
+static BOOL close_snapshot(HANDLE list) { (void)list; return TRUE; }
+
+static HANDLE open_thread(DWORD access, BOOL inherit, DWORD id)
+{
+    (void)access; (void)inherit;
+    held[5000 + id]++;
+    return (HANDLE)(long)(5000 + id);
+}
+
+static BOOL set_priority(HANDLE thread, int priority)
+{
+    int id = (int)(long)thread - 5000;
+    sets++;
+    if (thread == OWN) {
+        printf("set guard %d\n", priority);
+        return own_allowed;
+    }
+    if (held[5000 + id] <= 0) {
+        printf("set through a closed handle %d\n", id);
+        wrong++;
+    }
+    if (!alive[slot(id)] || (priority == 250 && refuse_back > 0)) {
+        if (alive[slot(id)])
+            refuse_back--;
+        printf("refused %d %d\n", id, priority);
+        return FALSE;
+    }
+    printf("set %d %d\n", id, priority);
+    real[slot(id)] = priority;
+    return TRUE;
+}
+
+static void note(const char *event, const char *detail, unsigned long value)
+{
+    printf("log %s%s", event, detail ? "|" : "\n");
+    if (detail)
+        printf("%s%lu\n", detail, value);
+}
+""",
+            *(function(name) for name in names),
+            r"""
+int main(int argc, char **argv)
+{
+    /* the file's text ("-": none), then flags as one word of letters (f: no thread functions,
+       o: the guard's own change refused, b: the boost is on, s: the list never shows a change),
+       ways back refused first, then one letter per step: a look alone, n look not alone,
+       x look not alone without any list, c look alone with a list cut short, k thread 20 ends,
+       d Desktop.exe ends (its threads with it), m the id changes hands during the next look,
+       e the watch ends */
+    const char *step;
+    int i, left = 0;
+    (void)argc;
+    content = strcmp(argv[1], "-") ? argv[1] : NULL;
+    functions = !strchr(argv[2], 'f');
+    own_allowed = !strchr(argv[2], 'o');
+    boost_level = strchr(argv[2], 'b') ? 251 : 0;
+    shown = !strchr(argv[2], 's');
+    refuse_back = atoi(argv[3]);
+    start_calm();
+    for (step = argv[4]; *step; step++) {
+        lists = 1;
+        cut = 0;
+        switch (*step) {
+        case 'a': calm(TRUE); break;
+        case 'n': calm(FALSE); break;
+        case 'x': lists = 0; calm(FALSE); break;
+        case 'c': cut = 1; calm(TRUE); break;
+        case 'k': alive[0] = 0; break;
+        case 'd': desktop_ended = 1; alive[0] = alive[1] = alive[2] = 0; desktop = 0; break;
+        case 'm': moved = 1; break;
+        case 'e': calm_end(); break;
+        }
+    }
+    for (i = 5000; i < 8000; i++)
+        left += held[i];
+    printf("on %d held %d wrong %d sleeps %d real %d %d %d %d\n", calm_on, left, wrong, sleeps,
+           real[0], real[1], real[2], real[3]);
+    return 0;
+}
+"""])
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.work)
+
+    def run_calm(self, content, steps, flags="-", refuse=0):
+        return subprocess.run([str(self.program), content, flags, str(refuse), steps], capture_output=True,
+                              text=True, check=True).stdout.splitlines()
+
+    def sets(self, out):
+        return sorted(line for line in out if line.startswith("set ") and "guard" not in line)
+
+    UNTOUCHED = "wrong 0 sleeps 0 real 250 251 250 250"
+
+    def test_without_a_valid_file_nothing_runs(self):
+        for content in ("-", "250", "2520", "25", "x", "252             garbage"):
+            out = self.run_calm(content, "aane")
+            self.assertEqual(out[-1], "on 0 held 0 " + self.UNTOUCHED, content)
+            self.assertFalse([line for line in out if line.startswith("set ")], content)
+
+    def test_off_with_the_boost_or_without_the_functions_or_its_own_priority(self):
+        for flags, why in (("b", "the boost is on"), ("f", "missing or refused"), ("o", "missing or refused")):
+            out = self.run_calm("252", "aane", flags)
+            self.assertEqual(out[-1], "on 0 held 0 " + self.UNTOUCHED, flags)
+            self.assertTrue([line for line in out if line.startswith("log calm|off") and why in line], flags)
+            self.assertFalse(self.sets(out))
+
+    def test_the_guard_goes_above_desktop_before_anything_is_lowered(self):
+        out = self.run_calm("252\r\n", "aa")
+        self.assertEqual(out[0], "set guard 249")
+        self.assertEqual(self.sets(out), ["set 20 252", "set 22 252"])  # once each; 21 and 30 untouched
+        self.assertEqual(out[-1], "on 1 held 3 wrong 0 sleeps 0 real 252 251 252 250")  # two threads, the process
+
+    def test_they_go_back_when_not_alone_and_every_handle_with_them(self):
+        out = self.run_calm("252", "aane")
+        self.assertIn("log calm|thread 20 from 252 to 250", out)
+        self.assertEqual(out[-1], "on 1 held 0 " + self.UNTOUCHED)
+        self.assertEqual(self.run_calm("252", "aanaane")[-1], "on 1 held 0 " + self.UNTOUCHED)  # and again
+
+    def test_a_list_that_never_shows_the_change_changes_nothing(self):
+        out = self.run_calm("252", "aaane", "s")
+        self.assertEqual(self.sets(out), ["set 20 250", "set 20 252", "set 22 250", "set 22 252"])
+        self.assertEqual(out[-1], "on 1 held 0 " + self.UNTOUCHED)
+
+    def test_they_go_back_without_any_list_and_with_one_cut_short(self):
+        self.assertEqual(self.run_calm("252", "axe")[-1], "on 1 held 0 " + self.UNTOUCHED)
+        out = self.run_calm("252", "ac")  # thread 22 is missing from the list: it is not forgotten
+        self.assertEqual(out[-1], "on 1 held 3 wrong 0 sleeps 0 real 252 251 252 250")
+        self.assertEqual(self.run_calm("252", "acne")[-1], "on 1 held 0 " + self.UNTOUCHED)
+
+    def test_a_way_back_that_fails_is_tried_on_every_look_and_logged_once(self):
+        out = self.run_calm("252", "annn", refuse=4)
+        self.assertEqual(len([line for line in out if "would not go back" in line]), 2)
+        self.assertEqual(out[-1], "on 1 held 1 " + self.UNTOUCHED)  # only the process handle is left
+
+    def test_the_guard_does_not_end_while_one_is_left(self):
+        out = self.run_calm("252", "ae", refuse=6)  # the end itself is the first look that puts back
+        self.assertEqual(out[-1], "on 1 held 0 wrong 0 sleeps 3 real 250 251 250 250")
+        out = self.run_calm("252", "ae", refuse=1000)
+        self.assertIn("log calm|gave up: threads of Desktop.exe left at 252 until SYNC restarts, 2", out)
+        self.assertEqual(out[-1], "on 1 held 2 wrong 0 sleeps 29 real 252 251 252 250")
+
+    def test_a_thread_or_desktop_that_ended_only_gives_its_handles_back(self):
+        out = self.run_calm("252", "akane")
+        self.assertEqual(out[-1], "on 1 held 0 wrong 0 sleeps 0 real 252 251 250 250")  # 20 ended at 252
+        out = self.run_calm("252", "adae")
+        self.assertEqual(out[-1], "on 1 held 0 wrong 0 sleeps 0 real 252 251 252 250")
+        self.assertEqual(self.sets(out), ["set 20 252", "set 22 252"])
+
+    def test_an_id_that_changes_hands_is_not_trusted(self):
+        out = self.run_calm("252", "mae")  # the second look at the process list names another process
+        self.assertFalse(self.sets(out))
+        self.assertEqual(out[-1], "on 1 held 0 " + self.UNTOUCHED)
+
+    def test_runs_beside_the_boost_and_ends_with_the_watch(self):
+        self.assertIn("        boost(&watched, vis && scan.others == 0);\n        calm(vis && scan.others == 0);",
+                      SOURCE)
+        self.assertLess(SOURCE.index("    calm_end();"), SOURCE.index("CloseHandle(runner.hProcess);\n    if (guard)"))
+        self.assertEqual(SOURCE.count("calm_end();"), 1)
+        self.assertIn("    if (watching)\n        start_calm();", SOURCE)
+        self.assertLess(SOURCE.index("        start_boost();"), SOURCE.index("        start_calm();"))
+        self.assertIn("if (!calm_on)\n        return;", function("calm"))
 
 
 if __name__ == "__main__":

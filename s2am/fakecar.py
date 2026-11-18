@@ -13,7 +13,7 @@ import shutil
 from pathlib import Path
 
 from .job import (AUTOKIT_CE, AUTOKIT_LOGS, AUTOKIT_MODULES, BACKUP_DIR, BOOST_STUCK_OFF, BOOST_STUCK_ON, CHANGING,
-                  BOOST_STUCK_WRITE, GUARD_BOOST, GUARD_LOG, INVENTORY_ROOT, LOAD_LOGS, MENU_XML, NEON_REPORT, OLD_REPORT_MARKER,
+                  BOOST_STUCK_WRITE, CALM_LEVEL, CALM_STUCK_OFF, CALM_STUCK_ON, GUARD_BOOST, GUARD_CALM, GUARD_LOG, INVENTORY_ROOT, LOAD_LOGS, MENU_XML, NEON_REPORT, OLD_REPORT_MARKER,
                   PHASE_DIR, PLUGINS_MASK, REPORTS_DIR, STICK_MOUNTS, SWAP_KINDS, TOOLS_CE, Job, bundle_parts,
                   ce_path, load_folder, swap_lines, swap_target)
 
@@ -221,6 +221,8 @@ class FakeCar:
             shutil.copyfile(guard_log, out / "guard.log")
         if self.exists(GUARD_BOOST):
             shutil.copyfile(self._resolve(GUARD_BOOST), out / "guard-boost.txt")
+        if self.exists(GUARD_CALM):
+            shutil.copyfile(self._resolve(GUARD_CALM), out / "guard-calm.txt")
         for name in AUTOKIT_LOGS:
             if self._resolve(f"{AUTOKIT_CE}\\{name}").exists():
                 shutil.copyfile(self._resolve(f"{AUTOKIT_CE}\\{name}"), out / f"autokit-{name}")
@@ -600,8 +602,11 @@ class FakeCar:
                     return False
                 shutil.copyfile(runner, original)
             shutil.copyfile(self._resolve(ce_path(job.job_dir)) / "s2amrun.exe", runner)
-            if job.params.get("boost") is not None:
-                return self._guard_boost(out, job.params["boost"])
+            if job.params.get("boost") is not None and not self._guard_boost(out, job.params["boost"]):
+                return False
+            if job.params.get("calm") is not None:
+                return self._guard_calm(out, job.params["calm"], CALM_STUCK_ON)
+            return True
         elif original.exists():
             if size(original) != stock:
                 (out / "backup-bad.txt").write_text("damaged keep")
@@ -613,7 +618,32 @@ class FakeCar:
         boost = self._resolve(GUARD_BOOST)  # off: after the runner, as the script does
         if job.params["action"] == "disable" and boost.exists():
             shutil.copyfile(boost, out / "guard-boost-before.txt")
-            return self._remove_boost(out, BOOST_STUCK_OFF)
+            if not self._remove_boost(out, BOOST_STUCK_OFF):
+                return False
+        if job.params["action"] == "disable":
+            return self._guard_calm(out, False, CALM_STUCK_OFF)
+        return True
+
+    def _guard_calm(self, out: Path, calm: bool, stuck: str) -> bool:
+        """The calm steps of a runner-guard job (job._calm_lines)."""
+        path = self._resolve(GUARD_CALM)
+        text = str(CALM_LEVEL).encode()
+        if calm:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._copy_text(text, path)
+            if path.read_bytes() == text:
+                return True
+            if self._ce(path).lower() in self.stuck_files:
+                shutil.copyfile(path, out / "guard-calm.txt")
+            else:
+                path.unlink()
+            (out / "copy-failed.txt").write_text("the calm did not write")
+            return False
+        if path.exists():
+            if self._ce(path).lower() in self.stuck_files:
+                (out / "copy-failed.txt").write_text(stuck)
+                return False
+            path.unlink()
         return True
 
     def _guard_boost(self, out: Path, level: int) -> bool:

@@ -56,6 +56,17 @@
  * the raised threads are forgotten only once it has ended. The guard then runs one level
  * above them, so it still looks every second. Without the file none of this runs.
  *
+ * Optional, off unless \SyncExtendedPack\_s2am\guard-calm.txt holds 252
+ * (`s2am job runner-guard --calm`): while the app's window is visible and nothing else
+ * usable is on the screen, the threads of Desktop.exe (Ford's screens, a Flash movie that
+ * keeps playing behind the app) that run at 250 run at 252 instead, level with the app's
+ * video thread and never below it, so they still get their turn. As soon as anything else
+ * is on the screen, or the app's window is gone, they go back to 250 through the handle the
+ * guard kept for each; one that would not go back is tried again every second, and the
+ * guard does not end while one is left (for half a minute). The guard runs at 249 meanwhile,
+ * above them. Not together with the boost: with both files the calm stays off. Without the
+ * file none of this runs.
+ *
  * Every state change is appended to \SyncExtendedPack\_s2am\guard.log.
  * Usage: SyncAppsRunner.exe <app path>       (as the app plugins call it; they use
  *                                             forward slashes: /SyncExtendedPack/...)
@@ -81,6 +92,12 @@
 #define BOOST_HIGHEST 250
 #define BOOST_LOWEST 251
 #define MAX_BOOSTED 32
+#define CALM_PATH L"\\SyncExtendedPack\\_s2am\\guard-calm.txt"
+#define CALM_NAME L"Desktop.exe"
+#define CALM_FROM 250      /* Desktop.exe's busy thread (load log, 2026-11-18) */
+#define CALM_LEVEL 252     /* level with the app's video thread: shared, never starved */
+#define MAX_CALMED 32
+#define CALM_END_TRIES 30  /* looks, a second apart, before the guard ends with one left */
 #define MAX_LISTED 256     /* threads of the app in one list; more, and the boost waits */
 #define MAX_WINDOWS 32     /* windows of the app one look keeps for WM_CLOSE */
 #define TH32CS_SNAPPROCESS 0x00000002
@@ -672,6 +689,207 @@ static void start_boost(void)
          (unsigned long)boost_level);
 }
 
+/* ---- the calm: Ford's screens share with the app's video while they are hidden ---------- */
+
+typedef struct {
+    DWORD id;
+    HANDLE thread;  /* held from before the change, so the id stays this thread's */
+    BOOL lowered;   /* at CALM_LEVEL, set by the guard */
+    BOOL told;      /* a way back that failed is logged once, and tried on every look */
+} Calmed;
+
+static BOOL calm_on;  /* FALSE: off, and the guard does exactly what it did before the calm */
+static Calmed calmed[MAX_CALMED];
+static int calmed_count;
+static DWORD calm_pid;       /* Desktop.exe, while the guard holds calm_process for it */
+static HANDLE calm_process;  /* held from before any thread list: the id stays this process's */
+
+static void note_calm(DWORD id, const char *what, int value, const char *more, int value2)
+{
+    char line[120], *at = line;
+    at = put_text(at, "calm|thread ");
+    at = put_uint(at, id);
+    at = put_text(at, what);
+    if (value >= 0)
+        at = put_uint(at, (unsigned long)value);
+    if (more) {
+        at = put_text(at, more);
+        if (value2 >= 0)
+            at = put_uint(at, (unsigned long)value2);
+    }
+    *at = '\0';
+    note(line, NULL, 0);
+}
+
+static void calm_drop(int i)
+{
+    CloseHandle(calmed[i].thread);
+    calmed[i] = calmed[--calmed_count];
+}
+
+/* Every lowered thread goes back to CALM_FROM through its handle, whatever a thread list
+ * says: a list may be cut short, so a thread it does not show is not taken as ended. An
+ * entry goes only once its thread is back, or its own handle says the thread has ended. One
+ * that would not go back stays, for the next look. */
+static void calm_back(void)
+{
+    int i;
+    for (i = calmed_count - 1; i >= 0; i--) {
+        if (!calmed[i].lowered) {
+            calm_drop(i);
+        } else if (set_priority(calmed[i].thread, CALM_FROM)) {
+            note_calm(calmed[i].id, " from ", CALM_LEVEL, " to ", CALM_FROM);
+            calm_drop(i);
+        } else if (WaitForSingleObject(calmed[i].thread, 0) == WAIT_OBJECT_0) {
+            calm_drop(i);  /* it has ended */
+        } else if (!calmed[i].told) {
+            note_calm(calmed[i].id, " would not go back from ", CALM_LEVEL, NULL, -1);
+            calmed[i].told = TRUE;
+        }
+    }
+}
+
+/* Desktop.exe's process, pinned by a handle the guard keeps: TRUE while that handle is held
+ * and has not said the process ended. The handle is opened first and the process list asked
+ * again after it: only a list that still shows the same id for Desktop.exe counts, so the
+ * threads listed under that id afterwards are Desktop.exe's and no other process's. */
+static BOOL calm_pin(void)
+{
+    DWORD pid, again;
+    if (calm_process) {
+        if (WaitForSingleObject(calm_process, 0) != WAIT_OBJECT_0)
+            return TRUE;
+        calm_back();  /* it has ended: its threads with it, the handles go */
+        CloseHandle(calm_process);
+        calm_process = NULL;
+        calm_pid = 0;
+    }
+    if (!find_process(CALM_NAME, &pid, NULL) || !pid)
+        return FALSE;
+    calm_process = OpenProcess(0, FALSE, pid);
+    if (!calm_process)
+        return FALSE;
+    if (!find_process(CALM_NAME, &again, NULL) || again != pid ||
+        WaitForSingleObject(calm_process, 0) != WAIT_TIMEOUT) {
+        CloseHandle(calm_process);
+        calm_process = NULL;
+        return FALSE;
+    }
+    calm_pid = pid;
+    return TRUE;
+}
+
+/* One look of the calm. Not alone on the screen: every lowered thread goes back. Alone: each
+ * thread of Desktop.exe a list shows at CALM_FROM is opened, once, and lowered only if a
+ * second list, taken after the opening, still shows it in that process at CALM_FROM. Without
+ * a list, or without Desktop.exe pinned, nothing new is lowered. */
+static void calm(BOOL alone)
+{
+    Listed list[MAX_LISTED];
+    int count, i, j, first;
+    if (!calm_on)
+        return;
+    if (!alone) {
+        if (calmed_count)
+            calm_back();
+        return;
+    }
+    if (!calm_pin())
+        return;
+    count = read_threads(calm_pid, list, MAX_LISTED);
+    if (count < 0)
+        return;
+    for (i = calmed_count - 1; i >= 0; i--)  /* only one whose own handle says it ended goes */
+        if (WaitForSingleObject(calmed[i].thread, 0) == WAIT_OBJECT_0)
+            calm_drop(i);
+    first = calmed_count;
+    for (i = 0; i < count && calmed_count < MAX_CALMED; i++) {
+        if (list[i].priority != CALM_FROM)
+            continue;
+        for (j = 0; j < calmed_count && calmed[j].id != list[i].id; j++)
+            ;
+        if (j < calmed_count)
+            continue;  /* handled already (its owner may have moved it back: left alone) */
+        calmed[calmed_count].thread = open_thread(THREAD_SET_INFORMATION, FALSE, list[i].id);
+        if (!calmed[calmed_count].thread)
+            continue;  /* stays as it is; looked at again on the next look */
+        calmed[calmed_count].id = list[i].id;
+        calmed[calmed_count].lowered = calmed[calmed_count].told = FALSE;
+        calmed_count++;
+    }
+    if (calmed_count == first)
+        return;
+    count = read_threads(calm_pid, list, MAX_LISTED);  /* after the opening: still Desktop.exe's? */
+    for (j = calmed_count - 1; j >= first; j--) {
+        if (count < 0 || listed_at(list, count, calmed[j].id) != CALM_FROM) {
+            calm_drop(j);
+        } else if (set_priority(calmed[j].thread, CALM_LEVEL)) {
+            note_calm(calmed[j].id, " from ", CALM_FROM, " to ", CALM_LEVEL);
+            calmed[j].lowered = TRUE;
+        } else {
+            note_calm(calmed[j].id, " would not change from ", CALM_FROM, NULL, -1);
+            calm_drop(j);
+        }
+    }
+}
+
+/* The watch is over: every lowered thread goes back before the guard ends, and with it the
+ * handles. One that will not go back is tried once a second for CALM_END_TRIES looks; the
+ * guard does not end before that, since nothing else could put it back. */
+static void calm_end(void)
+{
+    int tries;
+    if (!calm_on)
+        return;
+    for (tries = 0; calmed_count && tries < CALM_END_TRIES; tries++) {
+        if (tries)
+            Sleep(TICK_MS);
+        calm_back();
+    }
+    if (calmed_count)
+        note("calm", "gave up: threads of Desktop.exe left at 252 until SYNC restarts, ",
+             (unsigned long)calmed_count);
+    if (calm_process)
+        CloseHandle(calm_process);
+    calm_process = NULL;
+}
+
+/* Reads the calm file once per start. Without it nothing of the calm runs. Not together with
+ * the boost: a raised video thread would outrank Ford's lowered screens, which could then
+ * never show the window that ends both. The guard itself goes above CALM_FROM, so a thread
+ * it has just put back cannot keep it from putting back the next. */
+static void start_calm(void)
+{
+    char text[16];
+    DWORD got = 0;
+    HANDLE file = CreateFileW(CALM_PATH, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+                              FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE)
+        return;
+    if (!ReadFile(file, text, sizeof(text), &got, NULL))
+        got = sizeof(text);
+    CloseHandle(file);
+    if (got >= sizeof(text))
+        got = 0;  /* unreadable, or longer than any valid file */
+    while (got && is_blank(text[got - 1]))
+        got--;
+    if (got != 3 || text[0] != '2' || text[1] != '5' || text[2] != '2') {
+        note("calm|off: the calm file does not hold 252", NULL, 0);
+        return;
+    }
+    if (boost_level) {
+        note("calm|off: the boost is on, and the two do not go together", NULL, 0);
+        return;
+    }
+    if (!load_priority() || !set_priority(GetCurrentThread(), CALM_FROM - 1)) {
+        note("calm|off: the thread functions are missing or refused", NULL, 0);
+        return;
+    }
+    calm_on = TRUE;
+    note("calm", "on: while the app is alone on the screen, Desktop.exe's threads at 250 run at ",
+         CALM_LEVEL);
+}
+
 /* ---- the app's process ---------------------------------------------------------------- */
 
 /* One look at the app's process. While the guard holds a handle for it, only that handle says
@@ -910,6 +1128,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
     }
     if (watching)
         start_boost();
+    if (watching)
+        start_calm();
     if (!CreateProcessW(original, command, NULL, NULL, FALSE, 0, NULL, NULL, NULL, &runner)) {
         note("error", "original runner did not start, error ", GetLastError());
         return 1;
@@ -970,6 +1190,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
         }
         /* before either rule closes the app: its threads are back at 252 by then */
         boost(&watched, vis && scan.others == 0);
+        calm(vis && scan.others == 0);
         outcome = NOT_BACK;  /* no close on this look */
         switch (judge(&rules, app, vis, scan.others)) {
         case CLOSE_STUCK:
@@ -994,6 +1215,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
         if (act & STOP)
             break;  /* never started, back to normal, or repaired */
     }
+    calm_end();  /* whatever ended the watch: Ford's screens are back at 250 */
     if (watched.process)
         CloseHandle(watched.process);
     CloseHandle(runner.hProcess);
