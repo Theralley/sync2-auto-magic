@@ -1,7 +1,44 @@
 # CPU-counter availability diagnostic
-Controlled v2 CPU diagnostic is prepared, remount-verified and ejected; first return was inconclusive, no overclock is qualified.
+Controlled v2 diagnostic returned inconclusive at preflight; exact enumeration failure remains unknown, no overclock is qualified.
 
-## New controlled successor USB ready, November 18
+## Controlled successor returned: preflight stop, November 18
+
+Job **`20261118-174115-cpuavail-dbf6`** returned with its exact consumed 48,760-byte pack.
+All managed return files were preserved and hash-verified before import; pending identity,
+source snapshot and pack match the prepared job. Import is **not verified**. No new package
+has been written following this return, and the consumed job must not be repeated.
+
+The 112-byte successor ledger contains exactly the three identity rows followed by
+`P|predecessor-bound`. The 158-byte outer record reports no controller/probe journals and
+binds the copied ledger with CRC32 `988878319`. The collection marker is present.
+
+Under the bound source, the old evidence locks and new executable hashes passed. The stop
+is at the last visible row's flush, the first fresh process/module check, **or the following
+ledger write**, which this version does not distinguish. `C|launch-error|5|4294967295|0|0` is a generic preflight-failure
+record, **not** an observed CreateProcess/GetLastError result or CPU access denial.
+
+There is no controller launch, CPU report or PMU read. Program ordering has not reached the
+successor-edge creation or ready-publication operations; this is a source-derived bound,
+not a direct read of retained car files. Existing claims remain untouched. Exact failed
+API/condition is still unknown; investigate CE enumeration assumptions before any next test.
+
+Original report identities:
+- `cpu-job.txt`: 158 bytes, SHA-256 `8864c8aa351a1af7a181ab680b7676e7a66bb4663e9c6c84731503fae4e9a419`.
+- `cpu-successor.txt`: 112 bytes, SHA-256 `fd1b986c00dc1d40fffff8abc6f37d95a812c912424679fc07c4b55e882e0870`.
+- `done.txt`: 29 bytes, SHA-256 `87b59101a1c2babe8de2575598db7e717a73e660fea26bc358fb3974b8d2ac47`.
+
+Candidate firmware analysis confirms CE structure sizes, PID/path population and enumeration
+end code 18. The additional requirement that the collector EXE appear in its own module
+snapshot is a leading **hypothesis**, not a demonstrated live failure. No path/PID/end-code
+checks have been relaxed. A next diagnostic must expose the exact stage/API and bounded
+self/process/module metadata without launching a CPU probe or consuming/replaying an edge.
+
+Five new byte-exact fixture/regression checks pass alongside the six first-return checks.
+Forged clean exits, late child bytes and altered ledgers cannot manufacture CPU success.
+No CPU rate, PMU enablement, frequency/voltage update or overclock is qualified.
+
+
+## Historical controlled successor USB preparation, November 18
 
 NO NAME now contains **`20261118-174115-cpuavail-dbf6`**, a new read-only v2 diagnostic.
 Its **48,760-byte** pack has SHA-256
