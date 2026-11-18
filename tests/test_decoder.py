@@ -19,10 +19,10 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from s2am import cli, decoder, stick  # noqa: E402
+from s2am import cli, decoder, native, stick  # noqa: E402
 from s2am.fakecar import FakeCar  # noqa: E402
 from s2am.job import (AUTOKIT_BUSY, AUTOKIT_BUSY_RESTORE, AUTOKIT_CE, BUNDLE_PARTS, CHANGING,  # noqa: E402
-                      DECODER_FILES, OLD_REPORT, OLD_REPORT_MARKER, READBACK, RESTARTING, SCREENS, STICK_MOUNTS,
+                      DECODER_FILES, NEON_CHECK, NEON_REPORT, OLD_REPORT, OLD_REPORT_MARKER, READBACK, RESTARTING, SCREENS, STICK_MOUNTS,
                       SWAP_KINDS, Job, bundle_parts, ce_path, meta, swap_lines, swap_script, swap_target)
 from s2am.state import Store  # noqa: E402
 
@@ -118,6 +118,8 @@ def decoder_set(filler: bytes = b"") -> dict[str, bytes]:
 
 ORIGINALS = decoder_set(b"SyncExtPack's own build" * 40)  # stands in for AutoKit's own three
 NEW = decoder_set(b"faster")  # the faster build: shorter than the stock one, as the real one is
+# a NEON build: two files longer than NEW's, avformat as long as NEW's but not the same
+NEON = {**decoder_set(b"neon build, with more code in it"), FORMAT: decoder_set(b"neon!!")[FORMAT]}
 
 
 class Checks(unittest.TestCase):
@@ -1206,6 +1208,114 @@ class Loop(unittest.TestCase):
             cli.main(["job", "decoder", "--from", str(self.build_folder), "--restore", job.id, "--serial", SERIAL])
         with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
             cli.main(["job", "decoder", "--serial", SERIAL])
+
+    def neon_folder(self) -> Path:
+        """A third build: its avformat is as long as NEW's but not the same, as the real NEON one is."""
+        return self.write(self.tmp / "ffmpeg-neon", NEON)
+
+    def test_a_neon_build_goes_over_the_build_on_the_car_and_its_undo_is_autokits_own(self):
+        first, _, _, _ = self.run_job("--from", str(self.build_folder))
+        with mock.patch.object(native, "binary", return_value=b"MZ neon check") as built_program:
+            job, work, built, imported = self.run_job("--from", str(self.neon_folder()), "--over", first.id,
+                                                      "--neon-check")
+        built_program.assert_called_once_with(NEON_CHECK)
+        for said in (f"over {first.id}", "still puts AutoKit's own files back",
+                     f"{FORMAT} is exactly as long as the one on the car", "NEON check: the job first runs"):
+            self.assertIn(said, built)
+        self.assertNotIn(f"{CODEC} is exactly as long", built)
+        folder = work / "payload" / job.job_dir.lstrip("/")
+        self.assertEqual((folder / NEON_CHECK).read_bytes(), b"MZ neon check")
+        self.assertEqual(job.params["over"], first.id)
+        self.assertIs(job.params["neon_check"], True)
+        self.assertEqual({n: f["old_sha256"] for n, f in job.params["files"].items()},
+                         {n: decoder.sha256(NEW[n]) for n in DECODER_FILES})
+        self.assertIn(f"{job.id}: applied", imported)
+        self.assertIn("NEON check passed", imported)
+        self.assertIn("verified: the new decoder is on the car (3 files match byte for byte)", imported)
+        self.assertEqual(self.car_files(), NEON)
+        report = Store().report(SERIAL, job.id)
+        self.assertIn("T|pass", (report / NEON_REPORT).read_text())
+        for name in DECODER_FILES:  # what it replaced, on the car and on the stick: the first job's build
+            self.assertEqual((report / "backup" / name).read_bytes(), NEW[name])
+        undo, undo_work, built, imported = self.run_job("--restore", job.id)
+        self.assertIn("puts AutoKit's own three decoder files back", built)
+        self.assertIn("verified: the original decoder is back (3 files match byte for byte)", imported)
+        self.assertEqual(self.car_files(), ORIGINALS)
+
+    def test_a_car_where_neon_does_not_work_keeps_the_decoder_it_has(self):
+        first, _, _, _ = self.run_job("--from", str(self.build_folder))
+        for knob in ("neon_works", "native_runs"):
+            with self.subTest(knob), mock.patch.object(native, "binary", return_value=b"MZ neon check"), \
+                    mock.patch.object(self.car, knob, False):
+                job, _, _, imported = self.run_job("--from", str(self.neon_folder()), "--over", first.id,
+                                                   "--neon-check")
+                self.assertIn(f"{job.id}: failed", imported)
+                self.assertIn("NEON check did NOT pass" if knob == "neon_works" else "NEON check: no report", imported)
+                self.assertNotIn("NEON check passed", imported)
+                self.assertNotEqual(self.code, 0)
+                report = Store().report(SERIAL, job.id)
+                self.assertTrue((report / "neon-failed.txt").is_file())
+                self.assertFalse((report / CHANGING).exists())
+                self.assertEqual(self.car_files(), NEW)
+                self.assertFalse(self.car.exists(f"\\SyncExtendedPack\\_s2am\\backup\\{job.id}"))
+
+    def test_only_a_job_checked_on_the_car_can_be_planned_over(self):
+        neon = str(self.neon_folder())
+        built, _, _ = self.build("--from", str(self.build_folder))  # on a stick, never run
+        Store().save_job(SERIAL, built.id, {**json.loads(built.to_json()), "status": "on-stick"})
+        self.assertIn("is not known to be on the car", self.refused("--from", neon, "--over", built.id))
+        self.assertIn("is not a job of this car", self.refused("--from", neon, "--over", "20261115-120000-dec-abcd"))
+        first, _, _, _ = self.run_job("--from", str(self.build_folder))
+        self.assertIn("nothing to do", self.refused("--from", str(self.build_folder), "--over", first.id))
+        self.assertIn("go with --from", self.refused("--restore", first.id, "--over", first.id))
+        self.assertIn("go with --from", self.refused("--restore", first.id, "--neon-check"))
+        # without --over the plan is against AutoKit's own, and the car, holding the first job's, stops it
+        job, _, _, imported = self.run_job("--from", neon)
+        self.assertIn(f"{job.id}: stale", imported)
+        self.assertEqual(self.car_files(), NEW)
+
+    def test_a_later_decoder_job_ends_planning_over_an_earlier_one(self):
+        first, _, _, _ = self.run_job("--from", str(self.build_folder))
+        with mock.patch.object(native, "binary", return_value=b"MZ neon check"):
+            second, _, _, _ = self.run_job("--from", str(self.neon_folder()), "--over", first.id)
+            third = self.write(self.tmp / "ffmpeg-third", decoder_set(b"a third build, longer than the others"))
+            said = self.refused("--from", str(third), "--over", first.id)
+            self.assertIn(f"{second.id} ran after {first.id}", said)
+            self.run_job("--from", str(third), "--over", second.id)
+        self.run_job("--restore", second.id)
+        self.assertIn("ran after", self.refused("--from", str(self.neon_folder()), "--over", second.id))
+
+    def test_a_pass_file_that_will_not_go_stops_the_job(self):
+        first, _, _, _ = self.run_job("--from", str(self.build_folder))
+        with mock.patch.object(native, "binary", return_value=b"MZ neon check"):
+            job, work, _ = self.build("--from", str(self.neon_folder()), "--over", first.id, "--neon-check")
+        stale = f"{ce_path(job.job_dir)}\\{NEON_REPORT}.pass"
+        self.car.put(stale, b"pass")
+        self.car.stuck_files.add(stale.lower())
+        self.car.neon_works = False
+        imported = self.run_built(job, work)
+        self.assertIn(f"{job.id}: failed", imported)
+        self.assertEqual(self.car_files(), NEW)
+
+    def test_the_neon_check_runs_before_the_backup_and_only_when_asked(self):
+        files = Scripts.files
+        plain = swap_script(Job(SERIAL, "dec", params={"files": files}))
+        self.assertNotIn(NEON_CHECK, plain)
+        script = swap_script(Job(SERIAL, "dec", params={"files": files, "neon_check": True}))
+        run = script.index(f'RunWait(jd & "\\{NEON_CHECK}", jd & "\\{NEON_REPORT}")')
+        stop = script.index("so the NEON decoder was not installed")
+        self.assertLess(script.index('If (ProcExists("AutoKit.exe"))'), run)
+        self.assertLess(run, stop)
+        self.assertLess(stop, script.index("MkDir(bk)"))
+        # a pass writes nothing to the stick before the swap: a stick that fails cannot stop it there
+        between = script[run:script.index("MkDir(bk)")]
+        self.assertEqual(between.count("out &"), 2)  # the report and the stop, both only when it did not pass
+        self.assertLess(script.index("could not be deleted, so this run's check"), run)  # a stale pass file
+        self.assertLess(script.index('"swapped" & "^NL^"'), script.rindex(f'out & "\\{NEON_REPORT}"'))
+        self.assertLess(stop, min(m.start() for m in re.finditer(r"Copy\(th &", script)))
+        self.assertIn('Delete(out & "\\neon-failed.txt")', script)  # an earlier run's stop is cleared first
+        with self.assertRaises(ValueError):
+            swap_script(Job(SERIAL, "dec", params={"files": files, "neon_check": "yes"}))
 
     def test_no_syncextpack_no_decoder_job(self):
         shutil.rmtree(self.upstream / decoder.STOCK)

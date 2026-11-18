@@ -46,6 +46,7 @@ STOPPED = {# the car may hold a damaged file, or a mix of old and new ones, or f
            "stale.txt": "stale", "busy.txt": "busy", "backup-failed.txt": "failed",
            "backup-missing.txt": "failed", "payload-bad.txt": "failed", "missing.txt": "failed",
            "selftest-failed.txt": "failed", "backup-bad.txt": "failed", "unknown-runner.txt": "failed",
+           "neon-failed.txt": "failed",
            # a bundle: its part that stopped says why; parts after it never ran (checked last)
            "part.txt": "stopped", "started.txt": "interrupted", "queued.txt": "not-run"}
 

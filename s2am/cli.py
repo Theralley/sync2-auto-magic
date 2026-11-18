@@ -39,6 +39,7 @@ from pathlib import Path
 from . import apps, autokit, bootstrap, decoder, diskcheck, native, pack, stick, theme, window
 from .container import REPO, ContainerError
 from .job import (AUTOKIT_CE, AUTOKIT_LANGS, AUTOKIT_MODULES, BOOST_LEVELS, DRIVE_SECONDS, LOAD_SECONDS,
+                  NEON_CHECK, NEON_REPORT,
                   CLOCK_ROOTS, REGISTRY_ROOTS, RESTARTING,
                   SCREENS, SERIAL, STARTUP_SCREENS, SWAP_KINDS, Job, autokit_lang_file, bundle_parts, stage)
 from .state import VERDICTS, Store, diff, outcome, parse_inventory
@@ -75,7 +76,7 @@ JOB_KINDS = {"inventory": "inv", "autokit-stock": "akstock", "autokit-patched": 
              "snapshot": "snap", "logger": "log", "native-hello": "hello", "runner-guard": "guard",
              "theme": "theme", "apps-menu": "appmenu", "cleanup": "clean", "screen": "screen",
              "bundle": "bundle", "registry": "reg", "decoder": "dec", "pmic": "pmic", "clock": "clock",
-             "decoder-inspect": "decdiag"}
+             "decoder-inspect": "decdiag", "neon-diagnose": "neondiag"}
 MARK = {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
 
 
@@ -411,6 +412,19 @@ def cmd_job(args) -> int:
             print(f"apps-menu: replaces SyncApps.swf and adds {len(params['added'])} tile pictures, backing up "
                   "the menu first; SYNC restarts. Build the restore stick now as well: "
                   "s2am job apps-menu --restore <this job>")
+    elif args.kind == "neon-diagnose":
+        from .job import ND_PROGRAM
+        from . import neondiag
+        params, extra, sets = neondiag.plan(args.decode or [], args.sample, args.reference, args.frame)
+        extra[ND_PROGRAM] = native.binary(ND_PROGRAM)
+        nd_sets = sets
+        if params:
+            print(f"trial decodes: AutoKit's own files and {', '.join(params['sets'])} each decode the sample "
+                  "the way AutoKit does, timed; allow a few minutes more")
+        print("neon-diagnose: runs small NEON tests on the car, each in its own process, and records "
+              "any fault (which exception, where, the registers). It changes nothing on the car and "
+              "needs no phone. Usually under a minute; a stage that hangs is ended after 25 s. "
+              "Import the stick afterwards: the result is in nd.txt")
     elif args.kind == "pmic":
         extra = {"s2ampmic.exe": native.binary("s2ampmic.exe")}
         print("pmic: reads identification, SW1 voltage presets and mode/SID configuration through PMI1. "
@@ -466,11 +480,22 @@ def cmd_job(args) -> int:
               "script probe. The separate clock probe attempts fixed register reads through ceddk; "
               "mapping may be denied. No decoder replacement, clock/voltage writes or reboot.")
     elif args.kind == "decoder":
-        params, extra = decoder.plan(Store(), args.serial, args.upstream, args.source, args.restore)
+        params, extra = decoder.plan(Store(), args.serial, args.upstream, args.source, args.restore,
+                                     over=args.over, neon_check=args.neon_check)
         if params.get("restore"):
             print(f"decoder: puts AutoKit's own three decoder files back (what {args.restore} replaced). "
                   "SYNC does not restart")
         else:
+            if params.get("over"):
+                print(f"over {args.over}: the car holds that job's files, and this one replaces those. Its "
+                      "undo (--restore <this job>) still puts AutoKit's own files back")
+                for name in decoder.same_length(params):
+                    print(f"  {name} is exactly as long as the one on the car, so the car cannot tell whether "
+                          "it copied; only the byte check at `s2am stick import` can")
+            if params.get("neon_check"):
+                extra[NEON_CHECK] = native.binary(NEON_CHECK)
+                print("NEON check: the job first runs a small program that uses NEON in several threads at "
+                      "once (a few seconds). If it does not pass, the job changes nothing and says so")
             print(f"decoder: replaces AutoKit's three decoder files ({', '.join(params['files'])}), backing "
                   "them up first. SYNC does not restart. Build the undo stick now, at the same time: "
                   "s2am job decoder --restore <this job>")
@@ -482,6 +507,8 @@ def cmd_job(args) -> int:
         return 0
     job = Job(serial=args.serial, kind=JOB_KINDS[args.kind], params=params)
     workdir = Path(args.work or REPO / "build" / "jobs" / job.id).resolve()
+    if job.kind == "neondiag":  # the trial decodes' files go into the job's own folder on the car
+        payload = [(source, f"{job.job_dir}/{relative}") for source, relative in nd_sets]
     stage(job, args.upstream, workdir, extra, payload)
     if job.kind == "inst" and params["app"].lower() == "autokit":
         autokit.patch_folder(workdir / "payload" / "SyncExtendedPack/Apps/Media/AutoKit",
@@ -571,6 +598,9 @@ def cmd_stick_import(args) -> int:
                   "  NOT verified: hello.exe wrote nothing; native code may not run here")
         if record.get("kind") == "guard" and record["status"] == "applied":
             print(f"  {_verify_guard(store, record)}")
+        if record.get("kind") == "dec" and (record.get("params") or {}).get("neon_check") and report \
+                and not record.get("replayed"):
+            print(f"  {_neon_summary(report / NEON_REPORT)}")
         if record.get("kind") == "clean" and record["status"] == "applied" and report and not record.get("replayed"):
             listed = (report / "cleanup.txt").read_text(errors="replace").splitlines() \
                 if (report / "cleanup.txt").is_file() else []
@@ -581,6 +611,10 @@ def cmd_stick_import(args) -> int:
             done = report / "registry-done.txt"
             print("  " + (done.read_text(errors="replace").strip().replace("|", ", ") if done.is_file() else
                           "NOT complete: s2amreg.exe did not finish in time; registry.txt may be partial"))
+        if record.get("kind") == "neondiag" and record["status"] == "applied":
+            from . import neondiag
+            for text in neondiag.summary(report, record.get("params")):
+                print("  " + text)
         if record.get("kind") in ("pmic", "clock") and record["status"] == "applied" and report:
             from . import pmic
             print("  " + pmic.summary(report))
@@ -604,6 +638,21 @@ def cmd_stick_import(args) -> int:
                 target = store.job(record["serial"], record["params"]["target"])
                 store.save_job(record["serial"], target["id"], {**target, "undone_by": record["id"]})
     return 0 if all(r["status"] in ("applied", "already-applied", "pending") for r in results) else 1
+
+
+def _neon_summary(path: Path) -> str:
+    """What s2amneon.exe found on the car, from its report (native/s2amneon.c), in one line."""
+    if not path.is_file() or path.is_symlink():
+        return "NEON check: no report came back (the swap had been made already, or the program did not run)"
+    lines = [line.strip() for line in path.read_text(errors="replace").splitlines() if line.strip()][:64]
+    threads = [line.split("|") for line in lines if line.startswith("W|")]
+    longest = max((int(t[9]) for t in threads if len(t) == 10 and t[9].isdigit()), default=0)
+    if "T|pass" in lines and "K|pass" in lines:
+        return (f"NEON check passed: NEON code ran, and D0-D31 held in {len(threads)} threads running at once "
+                f"(longest round {longest} ms; well over 130 means they were switched mid-round)")
+    step = next((line[2:] for line in reversed(lines) if line.startswith("B|")), "nothing")
+    said = "; ".join(line for line in lines if line[:2] in ("E|", "C|", "W|")) or "no result line"
+    return f"NEON check did NOT pass: it got as far as '{step}' ({said})"
 
 
 STOP_HINTS = {
@@ -1053,6 +1102,14 @@ def parser() -> argparse.ArgumentParser:
     logger.add_argument("--native", action="store_true",
                         help="also run notifylog.exe, which records AutoKit's window messages")
     logger.set_defaults(func=cmd_job)
+    diagnose = job_sub.add_parser("neon-diagnose", parents=[common],
+                                  help="find out why NEON code ends a program on this car (changes nothing)")
+    diagnose.add_argument("--decode", action="append", metavar="LABEL=FOLDER",
+                          help="also decode a sample with the three decoder files in FOLDER (repeatable)")
+    diagnose.add_argument("--sample", type=Path, help="the raw H.264 stream to decode")
+    diagnose.add_argument("--reference", type=Path, help="that stream decoded right, raw I420")
+    diagnose.add_argument("--frame", help="the reference's picture size, WIDTHxHEIGHT")
+    diagnose.set_defaults(func=cmd_job)
     job_sub.add_parser("native-hello", parents=[common],
                        help="prove compiled code runs on this SYNC 2").set_defaults(func=cmd_job)
     guard = job_sub.add_parser("runner-guard", parents=[common],
@@ -1110,6 +1167,12 @@ def parser() -> argparse.ArgumentParser:
     source.add_argument("--from", dest="source", type=Path,
                         help="a folder with avcodec-56.dll, avutil-54.dll and avformat-56.dll, all three")
     source.add_argument("--restore", metavar="JOB_ID", help="put back what that decoder job replaced")
+    faster.add_argument("--over", metavar="JOB_ID",
+                        help="the car holds the files this decoder job put there (applied and checked at "
+                             "import): replace those instead of AutoKit's own")
+    faster.add_argument("--neon-check", action="store_true",
+                        help="for a build that uses NEON: first check on the car that NEON code runs and "
+                             "that its registers hold across threads; change nothing if it does not")
     faster.set_defaults(func=cmd_job)
     inspect = job_sub.add_parser("decoder-inspect", parents=[common],
                                 help="independent native inspection of an unresolved decoder test")

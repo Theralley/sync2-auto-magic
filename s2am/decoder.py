@@ -42,6 +42,10 @@ CALLS = {  # what AutoKit.exe looks up in each file by name
 }
 ARM = 0x01C0  # IMAGE_FILE_MACHINE_ARM, what SyncExtPack's own three are built for (ARM Thumb is 0x01C2)
 DLL = 0x2000  # IMAGE_FILE_DLL
+# outcomes of a decoder job after which the car may no longer hold what an earlier one put there
+# ("failed" is not one: such a run stopped before any change, or its rollback was checked at import)
+CHANGED_CAR = ("applied", "already-applied", "interrupted", "not-verified", "rollback-failed",
+               "processed-no-report", "unknown")
 CORE = "coredll.dll"  # Windows CE's C library and system calls, on every car
 
 
@@ -277,17 +281,43 @@ def from_folder(source: Path) -> dict[str, bytes]:
     return {name: (source / name).read_bytes() for name in FILES}
 
 
-def plan(store: Store, serial: str, upstream: Path, source: Path | None,
-         restore: str | None) -> tuple[dict, dict[str, bytes]]:
-    """(job params, files for the job folder) for a decoder job or its restore."""
+def _applied(store: Store, serial: str, job_id: str) -> dict:
+    """The record of decoder apply job ``job_id``; DecoderError if it is not one."""
+    try:
+        target = store.job(serial, job_id)
+    except (OSError, ValueError) as error:
+        raise DecoderError(f"{job_id} is not a job of this car") from error
+    if target.get("kind") != "dec" or (target.get("params") or {}).get("restore"):
+        raise DecoderError(f"{job_id} is not a decoder job")
+    return target
+
+
+def plan(store: Store, serial: str, upstream: Path, source: Path | None, restore: str | None,
+         over: str | None = None, neon_check: bool = False) -> tuple[dict, dict[str, bytes]]:
+    """(job params, files for the job folder) for a decoder job or its restore.
+
+    ``over``: the car holds the files decoder job ``over`` put there, not SyncExtPack's own, so
+    the new job plans against those: their sizes are what it finds, and what it backs up. Only a
+    job the Mac checked byte for byte on the car counts. Its restore still carries SyncExtPack's
+    own files: the undo of any decoder job is AutoKit as it was installed.
+
+    ``neon_check``: the job runs s2amneon.exe first and changes nothing unless it passes
+    (job._decoder_apply_lines); for a build that uses NEON.
+    """
     if (source is None) == (restore is None):
         raise DecoderError("give either --from FOLDER or --restore JOB")
+    if restore and (over or neon_check):
+        raise DecoderError("--over and --neon-check go with --from, not with --restore")
     old = originals(upstream)
     if restore:
-        target = store.job(serial, restore)
-        if target.get("kind") != "dec" or target["params"].get("restore"):
-            raise DecoderError(f"{restore} is not a decoder job")
-        files = target["params"].get("files") or {}
+        target = base = _applied(store, serial, restore)
+        for _ in range(16):  # a job planned over another: the first of them replaced SyncExtPack's own
+            if not base["params"].get("over"):
+                break
+            base = _applied(store, serial, base["params"]["over"])
+        else:
+            raise DecoderError(f"{restore} is planned over too many other jobs")
+        files = base["params"].get("files") or {}
         wrong = [name for name in FILES if sha256(old[name]) != (files.get(name) or {}).get("old_sha256")]
         if wrong:
             raise DecoderError(f"SyncExtPack's {', '.join(wrong)} is not what {restore} replaced; "
@@ -297,13 +327,44 @@ def plan(store: Store, serial: str, upstream: Path, source: Path | None,
                 {f"orig-{name}": old[name] for name in FILES})
     new = from_folder(source)
     check_set(new)
-    for name in FILES:
-        if new[name] == old[name]:
-            raise DecoderError(f"the new {name} is the same as AutoKit's own; nothing to do")
-        if len(new[name]) == len(old[name]):
-            # the car tells a copy that failed (a file AutoKit holds) only by its size
-            raise DecoderError(f"the new {name} is exactly as long as AutoKit's own, so the car could not "
-                               "tell a failed copy from a good one: rebuild it")
-    params = {"files": {name: {"old": len(old[name]), "new": len(new[name]), "old_sha256": sha256(old[name]),
+    if over:
+        target = _applied(store, serial, over)
+        if target.get("status") not in ("applied", "already-applied") or "verified" not in target \
+                or "not_verified" in target or target.get("undone_by"):
+            raise DecoderError(f"{over} is not known to be on the car: only a decoder job that ran and "
+                               "that the Mac checked byte for byte at import can be planned over")
+        later = [job["id"] for job in store.jobs(serial)
+                 if job.get("kind") == "dec" and job.get("created_utc", "") > target.get("created_utc", "")
+                 and (job.get("outcome") or job.get("status")) in CHANGED_CAR]
+        if later:
+            raise DecoderError(f"{later[-1]} ran after {over} and may have changed the decoder again: plan "
+                               "over the job that ran last, or run its restore and plan without --over")
+        files = target["params"].get("files") or {}
+        if sorted(files) != sorted(FILES):
+            raise DecoderError(f"{over} does not record all three decoder files")
+        before = {name: (files[name]["new"], files[name]["new_sha256"]) for name in FILES}
+        if all(sha256(new[name]) == before[name][1] for name in FILES):
+            raise DecoderError(f"the new files are the ones {over} put on the car; nothing to do")
+    else:
+        before = {name: (len(old[name]), sha256(old[name])) for name in FILES}
+        for name in FILES:
+            if new[name] == old[name]:
+                raise DecoderError(f"the new {name} is the same as AutoKit's own; nothing to do")
+            if len(new[name]) == len(old[name]):
+                # the car tells a copy that failed (a file AutoKit holds) only by its size
+                raise DecoderError(f"the new {name} is exactly as long as AutoKit's own, so the car could not "
+                                   "tell a failed copy from a good one: rebuild it")
+    params = {"files": {name: {"old": before[name][0], "new": len(new[name]), "old_sha256": before[name][1],
                                "new_sha256": sha256(new[name])} for name in FILES}}
+    if over:
+        params["over"] = over
+    if neon_check:
+        params["neon_check"] = True
     return params, {f"new-{name}": new[name] for name in FILES}
+
+
+def same_length(params: dict) -> list[str]:
+    """The files of a job planned over another that are as long as the ones on the car but not
+    the same: the car cannot tell whether such a file copied, only the Mac's byte check can."""
+    return [name for name, f in (params.get("files") or {}).items()
+            if f["old"] == f["new"] and f["old_sha256"] != f["new_sha256"]]

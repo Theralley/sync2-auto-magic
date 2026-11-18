@@ -24,7 +24,8 @@ SOURCES = Path(__file__).resolve().parent / "native"
 PROGRAMS = {"hello.exe": "hello.c", "notifylog.exe": "notifylog.c", "s2amrun.exe": "s2amrun.c",
             "s2amwatch.exe": "s2amwatch.c", "s2amdrive.exe": "s2amdrive.c", "s2amreg.exe": "s2amreg.c",
             "s2ampmic.exe": "s2ampmic.c", "s2ammodules.exe": "s2ammodules.c",
-            "s2amdiag.exe": "s2amdiag.c", "s2amclock.exe": "s2amclock.c"}
+            "s2amdiag.exe": "s2amdiag.c", "s2amclock.exe": "s2amclock.c",
+            "s2amneon.exe": "s2amneon.c", "s2amnd.exe": "s2amnd.c"}
 CFLAGS = ("-O2", "-Wall", "-Wextra", "-Werror")
 SUBSYSTEM_WINDOWS_CE_GUI = 9
 

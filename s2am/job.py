@@ -1048,6 +1048,14 @@ def _clear_readback() -> list[str]:
 
 
 PHASE_LOG = "phase.txt"  # in the job's folder on the car: how far a decoder apply got, stick or no stick
+# A decoder apply planned with --neon-check (native/s2amneon.c): the program, in the job's folder,
+# and what it writes there. The report also goes to the stick, pass or not.
+NEON_CHECK = "s2amneon.exe"
+NEON_REPORT = "neon.txt"
+NEON_STUCK = ("an earlier run's NEON pass file could not be deleted, so this run's check could not be "
+              "trusted; nothing changed. Build the job again")
+NEON_FAILED = ("the NEON check did not pass on this SYNC (neon.txt says how far it got), so the NEON "
+               "decoder was not installed; nothing changed")
 
 
 def _decoder_apply_lines(job: Job, folder: str, files: dict) -> list[str]:
@@ -1095,6 +1103,27 @@ def _decoder_apply_lines(job: Job, folder: str, files: dict) -> list[str]:
                   f'  If (FileSize(jd & "\\new-{name}") <> {_length(f["new"])})',
                   *_stop("payload-bad.txt", "the job's decoder files are incomplete; nothing changed", "    "),
                   "  EndIf"]
+    neon = job.params.get("neon_check")
+    if neon not in (None, True):
+        raise ValueError(f"invalid neon_check {neon!r}")
+    if neon:
+        # Before the backup, so a car that fails it is left exactly as it was. s2amneon.exe writes
+        # its pass file only when NEON code ran right and the registers held across threads; a pass
+        # file from an earlier run of this job goes first, in case the program does not start now.
+        # On a pass nothing is written to the stick here: its report follows the swap, below.
+        lines += [f'  If (FileExists(jd & "\\{NEON_REPORT}.pass"))',
+                  f'    Delete(jd & "\\{NEON_REPORT}.pass")',
+                  "  EndIf",
+                  f'  If (FileExists(jd & "\\{NEON_REPORT}.pass"))',  # it would stand for a check that failed
+                  *_stop("neon-failed.txt", NEON_STUCK, "    "),
+                  "  EndIf",
+                  f'  RunWait(jd & "\\{NEON_CHECK}", jd & "\\{NEON_REPORT}")',
+                  f'  If (NOT FileExists(jd & "\\{NEON_REPORT}.pass"))',
+                  f'    If (FileExists(jd & "\\{NEON_REPORT}"))',
+                  f'      Copy(jd & "\\{NEON_REPORT}", out & "\\{NEON_REPORT}", TRUE)',
+                  "    EndIf",
+                  *_stop("neon-failed.txt", NEON_FAILED, "    "),
+                  "  EndIf"]
     lines += ['  MkDir("\\SyncExtendedPack\\_s2am")',
               f"  MkDir({_quote(BACKUP_DIR)})",
               "  MkDir(bk)",
@@ -1133,6 +1162,9 @@ def _decoder_apply_lines(job: Job, folder: str, files: dict) -> list[str]:
               "  EndIf",
               phase("swapped"),
               "EndIf",
+              *([f'If (FileExists(jd & "\\{NEON_REPORT}"))',
+                 f'  Copy(jd & "\\{NEON_REPORT}", out & "\\{NEON_REPORT}", TRUE)',
+                 "EndIf"] if neon else []),
               'MkDir(out & "\\backup")',
               *[f'Copy(bk & "\\{name}", out & "\\backup\\{name}", TRUE)' for name in files],
               'MkDir(out & "\\applied")',
@@ -1309,6 +1341,51 @@ def hello_script(job: Job) -> str:
     return _script(lines + _inventory() + _footer(job))
 
 
+ND_PROGRAM = "s2amnd.exe"
+ND_REPORT = "nd.txt"
+
+
+def neon_diagnose_script(job: Job) -> str:
+    """Why NEON code ends a program on this car: s2amnd.exe runs its stages and changes nothing.
+
+    It writes on the car, where a write cannot be lost to the stick, and the result is copied
+    to the stick afterwards. An earlier run's result is removed first, so an old file is never
+    read as this run's."""
+    home = _quote(ce_path(job.job_dir))
+    sets = job.params.get("sets") or {}
+    checks = []
+    for label, files in sets.items():  # the trial decodes' files: all there, and whole
+        if not re.fullmatch(r"[a-z0-9]{1,8}", label):
+            raise ValueError(f"invalid set label {label!r}")
+        for name, entry in files.items():
+            if name not in DECODER_FILES:
+                raise ValueError(f"not a decoder file: {name!r}")
+            path = f'{home} & "\\set-{label}\\{name}"'
+            checks += [f"If (NOT FileExists({path}))",
+                       *_stop("payload-bad.txt", "the job's decoder files are incomplete; nothing ran", "  "),
+                       "EndIf",
+                       f"If (FileSize({path}) <> {_length(entry.get('size'))})",
+                       *_stop("payload-bad.txt", "the job's decoder files are incomplete; nothing ran", "  "),
+                       "EndIf"]
+    if sets:  # a running AutoKit holds decoder files of the same names: the trial would get those
+        checks += ['If (ProcExists("AutoKit.exe"))',
+                   *_stop("busy.txt", "AutoKit is running: restart SYNC and re-prepare the stick on the Mac", "  "),
+                   "EndIf",
+                   f'If (NOT FileExists({home} & "\\sample.h264"))',
+                   *_stop("payload-bad.txt", "the job's sample is missing; nothing ran", "  "),
+                   "EndIf"]
+    lines = _header(job) + checks + [
+        f'If (FileExists({home} & "\\{ND_REPORT}"))',
+        f'  Delete({home} & "\\{ND_REPORT}")',
+        "EndIf",
+        f'RunWait({home} & "\\{ND_PROGRAM}", {home} & "\\{ND_REPORT}")',
+        f'If (FileExists({home} & "\\{ND_REPORT}"))',
+        f'  Copy({home} & "\\{ND_REPORT}", out & "\\{ND_REPORT}", TRUE)',
+        "EndIf",
+    ]
+    return _script(lines + _inventory() + _footer(job))
+
+
 def pmic_script(job: Job) -> str:
     """One passive snapshot through PMI1; a failed/unfinished read is not a voltage result."""
     return _script(_header(job) + pmic_lines(job) + _inventory() + _footer(job))
@@ -1393,6 +1470,7 @@ SCRIPTS = {
     "pmic": pmic_script,
     "clock": clock_script,
     "decdiag": decoder_inspect_script,
+    "neondiag": neon_diagnose_script,
 }
 MENU_CHANGING = ("rm", "undo", "inst")  # SYNC reads SyncApps.xml at start, so these restart it
 RESTARTING = MENU_CHANGING + SKIN_SWAPS + ("bundle",)  # and its theme, Apps menu and screens
@@ -1448,7 +1526,7 @@ def stage(job: Job, upstream: Path, workdir: Path, extra: dict[str, bytes] | Non
 
     job.files = {
         "/" + str(path.relative_to(workdir / "payload")): hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in sorted(target.iterdir())
+        for path in sorted(target.iterdir()) if path.is_file()
     }
     (target / "job.json").write_text(job.to_json())
     (workdir / "meta.txt").write_bytes(meta(job))

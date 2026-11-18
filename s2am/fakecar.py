@@ -13,7 +13,7 @@ import shutil
 from pathlib import Path
 
 from .job import (AUTOKIT_CE, AUTOKIT_LOGS, AUTOKIT_MODULES, BACKUP_DIR, BOOST_STUCK_OFF, BOOST_STUCK_ON, CHANGING,
-                  BOOST_STUCK_WRITE, GUARD_BOOST, GUARD_LOG, INVENTORY_ROOT, LOAD_LOGS, MENU_XML, OLD_REPORT_MARKER,
+                  BOOST_STUCK_WRITE, GUARD_BOOST, GUARD_LOG, INVENTORY_ROOT, LOAD_LOGS, MENU_XML, NEON_REPORT, OLD_REPORT_MARKER,
                   PHASE_DIR, PLUGINS_MASK, REPORTS_DIR, STICK_MOUNTS, SWAP_KINDS, TOOLS_CE, Job, bundle_parts,
                   ce_path, load_folder, swap_lines, swap_target)
 
@@ -52,7 +52,10 @@ class FakeCar:
         self.power_cut_after_copy: str | None = None  # lower-case CE path: the power goes once it is written
         self.power_cut_after_job = False  # the power goes after the job's script, before install.bin is renamed
         self.native_runs = True  # does a CeGCC program start on this car? (test knob)
+        self.nd_lines = ["S|s2am-nd-v1", "G|0|break", "D|debug|1", "Q|0|break|break|dead0000",
+                         "T|complete"]  # s2amnd.exe's report (test knob)
         self.thread_priority = True  # does the guard's self-test find the boost's thread functions?
+        self.neon_works = True  # does s2amneon.exe pass on this car? (test knob)
         root.mkdir(parents=True, exist_ok=True)
 
     # Paths -----------------------------------------------------------------
@@ -176,6 +179,8 @@ class FakeCar:
                 if self.exists(path):
                     (out / "fetched").mkdir(exist_ok=True)
                     shutil.copyfile(self._resolve(path), out / "fetched" / path.strip("\\").replace("\\", "_"))
+        if job.kind == "neondiag" and self.native_runs:  # what s2amnd.exe writes
+            (out / "nd.txt").write_bytes("".join(f"{line}\r\n" for line in self.nd_lines).encode("ascii"))
         if job.kind == "hello":
             (out / "native-hello.txt").write_text("s2am native hello ok|wince 7.0 build 3500|uptime_ms 1\r\n")
         lines = []
@@ -303,6 +308,21 @@ class FakeCar:
                     return stop("stale.txt")
                 if any(size(jd / f"new-{n}") != f["new"] for n, f in files.items()):
                     return stop("payload-bad.txt")
+                if p.get("neon_check"):  # s2amneon.exe: its report, and its pass file only on a pass
+                    if self._ce(jd / f"{NEON_REPORT}.pass").lower() not in self.stuck_files:
+                        (jd / f"{NEON_REPORT}.pass").unlink(missing_ok=True)
+                    if (jd / f"{NEON_REPORT}.pass").exists():
+                        return stop("neon-failed.txt")
+                    if self.native_runs:
+                        (jd / NEON_REPORT).write_text("S|s2am-neon-v1\r\nB|child\r\nB|instr\r\n" + (
+                            "W|0|rounds|8|bad|0|first_bad|0|longest_ms|520\r\nK|pass\r\nC|exit|00000000\r\nT|pass\r\n"
+                            if self.neon_works else "C|exit|c000001d\r\n"))
+                        if self.neon_works:
+                            (jd / f"{NEON_REPORT}.pass").write_text("pass")
+                    if not (jd / f"{NEON_REPORT}.pass").is_file():
+                        if (jd / NEON_REPORT).is_file():
+                            shutil.copyfile(jd / NEON_REPORT, out / NEON_REPORT)
+                        return stop("neon-failed.txt")
                 for name in files:
                     self._copy(th / name, backup / name)
                 if any(size(backup / n) != f["old"] for n, f in files.items()):
@@ -319,6 +339,8 @@ class FakeCar:
                     for name in files:
                         self._copy(th / name, out / "rolledback" / name)
                     return stop("copy-failed.txt")
+            if p.get("neon_check") and (jd / NEON_REPORT).is_file():
+                shutil.copyfile(jd / NEON_REPORT, out / NEON_REPORT)
             (out / "backup").mkdir(exist_ok=True)
             for name in files:  # what a restore would use, for the Mac to compare: after the swap
                 self._copy(backup / name, out / "backup" / name)
