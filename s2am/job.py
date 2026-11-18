@@ -418,7 +418,9 @@ def autokit_config_script(job: Job) -> str:
 
     AutoKit reads ``screenconfig`` ("width,height,fps") and the empty flag file
     ``usehwdec`` (present = hardware decoding) from its folder at start (Codex,
-    AutoKit.exe+0x47a48). Any Auto_Box_Update.img is removed: AutoKit would flash it
+    AutoKit.exe+0x47a48). The empty flag file ``useboxmic`` works the same way
+    (AutoKit.exe 0x21b90 reads it): present, AutoKit tells the dongle to use its own
+    microphone (command 15); absent, the car's (command 7). Any Auto_Box_Update.img is removed: AutoKit would flash it
     to the dongle, and a wrong image kills the dongle.
 
     With ``measure`` (seconds) the job also starts the watcher and the load logger once the
@@ -464,15 +466,23 @@ def autokit_config_script(job: Job) -> str:
             'If (FileExists(src & "\\lang.absent"))',
             '  Delete(ak & "\\lang")',
             "EndIf",
+            'If (FileExists(src & "\\useboxmic.present"))',
+            '  WriteFile(ak & "\\useboxmic", "")',
+            "EndIf",
+            'If (FileExists(src & "\\useboxmic.absent"))',
+            '  Delete(ak & "\\useboxmic")',
+            "EndIf",
         ]
     else:
-        screen, decoder, lang = p.get("screen"), p.get("decoder"), p.get("lang")
+        screen, decoder, lang, mic = p.get("screen"), p.get("decoder"), p.get("lang"), p.get("mic")
         video = screen is not None or decoder is not None
         if video and (not SCREEN.fullmatch(str(screen)) or decoder not in ("software", "hardware")):
             raise ValueError(f"invalid AutoKit settings {screen!r}/{decoder!r}")
         if lang is not None and lang not in AUTOKIT_LANGS:
             raise ValueError(f"invalid AutoKit language {lang!r}")
-        if not video and lang is None:
+        if mic is not None and mic not in ("box", "car"):
+            raise ValueError(f"invalid AutoKit microphone {mic!r}")
+        if not video and lang is None and mic is None:
             raise ValueError("nothing to set")
         lines += [
             'MkDir("\\SyncExtendedPack\\_s2am")',
@@ -513,6 +523,20 @@ def autokit_config_script(job: Job) -> str:
                 "  EndIf",
                 "EndIf",
                 f'Copy({_quote(ce_path(job.job_dir))} & "\\lang", ak & "\\lang", TRUE)',
+            ]
+        if mic is not None:
+            lines += [
+                'If (FileExists(ak & "\\useboxmic"))',
+                '  WriteFile(bk & "\\useboxmic.present", "")',
+                "Else",
+                '  WriteFile(bk & "\\useboxmic.absent", "")',
+                "EndIf",
+                'If (NOT FileExists(bk & "\\useboxmic.present"))',
+                '  If (NOT FileExists(bk & "\\useboxmic.absent"))',
+                *_stop("backup-failed.txt", "could not back up the AutoKit microphone setting; nothing changed", "    "),
+                "  EndIf",
+                "EndIf",
+                'WriteFile(ak & "\\useboxmic", "")' if mic == "box" else 'Delete(ak & "\\useboxmic")',
             ]
     lines += [
         'If (FileExists(ak & "\\Auto_Box_Update.img"))',

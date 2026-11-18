@@ -534,6 +534,10 @@ class FakeCar:
                 shutil.copyfile(src / "lang", ak / "lang")
             if (src / "lang.absent").exists():
                 (ak / "lang").unlink(missing_ok=True)
+            if (src / "useboxmic.present").exists():
+                (ak / "useboxmic").write_bytes(b"")
+            if (src / "useboxmic.absent").exists():
+                (ak / "useboxmic").unlink(missing_ok=True)
         else:
             backup = self._resolve(f"{BACKUP_DIR}\\{job.id}")
             backup.mkdir(parents=True, exist_ok=True)
@@ -554,6 +558,13 @@ class FakeCar:
                 else:
                     (backup / "lang.absent").write_bytes(b"")
                 shutil.copyfile(self._resolve(ce_path(job.job_dir)) / "lang", ak / "lang")
+            if "mic" in job.params:
+                boxmic = ak / "useboxmic"
+                (backup / ("useboxmic.present" if boxmic.exists() else "useboxmic.absent")).write_bytes(b"")
+                if job.params["mic"] == "box":
+                    boxmic.write_bytes(b"")
+                else:
+                    boxmic.unlink(missing_ok=True)
         image = ak / "Auto_Box_Update.img"
         if image.exists():
             image.unlink()

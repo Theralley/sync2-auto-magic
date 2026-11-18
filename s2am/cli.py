@@ -330,11 +330,14 @@ def cmd_job(args) -> int:
             Store().job(args.serial, args.restore)  # must be a known job
             params = {"restore": args.restore}
         else:
-            if args.lang is None or args.screen is not None or args.decoder is not None:
+            params = {}
+            if (args.lang is None and args.mic is None) or args.screen is not None or args.decoder is not None:
                 params = {"screen": args.screen or "800,480,15", "decoder": args.decoder or "software"}
             if args.lang is not None:  # four bytes, so the file travels in the job folder
                 params["lang"] = args.lang
                 extra = {"lang": autokit_lang_file(AUTOKIT_LANGS[args.lang])}
+            if args.mic is not None:
+                params["mic"] = args.mic
         if args.measure is not None:  # the watcher and the load logger travel in the job folder
             params["measure"] = args.measure
             extra = {**(extra or {}), "s2amwatch.exe": native.binary("s2amwatch.exe"),
@@ -872,7 +875,9 @@ def autokit_settings(report: Path, entries) -> str:
     lcid = int.from_bytes(lang.read_bytes()[:4], "little") if lang.is_file() else None
     names_by_id = {v: k for k, v in AUTOKIT_LANGS.items()}
     language = names_by_id.get(lcid, f"0x{lcid:04x}") if lcid is not None else "unknown"
-    return f"screen {screen}, decoder {'hardware' if hardware else 'software'}, language {language}"
+    mic = "box" if f"{AUTOKIT_CE}\\useboxmic".lower() in names else "car"
+    return (f"screen {screen}, decoder {'hardware' if hardware else 'software'}, language {language}, "
+            f"microphone {mic}")
 
 
 def _registry_lines(text: str) -> list[str]:
@@ -1080,6 +1085,9 @@ def parser() -> argparse.ArgumentParser:
     config.add_argument("--lang", choices=sorted(AUTOKIT_LANGS),
                         help="AutoKit's own language (the stock folder is Chinese); "
                              "on its own it leaves the video settings alone")
+    config.add_argument("--mic", choices=["box", "car"],
+                        help="which microphone AutoKit asks the dongle to use: its own (box) or the "
+                             "car's (car, AutoKit's default); on its own it leaves the video settings alone")
     config.add_argument("--restore", metavar="JOB_ID", help="put back what that config job replaced")
     config.add_argument("--measure", metavar="SECONDS", type=int, nargs="?", const=LOAD_SECONDS,
                         help="also record the processor's load, clock and core voltage afterwards "

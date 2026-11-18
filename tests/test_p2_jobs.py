@@ -176,6 +176,33 @@ class Loop(unittest.TestCase):
         with self.assertRaises(ValueError):
             autokit_config_script(Job(SERIAL, "akcfg", params={}))
 
+    def test_microphone_alone_leaves_the_rest_and_restores(self):
+        self.car.put(f"{AUTOKIT_CE}\\screenconfig", b"800,480,10")
+        self.run_job("inventory")
+        self.assertIn("microphone car", self.status())
+        configured, _, imported = self.run_job("autokit-config", "--mic", "box")
+        self.assertIn("applied", imported)
+        self.assertTrue(self.car.exists(f"{AUTOKIT_CE}\\useboxmic"))
+        self.assertEqual(self.car._resolve(f"{AUTOKIT_CE}\\screenconfig").read_bytes(), b"800,480,10")
+        self.assertTrue(self.car.exists(f"{AUTOKIT_CE}\\usehwdec"))
+        self.assertIn("microphone box", self.status())
+        back, _, _ = self.run_job("autokit-config", "--mic", "car")
+        self.assertFalse(self.car.exists(f"{AUTOKIT_CE}\\useboxmic"))
+        self.run_job("autokit-config", "--restore", back.id)
+        self.assertTrue(self.car.exists(f"{AUTOKIT_CE}\\useboxmic"))
+        self.run_job("autokit-config", "--restore", configured.id)
+        self.assertFalse(self.car.exists(f"{AUTOKIT_CE}\\useboxmic"))
+
+    def test_microphone_script_backs_up_before_it_writes(self):
+        script = autokit_config_script(Job(SERIAL, "akcfg", params={"mic": "box"}))
+        guard = script.index('If (NOT FileExists(bk & "\\useboxmic.absent"))')
+        self.assertLess(guard, script.index('WriteFile(ak & "\\useboxmic", "")'))
+        self.assertNotIn("screenconfig\", ", script.split("If (FileExists(ak")[0])
+        self.assertIn('Delete(ak & "\\useboxmic")',
+                      autokit_config_script(Job(SERIAL, "akcfg", params={"mic": "car"})))
+        with self.assertRaises(ValueError):
+            autokit_config_script(Job(SERIAL, "akcfg", params={"mic": "phone"}))
+
     def test_firmware_image_is_removed_and_reported(self):
         self.run_job("inventory")
         self.car.put(f"{AUTOKIT_CE}\\Auto_Box_Update.img", b"fw")
