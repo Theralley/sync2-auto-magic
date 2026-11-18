@@ -1475,7 +1475,7 @@ def pmic_lines(job: Job) -> list[str]:
     ]
 
 
-MIC_WAIT = 90  # s2ammic.exe: at most eight recordings of 3-5 s each
+MIC_WAIT = 100  # s2ammic.exe ends itself after 75 s, 85 if it has a route to give back
 
 
 def mic_probe_script(job: Job) -> str:
@@ -1483,9 +1483,17 @@ def mic_probe_script(job: Job) -> str:
     into the report folder. Nothing on the car is changed. The script waits for mic-done.txt;
     without it the report says the probe did not finish, and mic.txt shows where it stopped.
     The probe ends itself after 75 s; one that is still there after the wait is ended here, which
-    also closes its recording device."""
+    also closes its recording device.
+
+    ``route`` (True): the route test instead. It is not read-only: it takes SYNC's own microphone
+    route away for a few seconds, connects the microphone to the device AutoKit opens, records,
+    and puts SYNC's route back. Nothing is stored; a SYNC restart restores everything."""
+    route = job.params.get("route", False)
+    if not isinstance(route, bool):
+        raise ValueError(f"invalid microphone route test {route!r}")
+    argument = '"route|" & out' if route else "out"
     return _script(_header(job) + [
-        f'Run({_quote(ce_path(job.job_dir))} & "\\s2ammic.exe", out)',
+        f'Run({_quote(ce_path(job.job_dir))} & "\\s2ammic.exe", {argument})',
         "n = 0",
         f"While (n < {MIC_WAIT})",
         '  If (FileExists(out & "\\mic-done.txt"))',

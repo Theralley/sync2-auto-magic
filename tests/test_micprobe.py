@@ -167,6 +167,122 @@ class Listening(unittest.TestCase):
         self.assertIn("#define MAX_DEVICES 16", source)
 
 
+V3 = "\r\n".join([
+    "s2am-mic-v3", "route test|set property 1",
+    "open|device 0|rate 16000|channels 1", "opened|result 0", "queued|device 0|result 0",
+    "listening|device 0|result 0",
+    "phase|seconds 3|bytes 0|buffers left 60|name as autokit finds it",
+    "route|number 1|request 0|source 32771|sink 0|step connect while sync holds it", "routed|number 1|result 4",
+    "phase|seconds 2|bytes 0|buffers left 60|name after asking while sync holds it",
+    "route|number 2|request 1|source 0|sink 4|step take sync's route away", "routed|number 2|result 0",
+    "route|number 3|request 0|source 32771|sink 0|step connect the microphone", "routed|number 3|result 0",
+    "phase|seconds 6|bytes 192000|buffers left 48|name microphone borrowed",
+    "route|number 4|request 1|source 0|sink 0|step take ours away", "routed|number 4|result 0",
+    "route|number 5|request 0|source 36864|sink 4|step give sync its microphone back", "routed|number 5|result 0",
+    "route|number 6|request 6|source 32771|sink 0|step put the table entry for device 0 back",
+    "routed|number 6|result 0",
+    "phase|seconds 2|bytes 0|buffers left 48|name after giving it back",
+    "heard|device 0|rate 16000|channels 1|bytes 192000|of 960000|first second 0|peak 14000|average 800"
+    "|samples not zero 90000|samples above 500 40000",
+    "closed|device 0|result 0", "end", ""])
+
+
+class Route(unittest.TestCase):
+    def report(self, text):
+        folder = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: [p.unlink() for p in folder.iterdir()] and None or folder.rmdir())
+        (folder / "mic.txt").write_text(text)
+        return folder
+
+    def test_says_each_answer_what_arrived_and_that_sync_got_it_back(self):
+        self.assertEqual(micprobe.summary(self.report(V3)), [
+            "microphone route test:",
+            "  connect while sync holds it: refused (error 4)",
+            "  take sync's route away: ok",
+            "  connect the microphone: ok",
+            "  take ours away: ok",
+            "  give sync its microphone back: ok",
+            "  put the table entry for device 0 back: ok",
+            "  as autokit finds it, 3 s: 0 bytes (nothing)",
+            "  after asking while sync holds it, 2 s: 0 bytes (nothing)",
+            "  microphone borrowed, 6 s: 192000 bytes",
+            "  after giving it back, 2 s: 0 bytes (nothing)",
+            "  recording: peak 14000 of 32767, average 800",
+            "  SYNC's microphone route was put back; restart SYNC anyway to be sure"])
+
+    def test_a_way_back_that_failed_or_never_ran_is_said_loudly(self):
+        refused = V3.replace("routed|number 5|result 0", "routed|number 5|result 4")
+        self.assertIn("  SYNC did NOT get its microphone back: restart SYNC", micprobe.summary(self.report(refused)))
+        cut = V3[:V3.index("route|number 4")]
+        lines = micprobe.summary(self.report(cut))
+        self.assertIn("  SYNC did NOT get its microphone back: restart SYNC", lines)
+        self.assertIn("NOT complete", lines[-1])
+        before = micprobe.summary(self.report(V3[:V3.index("route|number 2")]))
+        self.assertFalse([line for line in before if "microphone back" in line])  # nothing was taken yet
+        for end in range(len(V3)):
+            self.assertTrue(micprobe.summary(self.report(V3[:end])))
+
+    def test_an_answer_belongs_to_the_request_with_its_number(self):
+        mixed = V3.replace("routed|number 5|result 0", "routed|number 4|result 0\r\nrouted|number 5|result 4")
+        lines = micprobe.summary(self.report(mixed))
+        self.assertIn("  give sync its microphone back: refused (error 4)", lines)
+        self.assertIn("  SYNC did NOT get its microphone back: restart SYNC", lines)
+        unanswered = V3.replace("routed|number 5|result 0\r\n", "")
+        self.assertIn("  give sync its microphone back: no answer (the probe stopped there)",
+                      micprobe.summary(self.report(unanswered)))
+
+    def test_says_when_it_could_not_run_and_when_the_buffers_ran_out(self):
+        cut = micprobe.summary(self.report("s2am-mic-v3\r\nroute test|set property"))
+        self.assertFalse([line for line in cut if "no waveInSetProperty" in line])
+        lines = micprobe.summary(self.report("s2am-mic-v3\r\nroute test|set property 0\r\nend\r\n"))
+        self.assertIn("could not run: this SYNC has no waveInSetProperty", lines[1])
+        closed = "s2am-mic-v3\r\nroute test|set property 1\r\nopen|device 0|rate 16000|channels 1\r\n" \
+                 "opened|result 4\r\nend\r\n"
+        self.assertIn("could not run: recording device 0 did not open", micprobe.summary(self.report(closed))[1])
+        spent = V3.replace("bytes 0|buffers left 48|name after giving it back",
+                           "bytes 0|buffers left 0|name after giving it back")
+        self.assertIn("  after giving it back, 2 s: 0 bytes (nothing) (its buffers were used up: says nothing "
+                      "about later sound)", micprobe.summary(self.report(spent)))
+
+    def test_the_router_is_only_asked_inside_the_lock_and_given_back_on_every_way_out(self):
+        source = (native.SOURCES / "s2ammic.c").read_text()
+        calls = source.count("route(")  # the definition, three in give_back, one in step
+        self.assertEqual(calls, 5)
+        step = source[source.index("static BOOL step("):source.index("static DWORD ear_bytes")]
+        self.assertLess(step.index("EnterCriticalSection(&router);"), step.index("went = !stopping;"))
+        self.assertLess(step.index("touched = TRUE;"), step.index("route(name, what, source, sink);"))
+        self.assertLess(step.index("borrowed = TRUE;"), step.index("route(name, what, source, sink);"))
+        self.assertLess(step.index("route(name, what, source, sink);"), step.index("LeaveCriticalSection(&router);"))
+        test = source[source.index("static void route_test(void)"):source.index("/* The probe's own limit")]
+        tail = test[test.index("phase(\"other form borrowed\", 5);"):]
+        self.assertLess(tail.index("EnterCriticalSection(&router);"), tail.index("give_back();"))
+        self.assertLess(tail.index("give_back();"), tail.index("ear_close(&ears[0]);"))
+        limit = source[source.index("static DWORD WINAPI limit("):source.index("static void list_devices")]
+        self.assertLess(limit.index("TryEnterCriticalSection(&router)"), limit.index("stopping = TRUE;"))
+        self.assertLess(limit.index("stopping = TRUE;"), limit.index("give_back();"))
+        self.assertLess(limit.index("give_back();"), limit.index("TerminateProcess("))
+        self.assertNotIn("LeaveCriticalSection", limit)  # it ends the process holding the router
+        give = source[source.index("static void give_back(void)"):source.index("/* One step of the test")]
+        self.assertLess(give.index("ROUTE_DISCONNECT, 0, STREAM_AUTOKIT"),
+                        give.index("ROUTE_CONNECT, LINE_MIC_SYNC, STREAM_SYNC"))
+        self.assertLess(give.index("ROUTE_CONNECT, LINE_MIC_SYNC, STREAM_SYNC"),
+                        give.index("ROUTE_REMEMBER, LINE_MIC, STREAM_AUTOKIT"))
+        self.assertLess(give.index("ROUTE_REMEMBER, LINE_MIC, STREAM_AUTOKIT"),
+                        give.index("borrowed = touched = FALSE;"))
+        self.assertIn("if (!touched)\n        return;", give)  # also after only the first, refused connect
+        self.assertIn("if (borrowed)\n        route(\"give sync its microphone back\"", give)
+        self.assertIn("for (h = 0; h < ear->queued; h++)", source)
+        self.assertEqual(source.count("b8ed20d3"), 1)
+
+    def test_the_job_passes_the_mode_and_says_it_is_not_read_only(self):
+        script = mic_probe_script(Job(SERIAL, "mic", params={"route": True}))
+        mortscript.check(script)
+        self.assertIn('\\s2ammic.exe", "route|" & out)', script)
+        self.assertNotIn("route|", mic_probe_script(Job(SERIAL, "mic")))
+        with self.assertRaises(ValueError):
+            mic_probe_script(Job(SERIAL, "mic", params={"route": "yes"}))
+
+
 class Script(unittest.TestCase):
     def test_runs_the_probe_and_waits_for_it_and_changes_nothing(self):
         script = mic_probe_script(Job(SERIAL, "mic"))
@@ -186,8 +302,11 @@ class Script(unittest.TestCase):
         self.assertNotIn("waveOutOpen", source)
         self.assertNotIn("mixerSetControlDetails", source)
         self.assertNotIn("RegSet", source)
-        for writer in ("mixerSetControlDetails", "waveOutOpen", "waveInMessage", "SetProperty"):
+        for writer in ("mixerSetControlDetails", "waveOutOpen", "waveInMessage"):
             self.assertNotIn(writer, source)
+        listening = source[:source.index("the route test:")]  # everything but the route test
+        self.assertNotIn("SetProperty", listening)
+        self.assertIn("if (routing) {\n        route_test();", source)
         self.assertIn("TerminateProcess(GetCurrentProcess(), 4);", source)  # its own limit
         abandon = source[source.index('put("abandoned");'):]
         self.assertLess(abandon.index("return;"), abandon.index("LocalFree(ear->data);"))  # never freed there

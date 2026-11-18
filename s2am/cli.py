@@ -441,6 +441,15 @@ def cmd_job(args) -> int:
               "any fault (which exception, where, the registers). It changes nothing on the car and "
               "needs no phone. Usually under a minute; a stage that hangs is ended after 25 s. "
               "Import the stick afterwards: the result is in nd.txt")
+    elif args.kind == "mic-probe" and args.route:
+        params = {"route": True}
+        extra = {"s2ammic.exe": native.binary("s2ammic.exe")}
+        print("mic-probe --route: NOT read-only. For about ten seconds it takes the microphone away from "
+              "SYNC and connects it to the recording device AutoKit opens, records, and gives it back. "
+              "Nothing is stored. If giving it back fails, SYNC's voice control, hands-free calls and "
+              "911 Assist have no microphone until SYNC is restarted: restart SYNC after the test in any "
+              "case. Close AutoKit first, insert the stick and talk until 'Install successfully completed' "
+              "(about half a minute). The result is in mic.txt, the recording is mic-0-16000.wav")
     elif args.kind == "mic-probe":
         extra = {"s2ammic.exe": native.binary("s2ammic.exe")}
         print("mic-probe: lists SYNC's recording devices and mixer settings, then listens on every "
@@ -1271,9 +1280,12 @@ def parser() -> argparse.ArgumentParser:
                           help="also copy matching car files to the stick, read-only "
                                "(e.g. '\\Windows\\boot.rgu'); matched against the last drive log")
     registry.set_defaults(func=cmd_job)
-    job_sub.add_parser("mic-probe", parents=[common],
-                       help="read-only: list SYNC's recording devices and record a few seconds "
-                            "from each").set_defaults(func=cmd_job)
+    mic = job_sub.add_parser("mic-probe", parents=[common],
+                             help="read-only: list SYNC's recording devices and listen on each")
+    mic.add_argument("--route", action="store_true",
+                     help="the route test instead (not read-only): borrow the microphone from SYNC for a "
+                          "few seconds, record through the device AutoKit opens, give it back")
+    mic.set_defaults(func=cmd_job)
     pmic = job_sub.add_parser("pmic", parents=[common],
                               help="read-only MC13892 identification, SW1 presets and mode/SID through PMI1; "
                                    "no clock/voltage changes")

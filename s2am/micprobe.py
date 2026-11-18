@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 QUIET_PEAK = 200  # below this peak a recording counts as silence (16-bit samples)
-VERSIONS = ("s2am-mic-v1", "s2am-mic-v2")
+VERSIONS = ("s2am-mic-v1", "s2am-mic-v2", "s2am-mic-v3")
 HEARD = ("device", "rate", "channels", "bytes", "peak", "average")
 WHY = {"start": "opened, but recording would not start", "nomemory": "opened, but there was no memory to record",
        "abandoned": "recorded, but the driver would not give the buffers back",
@@ -33,7 +33,7 @@ def parse(text: str) -> dict:
     (when a device first delivered data) and the mixer's controls."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     result = {"version": lines[0] if lines else "", "inputs": None, "names": [], "heard": [],
-              "refused": [], "failed": [], "controls": [], "opened": set(),
+              "refused": [], "failed": [], "controls": [], "opened": set(), "steps": [], "phases": [],
               "complete": bool(lines) and lines[-1] == "end"}
     opening, start = None, None
     for line in lines[1:]:
@@ -63,6 +63,19 @@ def parse(text: str) -> dict:
             if target is not None:
                 result["failed"].append({"device": target.get("device", "?"), "rate": target.get("rate", "?"),
                                          "why": kind, "result": fields.get("result", "")})
+        elif kind == "route test":  # v3
+            able = _number(fields, "set property")
+            result["can route"] = None if able is None else able == 1
+        elif kind == "route" and "|step " in line and _number(fields, "number") is not None:
+            result["steps"].append({"number": _number(fields, "number"), "result": None,  # v3: one request
+                                    "step": line.split("|step ", 1)[1]})
+        elif kind == "routed":  # its answer, matched by the request's own number
+            for step in result["steps"]:
+                if step["number"] == _number(fields, "number"):
+                    step["result"] = _number(fields, "result")
+        elif kind == "phase" and "|name " in line and _number(fields, "buffers left") is not None:
+            result["phases"].append({"name": line.split("|name ", 1)[1], "seconds": _number(fields, "seconds"),
+                                     "bytes": _number(fields, "bytes"), "left": _number(fields, "buffers left")})
         elif kind == "control" and "|name " in line and _number(fields, "read") == 0:
             result["controls"].append(line.split("|", 1)[1])
         elif kind == "heard":
@@ -89,6 +102,8 @@ def summary(report: Path) -> list[str]:
     found = parse(path.read_text(errors="replace"))
     if found["version"] not in VERSIONS:
         return ["microphone probe: mic.txt is not a report this version reads"]
+    if found["version"] == "s2am-mic-v3":
+        return _route_summary(found)
     lines = [f"microphone probe: {'an unknown number of' if found['inputs'] is None else found['inputs']} "
              "recording device(s)"
              + (f" ({', '.join(name or 'unnamed' for name in found['names'])})" if found["names"] else "")]
@@ -120,6 +135,43 @@ def summary(report: Path) -> list[str]:
         lines.append(f"  {_device(device)}: would not open in any format ({why})")
     if found["controls"]:
         lines.append(f"  mixer: {len(found['controls'])} control value(s) read; see mic.txt")
+    if not found["complete"]:
+        lines.append("  NOT complete: the probe stopped before its end; the last line of mic.txt shows where")
+    return lines
+
+
+GIVEN_BACK = "give sync its microphone back"
+
+
+def _route_summary(found: dict) -> list[str]:
+    """The route test: each request to the router with its answer, what each phase delivered,
+    and above all whether SYNC got its microphone back."""
+    lines = ["microphone route test:"]
+    if found.get("can route") is False:
+        lines.append("  could not run: this SYNC has no waveInSetProperty; nothing was asked of the router")
+    elif not found["steps"] and found["complete"]:
+        lines.append("  could not run: recording device 0 did not open or start; nothing was asked of the router")
+    for step in found["steps"]:
+        answer = "no answer (the probe stopped there)" if step["result"] is None else \
+            "ok" if step["result"] == 0 else f"refused (error {step['result']})"
+        lines.append(f"  {step['step']}: {answer}")
+    for phase in found["phases"]:
+        note = "" if phase["bytes"] else " (nothing)"
+        if not phase["left"]:
+            note += " (its buffers were used up: says nothing about later sound)"
+        lines.append(f"  {phase['name']}, {phase['seconds']} s: {phase['bytes']} bytes{note}")
+    for heard in found["heard"]:
+        lines.append(f"  recording: peak {heard['peak']} of 32767, average {heard['average']}"
+                     + (" (silence)" if heard["bytes"] and heard["peak"] < QUIET_PEAK else ""))
+    for failed in found["failed"]:
+        lines.append(f"  {_device(failed['device'])}: {WHY[failed['why']]}"
+                     + (f" (error {failed['result']})" if failed["result"] else ""))
+    took = [s for s in found["steps"] if s["step"] == "take sync's route away"]
+    back = [s for s in found["steps"] if s["step"] == GIVEN_BACK]
+    if took and not (back and back[-1]["result"] == 0):
+        lines.append("  SYNC did NOT get its microphone back: restart SYNC")
+    elif took:
+        lines.append("  SYNC's microphone route was put back; restart SYNC anyway to be sure")
     if not found["complete"]:
         lines.append("  NOT complete: the probe stopped before its end; the last line of mic.txt shows where")
     return lines

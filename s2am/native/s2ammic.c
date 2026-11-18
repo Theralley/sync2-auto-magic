@@ -1,5 +1,7 @@
 /* Microphone probe: which recording devices this SYNC offers, and which of them carries
- * sound, and when. Usage: s2ammic.exe <report folder>.
+ * sound, and when. Usage: s2ammic.exe <report folder>, or s2ammic.exe route|<report folder>
+ * for the route test further down, which is the one mode that does change something: SYNC's
+ * live audio routing, for a few seconds, put back at the end.
  *
  * It lists the wave-in, wave-out and mixer devices and what the mixer's controls are set to
  * (read only). Then it opens every wave-in device at once, each in the first of a few common
@@ -7,8 +9,8 @@
  * device has delivered, so a device that only carries sound while SYNC itself listens (the
  * voice button held, a call) shows, and from which second. AutoKit opens the default device
  * (AutoKit.exe 0x266e8), which is device 0. For each device it then writes how loud it was
- * and keeps the sound as mic-<device>-<rate>.wav. Nothing on the car is changed: no setting,
- * no mixer control, no file outside the report folder.
+ * and keeps the sound as mic-<device>-<rate>.wav. Without "route|" nothing on the car is
+ * changed: no setting, no mixer control, no file outside the report folder.
  * Every step is written to mic.txt before the next one starts, so a call that never
  * returns shows where it stopped; mic-done.txt is written last.
  * It never runs longer than LIFE_MS: a second thread ends the process then, which also
@@ -21,11 +23,12 @@
 
 #define LISTEN_SECONDS 20
 #define CHUNK_MS 500
-#define CHUNKS (LISTEN_SECONDS * 1000 / CHUNK_MS)
+#define BUFFER_SECONDS 30  /* queued on each device: more than any run listens */
+#define CHUNKS (BUFFER_SECONDS * 1000 / CHUNK_MS)
 #define POLL_MS 100
 #define MAX_DEVICES 16
 #define MAX_CONTROLS 8
-#define LIFE_MS 75000   /* the job waits 90 s */
+#define LIFE_MS 75000   /* the job waits 100 s; the limit thread may take ten more */
 #define CLEANUP_TRIES 10
 
 static HANDLE report = INVALID_HANDLE_VALUE;
@@ -144,6 +147,7 @@ typedef struct {
     char *data;
     DWORD chunk;    /* bytes in one buffer */
     int prepared;   /* headers prepared, counted from the first */
+    int queued;     /* of those, handed to the driver */
     int first;      /* the first second a returned buffer held data, 0 if none */
 } Ear;
 
@@ -206,6 +210,8 @@ static void ear_open(UINT device)
         if (result == MMSYSERR_NOERROR) {
             ear->prepared = i + 1;
             result = waveInAddBuffer(ear->in, &ear->heads[i], sizeof(WAVEHDR));
+            if (result == MMSYSERR_NOERROR)
+                ear->queued = i + 1;
         }
     }
     put("queued");
@@ -322,12 +328,201 @@ static void listen_all(void)
         ear_close(&ears[e]);
 }
 
-/* The probe's own limit: whatever the audio driver does, the process is gone after LIFE_MS,
- * and its device handle with it. */
+/* ---- the route test: does the microphone reach AutoKit's device once SYNC lets go of it? ----
+ *
+ * The driver (wavedev2_cs42448.dll) is an audio router. A wave device carries sound only while
+ * a route connects a line to it, and routes are asked for through wave*SetProperty with the
+ * property set below: 0 connects (and enters the route in the automatic route table),
+ * 1 disconnects by sink (and drops every table entry with that sink), 6 enters a route in
+ * the table without connecting it; each takes five numbers (source line, its direction,
+ * sink line, its direction, flags). The microphone is line 0x8003; 0x9000 and 0x9001 are the same input in
+ * processed form. SYNC keeps it for itself through wave-in device 4 (0x9000 -> 4), so the
+ * automatic route 0x8003 -> 0 that AutoKit's device would get fails as busy.
+ * The test opens device 0 as AutoKit does, takes SYNC's route away, connects the microphone
+ * to device 0, listens, and then puts SYNC's route back. Nothing is stored: a restart of SYNC
+ * restores everything, also if the way back fails. */
+typedef MMRESULT (WINAPI *SetPropertyFn)(UINT, const GUID *, ULONG, LPVOID, ULONG, LPVOID, ULONG);
+
+typedef struct {
+    DWORD source, source_dir, sink, sink_dir, flags;
+} LineConnect;
+
+#define ROUTE_CONNECT 0
+#define ROUTE_DISCONNECT 1   /* by sink; the driver also drops every table entry with that sink */
+#define ROUTE_REMEMBER 6     /* a table entry only, nothing is connected */
+#define LINE_MIC 0x8003
+#define LINE_MIC_SYNC 0x9000    /* as SYNC's own route names it */
+#define LINE_MIC_OTHER 0x9001
+#define STREAM_AUTOKIT 0
+#define STREAM_SYNC 4
+#define LIMIT_WAIT_MS 10000     /* how long the limit thread waits for a request under way */
+
+static const GUID ROUTER = {0xb8ed20d3, 0x954f, 0x48d8, {0x8a, 0x71, 0xd1, 0x36, 0xae, 0xb0, 0x8d, 0xb4}};
+static SetPropertyFn set_property;
+
+/* Every request to the router, every line about one in the report, and the three values
+ * below are touched only inside ``router``: so the test and the limit thread never ask the
+ * router for something at the same time, and whoever holds it sees how far the other got. */
+static CRITICAL_SECTION router;
+static BOOL touched;    /* the test has asked the router for something not yet undone */
+static BOOL borrowed;   /* SYNC's microphone route is taken away and not yet put back */
+static BOOL stopping;   /* the limit thread has taken over: the test asks for nothing more */
+static DWORD requests;  /* numbers the requests, so each answer in the report has its own */
+
+/* One request to the router, written before it is made and again with its answer. Only
+ * called inside ``router``. */
+static MMRESULT route(const char *step, ULONG what, DWORD source, DWORD sink)
+{
+    LineConnect line;
+    MMRESULT result;
+    DWORD id = ++requests;
+    line.source = source;
+    line.source_dir = 0;
+    line.sink = sink;
+    line.sink_dir = 0;
+    line.flags = 0;  /* as the entries SYNC makes at start have it */
+    put("route");
+    field("number", id);
+    field("request", what);
+    field("source", source);
+    field("sink", sink);
+    put("|step ");
+    put(step);
+    line_end();
+    result = set_property(STREAM_AUTOKIT, &ROUTER, what, NULL, 0, &line, sizeof(line));
+    put("routed");
+    field("number", id);
+    field("result", result);
+    line_end();
+    return result;
+}
+
+/* Undoes what the test has asked for so far: our own route goes (and with it every table
+ * entry for device 0, also one a refused connect left), SYNC gets its microphone back if it
+ * was taken, and the table gets its one entry for device 0 again. Only called inside
+ * ``router``; does nothing unless something is out, so it runs once whoever comes first, and
+ * whoever comes second finds it done. Each request is made whatever the one before answered. */
+static void give_back(void)
+{
+    if (!touched)
+        return;
+    route("take ours away", ROUTE_DISCONNECT, 0, STREAM_AUTOKIT);
+    if (borrowed)
+        route("give sync its microphone back", ROUTE_CONNECT, LINE_MIC_SYNC, STREAM_SYNC);
+    route("put the table entry for device 0 back", ROUTE_REMEMBER, LINE_MIC, STREAM_AUTOKIT);
+    borrowed = touched = FALSE;
+}
+
+/* One step of the test: FALSE once the limit thread has taken over, and then nothing was
+ * asked. ``taking``: this is the step that takes SYNC's route away. */
+static BOOL step(const char *name, ULONG what, DWORD source, DWORD sink, BOOL taking)
+{
+    BOOL went;
+    EnterCriticalSection(&router);
+    went = !stopping;
+    if (went) {
+        touched = TRUE;       /* before the request: it may take effect and still report a failure */
+        if (taking)
+            borrowed = TRUE;
+        route(name, what, source, sink);
+    }
+    LeaveCriticalSection(&router);
+    return went;
+}
+
+static DWORD ear_bytes(const Ear *ear, int *left)
+{
+    DWORD bytes = 0;
+    int h;
+    *left = 0;
+    for (h = 0; h < ear->queued; h++) {  /* only what the driver was given can still fill */
+        if (ear->heads[h].dwFlags & WHDR_DONE)
+            bytes += ear->heads[h].dwBytesRecorded;
+        else
+            (*left)++;
+    }
+    return bytes;
+}
+
+/* Listens for ``seconds`` and writes how much the device delivered in that time, and how many
+ * of its buffers are still waiting: with none left, nothing more could have arrived. */
+static DWORD phase(const char *name, int seconds)
+{
+    int left;
+    DWORD before = ear_bytes(&ears[0], &left), got;
+    Sleep((DWORD)seconds * 1000);
+    got = ear_bytes(&ears[0], &left) - before;
+    EnterCriticalSection(&router);
+    put("phase");
+    field("seconds", (DWORD)seconds);
+    field("bytes", got);
+    field("buffers left", (DWORD)left);
+    put("|name ");
+    put(name);
+    line_end();
+    LeaveCriticalSection(&router);
+    return got;
+}
+
+static void route_test(void)
+{
+    HMODULE core = LoadLibraryW(L"coredll.dll");
+    MMRESULT result;
+    set_property = core ? (SetPropertyFn)(void (*)(void))GetProcAddressW(core, L"waveInSetProperty") : NULL;
+    put("route test");
+    field("set property", set_property != NULL);
+    line_end();
+    if (!set_property)
+        return;
+    ear_open(STREAM_AUTOKIT);
+    if (!ear_count)
+        return;  /* device 0 would not open: nothing was asked of the router */
+    result = waveInStart(ears[0].in);
+    put("listening");
+    field("device", ears[0].device);
+    field("result", result);
+    line_end();
+    if (result == MMSYSERR_NOERROR) {
+        phase("as autokit finds it", 3);
+        if (step("connect while sync holds it", ROUTE_CONNECT, LINE_MIC, STREAM_AUTOKIT, FALSE)) {
+            phase("after asking while sync holds it", 2);
+            if (step("take sync's route away", ROUTE_DISCONNECT, 0, STREAM_SYNC, TRUE) &&
+                step("connect the microphone", ROUTE_CONNECT, LINE_MIC, STREAM_AUTOKIT, FALSE) &&
+                !phase("microphone borrowed", 6) &&
+                step("take ours away to try the other form", ROUTE_DISCONNECT, 0, STREAM_AUTOKIT, FALSE) &&
+                step("connect the other form", ROUTE_CONNECT, LINE_MIC_OTHER, STREAM_AUTOKIT, FALSE))
+                phase("other form borrowed", 5);
+        }
+        EnterCriticalSection(&router);
+        if (!stopping)
+            give_back();
+        LeaveCriticalSection(&router);
+        phase("after giving it back", 2);
+    }
+    ear_close(&ears[0]);
+}
+
+/* The probe's own limit: whatever the audio driver does, the process is gone soon after
+ * LIFE_MS, and its device handle with it (how soon is the driver's to say: a request it does
+ * not answer is not bounded here, and the job ends the process after its own wait). First
+ * SYNC's microphone route is put back, if it is out: the thread waits up to LIMIT_WAIT_MS for a request under way to end (also a way back the
+ * test itself has begun), takes the router over for good, and gives back whatever is still out.
+ * If the request under way never ends, the router cannot be asked at all, and only a restart of
+ * SYNC puts the route back; the report then ends without "sync its microphone back". */
 static DWORD WINAPI limit(LPVOID unused)
 {
+    DWORD waited;
     (void)unused;
     Sleep(LIFE_MS);
+    for (waited = 0; waited < LIMIT_WAIT_MS; waited += POLL_MS) {
+        if (TryEnterCriticalSection(&router)) {
+            stopping = TRUE;  /* kept: the test asks the router for nothing from here on */
+            if (set_property)
+                give_back();
+            break;            /* and never left: the process ends holding it */
+        }
+        Sleep(POLL_MS);
+    }
     TerminateProcess(GetCurrentProcess(), 4);
     return 0;
 }
@@ -509,12 +704,17 @@ static void list_mixers(void)
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int show)
 {
     HANDLE done, watch;
+    BOOL routing = FALSE;
     size_t length;
     (void)instance;
     (void)previous;
     (void)show;
     while (*command == L' ' || *command == L'"')
         command++;
+    if (wcsncmp(command, L"route|", 6) == 0) {  /* "route|<report folder>": the route test */
+        routing = TRUE;
+        command += 6;
+    }
     length = wcslen(command);
     while (length && (command[length - 1] == L' ' || command[length - 1] == L'"'))
         length--;
@@ -525,8 +725,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
     report = create(L"mic.txt");
     if (report == INVALID_HANDLE_VALUE)
         return 3;
-    put("s2am-mic-v2");
+    put(routing ? "s2am-mic-v3" : "s2am-mic-v2");
     line_end();
+    InitializeCriticalSection(&router);
     watch = CreateThread(NULL, 0, limit, NULL, 0, NULL);
     if (!watch) {
         put("no limit thread, nothing recorded");
@@ -535,9 +736,13 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
         return 5;
     }
     CloseHandle(watch);
-    list_devices();
-    list_mixers();
-    listen_all();
+    if (routing) {
+        route_test();
+    } else {
+        list_devices();
+        list_mixers();
+        listen_all();
+    }
     put("end");
     line_end();
     CloseHandle(report);
