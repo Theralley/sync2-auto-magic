@@ -1,7 +1,110 @@
 # Read-only CPU-counter availability diagnostic
-A new three-layer one-shot diagnostic is prepared and remount-verified on the identified NO NAME stick; no overclock is installed or qualified.
+Controlled v2 CPU diagnostic is prepared, remount-verified and ejected; first return was inconclusive, no overclock is qualified.
 
-## Current USB package, November 18
+## New controlled successor USB ready, November 18
+
+NO NAME now contains **`20261118-174115-cpuavail-dbf6`**, a new read-only v2 diagnostic.
+Its **48,760-byte** pack has SHA-256
+`34b579e33ac385ec36c073e15e29be44c18699c1e0728a6ea47c70c9924e1f4c`.
+The official unpacker reproduced all five staged files exactly: three executables, the
+predecessor receipt and `job.json`. No MortScript, restart or clock writer is included.
+
+All 57 earlier managed USB files were backed up and hash-verified before mutation. Consumed
+updater files and old root instructions were archived, not replayed. New pack, single pending
+identity and Swedish instructions matched after ordinary unmount/remount; NO NAME was then
+**safely ejected**. Other sticks were untouched. Valid before **December 17, 2026, 09:35:59 UTC**.
+
+The source/test commit `84079ac` remains local. **116 focused checks** pass; three source
+reviews and a separate compiled-artifact review clear this bounded read-only diagnostic.
+The raw PE files matched all **7,027 disassembly words**. All 28/40/40 direct imports resolve
+in the inspected candidate COREDLL; six ordinary Toolhelp exports and the actual candidate
+structure sizes were checked. Candidate availability is not live firmware identity or
+permission proof. No full CI, server run or production build was performed.
+
+Insert **once while parked**, wait for the install completion message plus at least one
+minute, then return the stick for preservation and import. Photograph an error and do not
+repeat. Root instructions: `S2AM-CPU-SUCCESSOR-20261118.txt`. This completes USB preparation,
+**not** on-car CPU observation, measured frequency or overclock qualification.
+
+
+## Actual returned CPU diagnostic, November 18
+
+The first CPU job `20261118-164459-cpuavail-3226` returned and was preserved before import.
+Its 243-byte controller journal stopped at `E|api|debug-wait|258`, before positive debugger
+attachment or gate release; the probe report is absent. The outer collector independently
+observed controller exit 1. Import is **not verified**, not a CPU permission denial. No CPU
+values, rate measurement, PMU enablement or clock change resulted.
+
+The bound controller rejected CE's actual 258 poll-timeout form. A focused regression now
+accepts that form while retaining the event/deadline bounds. Original reports, installed pack
+and all one-shot state remain preserved; the consumed job must not be replayed.
+
+The controlled v2 successor above retains the original claim, pins the exact predecessor
+evidence, requires two fresh process checks and consumes one fixed predecessor edge. Its
+probe starts behind a closed event and may read only after positive debugger attachment.
+It never enables PMU or changes clocks. Its actual car return remains the next step.
+
+
+## Controlled successor contract v2
+
+This successor is limited to the one preserved predecessor, not a general retry mechanism.
+Its canonical 506-byte predecessor receipt has SHA-256
+`6b2ff299902104e29f0dd73d2a9dbb6397d45d60132da1c7e6c978ac56c65e31`.
+It binds the old three executables, job manifest, pre-attachment journal and retained entry
+markers. The original global CPU claim remains the old job ID. A fixed predecessor-local
+`cpu-successor-claim.txt` is created once with the new ID plus `|2`; partial/failed creation
+stays consumed. Different proposed successors compete for that same edge.
+
+Two complete fresh process snapshots, including module checks for the current collector and
+old probe PID reuse, must show no other CPU diagnostic process. Partial, truncated, failed
+or over-budget enumeration is unknown, never absence. Only installed `\Windows\toolhelp.dll`
+is loaded. The custom CE structures were checked against the pinned compiler SDK; snapshot
+cleanup uses [CE CloseToolhelp32Snapshot](https://learn.microsoft.com/en-us/previous-versions/ms907325(v=msdn.10)),
+not desktop CloseHandle. OEM availability remains a live runtime prerequisite.
+
+Ready publication uses an unrecognized pending filename. Pending bytes must write, flush
+and close; the complete preflight ledger must close and be copied to USB before a
+[no-overwrite CE MoveFile rename](https://learn.microsoft.com/en-us/previous-versions/windows/embedded/ms891388(v=msdn.10)) publishes the controller's recognized ready filename. The ledger's
+`P|ready` is publication intent, not standalone proof. Failed publication never authorizes
+a retry; a clean independently observed controller exit and all nested evidence remain
+necessary. No old claim, marker or executable is overwritten or deleted.
+
+The controller resumes the owned suspended probe **once while its gate is closed**, allowing
+either CREATE-event scheduling order. The child waits at most 20 seconds on the existing
+event before report creation or MRC. A matching CREATE event is required before gate release;
+there is no second ResumeThread, non-debug fallback, exception swallowing or PC adjustment.
+This contains the fixed PMU reads, not every loader/startup fault.
+
+The outer child wait is clamped to the remaining 60-second overall cooperative budget,
+including DWORD tick wrap. Expired creation gets a nonblocking poll; a wait or exit query
+finishing at the deadline cannot produce a clean C record. This does not interrupt blocked
+OS calls or qualify the separate bounded termination cleanup.
+
+**116 focused checks pass** (96 CPU-specific and 20 neighboring recovery/qualification
+transaction tests), including strict host C warnings and ASan/UBSan. Three source reviewers
+covered security, performance and tests; their findings were repaired and regressed. Source
+and tests are saved only in local commit `84079ac`. No server/full CI or production build ran.
+
+Host v2 success requires exact seven-row outer, nine-row successor and sixteen-row controller
+records, three copied-file size/CRC checks, clean exits and the four/eight-row child protocol.
+Legacy v1 reports remain importable, while new v1 staging/preparation and predecessor-ID reuse
+are refused. All CPU-rate, clock-write and retry authorization flags remain false.
+
+### Reviewed v2 artifacts
+
+| Artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `s2amcpuprobe.exe` | 8,704 | `a374772485195b049ea789befe1cf3a5c2c402153084761d05144b66fd3bd21a` |
+| `s2amcpuctl.exe` | 16,384 | `54f26b6fbba456f7021b62b785c0860e210a5c12a6f49d36d7b012b17a7c89e8` |
+| `s2amcpujob.exe` | 19,456 | `31fac07886088af6517e06035a06f940f3724df67c04377ebd50de3a9daf0082` |
+| `cpu-predecessor.txt` | 506 | `6b2ff299902104e29f0dd73d2a9dbb6397d45d60132da1c7e6c978ac56c65e31` |
+
+The source snapshot binds all nine dependencies and the receipt input in dispatch, result
+and manifest metadata. Only the child has three fixed MRCs; neither parent has CP15
+transfers, and no MCR or CCNT read exists. Gate, event and ready-publication ordering were
+independently checked in compiled bytes before packing.
+
+## Historical first USB package, November 18
 
 Job **`20261118-164459-cpuavail-3226`** contains exactly three experimental CE executables
 and `job.json`. Its **40,352-byte** install pack has SHA-256:
@@ -94,8 +197,7 @@ sizes and both CRC layers, then the exact four/eight-row child record. Visible t
 bytes with a failed final close never become success. Collection completion is distinct
 from a verified availability observation; all rate/write/retry qualification flags stay false.
 
-Source/test commits remain local; published material is documentation only. The next step
-is the **actual car return**, not another package or a clock change.
+Source/test commits remain local; published material is documentation only. This first package is consumed; see the actual-return and successor sections above.
 
 ## Historical standalone component — not the current USB executable
 
