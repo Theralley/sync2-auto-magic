@@ -1,5 +1,17 @@
 # SYNC 2 clock investigation
-Two native decoder inspections found stock active DLLs; a corrected swap awaits car testing, and a reviewed read-only clock-driver prototype awaits USB integration and car validation.
+Live clock baseline and timer qualification are verified; no overclock is qualified or deployed.
+
+## Verified live baseline and timer qualification, November 18
+
+The controlled recovery and fixed reader completed in the car: 64 stable reads, clean child
+exit and successful cleanup. A subsequent qualifier also completed with stable timer/gates,
+informative one-to-one EPIT/QPC coherence and no enabled sampled PLL1-derived clock output.
+Nominal 600 MHz assumes a 24 MHz oscillator; no independent frequency calibration or overclock
+was performed. Suspend, policy ownership, physical limits and independent recovery remain
+separate prerequisites. Do not repeat consumed jobs or remove retained ownership barriers.
+
+See [[clock-baseline-2026-11-18]] and [[clock-qualification-return-2026-11-18]].
+Older readiness entries below are historical snapshots.
 
 ## Latest verified results and source publication, November 16
 
