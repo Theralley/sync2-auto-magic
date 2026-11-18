@@ -1,5 +1,106 @@
-# Read-only CPU-counter availability probe
-A standalone CE diagnostic and strict host parser are built and tested; no car execution or USB package has been prepared.
+# Read-only CPU-counter availability diagnostic
+A new three-layer one-shot diagnostic is prepared and remount-verified on the identified NO NAME stick; no overclock is installed or qualified.
+
+## Current USB package, November 18
+
+Job **`20261118-164459-cpuavail-3226`** contains exactly three experimental CE executables
+and `job.json`. Its **40,352-byte** install pack has SHA-256:
+`af76bd0fe09fbd4b407969628750ccf0cbe568721ff0238cf86ef1691aac8769`.
+
+The earlier managed stick files and instructions were backed up and hash-verified before
+preparation. Previous updater files and clock instructions were archived, not replayed or
+discarded. Pack, pending identity and new Swedish instructions matched after ordinary
+unmount/remount; NO NAME was then **safely ejected**. The other two sticks were untouched.
+The key window ends **December 17, 2026, 09:35:59 UTC** (10:35:59 Swedish time).
+
+This completes **preparation of a new USB diagnostic**, not validation of its behavior in
+the car. No CPU-rate measurement, frequency/voltage update or overclock was performed.
+
+### One parked test
+
+1. Use only NO NAME while the car is parked. Insert it **once**.
+2. Wait for “Install successfully completed”, then leave it inserted another minute.
+3. Return it for preservation/hash verification/import. A success screen alone does not
+   establish that the diagnostic obtained usable observations.
+4. If an error appears, photograph it and return the stick. Do not repeat the insertion,
+   remove retained claims or use an old undo package for this diagnostic.
+
+The root file `S2AM-CPU-TEST-20261118.txt` carries these instructions. Results may legitimately
+be **inconclusive** if CE refuses debugging, suspended launch, process-handle duplication or
+CPU access. The design has no un-debugged execution fallback or automatic retry.
+
+## Three layers and the pre-read gate
+
+- **POST_APP collector, `s2amcpujob.exe`:** verifies and locks the exact controller/probe
+  artifacts, creates a fresh retained CPU claim and publishes a ready receipt only after
+  preflight. It independently observes the controller's exit, copies both bounded journals
+  with size/CRC bindings and then creates its collection marker.
+- **Debug controller, `s2amcpuctl.exe`:** requires the claim plus post-preflight receipt and
+  its own new entry marker. It creates a fresh nonsignalled per-job manual-reset event,
+  starts only the exact probe with `DEBUG_ONLY_THIS_PROCESS | CREATE_SUSPENDED`, and requires
+  a matching CREATE_PROCESS event before signalling the gate and resuming execution.
+- **Gated probe, `s2amcpuprobe.exe`:** requires its exact job/module/report identity and a
+  pre-existing signalled event before **any** MRC. Missing/unsignalled gate means nonzero
+  exit and zero CPU-register reads. It then performs only the existing USEREN/PMNC/CNTENS
+  read protocol described below; no CCNT, PMU enable/reset or clock write exists.
+
+The controller rejects every exception, including an unbound breakpoint. It never changes
+PC/context, skips an instruction or reopens a process by PID. A separately duplicated owned
+process handle survives debug-event handle cleanup. Failed/ambiguous execution remains
+inconclusive, retains one-shot state and cannot authorize another attempt.
+
+Microsoft documents [suspended/target-only creation](https://learn.microsoft.com/en-us/previous-versions/ms939168(v=msdn.10)),
+[existing event opening through CreateEvent](https://learn.microsoft.com/en-us/previous-versions/ms959948(v=msdn.10))
+and [debug continuation/handle lifetime](https://learn.microsoft.com/en-us/previous-versions/ms938952(v=msdn.10)).
+A historical [CE5 OEM trust warning](https://learn.microsoft.com/en-us/previous-versions/windows/embedded/ms904879(v=msdn.10))
+explains why debugger flags alone are insufficient; it is not proof that this CE6 target
+ignores them. Actual permissions and fault behavior still require the car return.
+
+Debug processing has a 15-second budget and at most 64 events, within a 60-second overall
+cooperative budget. Synchronous filesystem/loader/kernel calls cannot be forcibly bounded
+by those checks. Failure cleanup targets only the process whose ownership was established.
+Neither the event nor local artifact manifests authenticate against an equally privileged
+host process; source/artifact binding is consistency evidence, not execution attestation.
+
+## Reviewed gated artifacts
+
+| Artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `s2amcpuprobe.exe` | 8,704 | `716f3016ede10e00bbc9e39fe2ad4a33e9b90d22f58cb19267a2c8b79d8e2042` |
+| `s2amcpuctl.exe` | 15,872 | `23d8daef0982f77328d72c0d6594a90ebea799ca46b8de772ce7bd81beb4ff57` |
+| `s2amcpujob.exe` | 12,800 | `74298939b0c69b54617ac3c71d2162836fd1f067b2abaed0c137075198f6d1b7` |
+
+The isolated `cpu-usb-20261118-reviewed-2` build binds all seven source dependencies,
+including headers, to the pinned CE compiler image. Its three PE files are ARM `0x1c0`,
+CE subsystem 9 and COREDLL-only. All 28/40/36 imports respectively resolve in the inspected
+candidate COREDLL; this is not live firmware identity or runtime permission proof.
+
+Independent raw-binary review compared **5,703 disassembly words** to executable bytes.
+Only the probe contains the three allowed MRCs; the parents have no CP15 transfers, and
+there is no MCR or CCNT read. Gate/attachment/release ordering and embedded artifact bindings
+were checked in compiled code. Reviewed-1 is superseded and was never put on the stick.
+The old ungated standalone artifact below **must never enter this USB route**.
+
+**140 focused tests pass**, including strict host C builds under ASan/UBSan, all controller
+write/flush boundaries, failed-handle ownership, ignored debug flags, event storms, tick
+wrap, every owned-handle close, gate denial, artifact/include binding and actual-C
+controller → actual-C collector → host-analysis round trips. Three independent security,
+performance and tests reviews covered the diagnostic; a separate artifact review covered
+the final compiled bundle. No full CI, server run or production build was performed.
+
+Host import requires a trusted local job, the exact six-row outer record with independently
+clean controller exit, the exact fourteen-row controller success record, matching hashes,
+sizes and both CRC layers, then the exact four/eight-row child record. Visible terminal
+bytes with a failed final close never become success. Collection completion is distinct
+from a verified availability observation; all rate/write/retry qualification flags stay false.
+
+Source/test commits remain local; published material is documentation only. The next step
+is the **actual car return**, not another package or a clock change.
+
+## Historical standalone component — not the current USB executable
+
+The following records the earlier ungated offline component. Its smaller artifact and
+lack of a deployment parent are historical, superseded by the gated bundle above.
 
 ## Why this is the next component
 

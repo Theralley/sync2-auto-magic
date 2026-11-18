@@ -1,5 +1,31 @@
 # CPU-counter availability diagnostic
-A read-only permission/control probe is built and host-tested, but has not been run in the car or placed on USB.
+A new gated, three-layer read-only diagnostic is prepared, remount-verified and safely ejected on NO NAME; car execution remains unverified.
+
+## Current USB preparation
+
+Job `20261118-164459-cpuavail-3226` is now prepared on the identified NO NAME stick.
+Pack: 40,352 bytes, SHA-256
+`af76bd0fe09fbd4b407969628750ccf0cbe568721ff0238cf86ef1691aac8769`.
+Backup/hash verification preceded the write; pack/pending/instructions matched after ordinary
+unmount/remount and the stick was safely ejected. Other sticks were untouched.
+
+Three executables plus job.json only: outer collector independently checks debug-controller
+exit; controller requires attachment before signalling a fresh named event; child requires
+that pre-existing signalled event before any MRC. Every exception is inconclusive, no PC
+adjustment or ordinary-launch fallback exists. Existing clock claims remain untouched and
+new CPU one-shot state remains retained. No frequency/voltage/PMU setting is changed.
+
+140 focused tests pass, including real-C multi-layer producer/consumer tests and sanitized
+fault paths. Three independent source reviewers and a separate final artifact review clear
+read-only diagnostic preparation, not on-car permissions or overclock safety. The earlier
+ungated 6,144-byte artifact below is historical and must not be deployed.
+
+Insert once while parked, wait for installation completion plus one minute, then return it
+for evidence preservation and import. At an error, take a photograph and do not repeat.
+Package window ends December 17, 2026, 09:35:59 UTC. A successful installation screen does
+not establish usable CPU observations. No car return for this job exists yet.
+
+## Earlier standalone stage (historical)
 
 The next concrete component after the transition coordinator is now implemented:
 `s2amcpuprobe.c` reads USEREN first, stops when disabled, otherwise reads only PMNC/CNTENS.
@@ -20,7 +46,7 @@ Executable SHA-256: `abdc9ea572b9d20ad784902b64acf00b3312cb59c56619ad9a41bf240a5
 The matching source snapshot is bound in local build receipts. Import availability in a
 candidate firmware is not live firmware identity or proof of on-car execution.
 
-**No USB package exists.** A separately reviewed fault-containing parent and one-shot
+**At this earlier stage no USB package existed.** A separately reviewed fault-containing parent and one-shot
 identity-bound collection are still needed. Host fault simulation does not prove real CE
 exception containment. No existing claim was removed and no consumed job was replayed.
 

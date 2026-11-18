@@ -1,6 +1,15 @@
 # SYNC 2 clock investigation
 Live clock baseline and timer qualification are verified; no overclock is qualified or deployed.
 
+## New CPU diagnostic USB ready, November 18
+
+NO NAME now contains one new gated, three-layer CPU permission/control diagnostic,
+`20261118-164459-cpuavail-3226`. Its 40,352-byte pack passed exact unpack comparison,
+managed files were backed up, pack/pending/Swedish instructions matched after remount and
+the stick was safely ejected. 140 focused tests and independent source/artifact reviews pass.
+This is USB preparation only: no car result, measured CPU rate or overclock exists.
+See [[clock-cpu-availability-2026-11-18]]; earlier readiness entries below are historical.
+
 ## Read-only CPU availability component, November 18
 
 A standalone USEREN/PMNC/CNTENS probe and strict parser are implemented, host-fault-tested
