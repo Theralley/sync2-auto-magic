@@ -1,6 +1,15 @@
 # SYNC 2 clock investigation
 Live clock baseline and timer qualification are verified; no overclock is qualified or deployed.
 
+## Evidence-bound transition work, November 18
+
+The preserved actual return now feeds an inert specification: seven captured facts met,
+twelve prerequisites still unknown, +4% arithmetic ratio, no write authority or operations.
+A hardware-independent transition/restoration coordinator passes host fault tests; no
+hardware adapter or new USB package exists. Candidate process-local clock locking and the
+PMU initialization path do not resolve policy exclusion or independent CPU-rate measurement.
+See [[clock-transition-2026-11-18]] for the current boundary and next prerequisites.
+
 ## Verified live baseline and timer qualification, November 18
 
 The controlled recovery and fixed reader completed in the car: 64 stable reads, clean child

@@ -1,12 +1,18 @@
 # Temporary user-mode clock reader
 
-An unactivated CE 6 prototype reads the fixed PLL1/CCM snapshot from an isolated Device Manager user-driver host.
+The fixed PLL1/CCM reader and its timer qualifier completed successfully in the car on
+November 18. No clock writer or overclock has been deployed. See the current
+[baseline](CLOCK-BASELINE-2026-11-18.md), [qualification](CLOCK-QUALIFICATION-2026-11-18.md)
+and [transition work](CLOCK-TRANSITION-2026-11-18.md).
+
+The original prototype description below is historical and predates the successful
+short-path recovery and successor. Its build/activation status is not the current status.
 
 The ordinary `s2amclock.exe` application failed its first `MmMapIoSpace` call with error 87
 in the car and produced no register reads. Analysis of the candidate user CEDDK/COREDLL/
 Device Manager route indicates that the caller must be a registered user-driver host.
 This prototype tests that supported host route. It does not change frequency, voltage,
-interrupts, boot configuration, or any MMIO register. It has not been activated in the car.
+interrupts, boot configuration, or any MMIO register. The original activation did not succeed.
 The inferred mapping explanation and firmware identity still need runtime confirmation.
 
 ## Files and activation boundary
@@ -188,9 +194,10 @@ These static checks establish candidate symbol availability, not actual-car bina
 
 ## Plan toward a controlled clock trial
 
-The next deliverable is a successful live clock-tree observation. The application-level
-mapping attempt failed before any register read, and this driver has not run in the car.
-The following sequence makes each later step depend on a concrete result from the earlier one.
+The successful November 18 baseline and timer return complete the read-only observation
+stage. The table below records the original pre-return plan; its status column is historical.
+The current transition/restore stage and remaining physical/runtime contracts are tracked in
+[CLOCK-TRANSITION-2026-11-18.md](CLOCK-TRANSITION-2026-11-18.md).
 
 | Step | Work and required result | Current state |
 | --- | --- | --- |
@@ -201,7 +208,7 @@ The following sequence makes each later step depend on a concrete result from th
 | 5. Qualify a bounded experiment | Identify the fitted CPU/revision, effective rail and loaded voltage, thermal instrumentation, and a recovery method that still works after loss of CPU/DDR service. Exercise baseline-to-baseline transition and fault recovery on a recoverable bench. | Grade, active voltage, thermal observation and independent recovery remain unresolved. |
 | 6. Compare one temporary point | Only after those results, build the matching trial/undo artifacts and perform the reviewed baseline–target–baseline experiment with identical workload. Compare completed work, latency, errors and restoration; preserve any pending result. | No trial artifact exists. The observer adds no frequency/voltage write API. |
 
-### A concrete arithmetic candidate, subject to the live baseline
+### A concrete arithmetic candidate (original pre-return analysis)
 
 The recovered candidate NK boot code at `0x801011e0–0x801011f4` writes PLL1
 `DP_OP=0x60`, `DP_MFN=1` and `DP_MFD=3`. With the assumed 24 MHz oscillator and
