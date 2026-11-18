@@ -1,0 +1,176 @@
+diff -ruN a/configure b/configure
+--- a/configure	2016-05-03 04:10:04
++++ b/configure	2026-11-15 11:54:02
+@@ -4098,8 +4098,12 @@
+             LIBTARGET=arm-wince
+         fi
+         enabled shared && ! enabled small && check_cmd $windres --version && enable gnu_windres
+-        check_ldflags -Wl,--nxcompat
+-        check_ldflags -Wl,--dynamicbase
++        # Windows CE: keep DllCharacteristics 0 like the stock DLLs and every CE binary
++        # known to load on the target.
++        if test $target_os != "mingw32ce"; then
++            check_ldflags -Wl,--nxcompat
++            check_ldflags -Wl,--dynamicbase
++        fi
+         enabled x86_32 && check_ldflags -Wl,--large-address-aware
+         shlibdir_default="$bindir_default"
+         SLIBPREF=""
+@@ -4761,11 +4765,17 @@
+ fi
+ 
+ check_builtin atomic_cas_ptr atomic.h "void **ptr; void *oldval, *newval; atomic_cas_ptr(ptr, oldval, newval)"
++# Windows CE build is single-threaded (no pthreads/w32threads): keep libavutil's
++# plain fallback atomics like the stock DLLs instead of inlined LDREX/STREX/DMB.
++if test $target_os != "mingw32ce"; then
+ check_builtin atomic_compare_exchange "" "int *ptr, *oldval; int newval; __atomic_compare_exchange_n(ptr, oldval, newval, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)"
++fi
+ check_builtin machine_rw_barrier mbarrier.h "__machine_rw_barrier()"
+ check_builtin MemoryBarrier windows.h "MemoryBarrier()"
+ check_builtin sarestart signal.h "SA_RESTART"
++if test $target_os != "mingw32ce"; then
+ check_builtin sync_val_compare_and_swap "" "int *ptr; int oldval, newval; __sync_val_compare_and_swap(ptr, oldval, newval)"
++fi
+ 
+ check_func_headers malloc.h _aligned_malloc     && enable aligned_malloc
+ check_func  ${malloc_prefix}memalign            && enable memalign
+diff -ruN a/libavcodec/arm/cabac.h b/libavcodec/arm/cabac.h
+--- a/libavcodec/arm/cabac.h	2016-03-29 04:25:10
++++ b/libavcodec/arm/cabac.h	2026-11-15 12:29:39
+@@ -20,6 +20,12 @@
+ #define AVCODEC_ARM_CABAC_H
+ 
+ #include "config.h"
++/* Windows CE: the upstream refill read the next two bytestream bytes with one
++ * "ldrh" from c->bytestream, which is often at an odd address (an unaligned
++ * access; Windows CE may raise a datatype-misalignment exception for it). Without
++ * fast unaligned access the two bytes are loaded with two "ldrb" instead and
++ * combined as (p[0] << 9) | (p[1] << 1), exactly what "ldrh; rev; lsr #15"
++ * produced. Same bytes read, same result, no alignment requirement. */
+ #if HAVE_ARMV6T2_INLINE
+ 
+ #include "libavutil/attributes.h"
+@@ -59,6 +65,7 @@
+         "tst        %[r_c]        , %[r_c]                      \n\t"
+         "bne        2f                                          \n\t"
+         "ldr        %[r_c]        , [%[c], %[byte]]             \n\t"
++#if HAVE_FAST_UNALIGNED
+ #if UNCHECKED_BITSTREAM_READER
+         "ldrh       %[tmp]        , [%[r_c]]                    \n\t"
+         "add        %[r_c]        , %[r_c]      , #2            \n\t"
+@@ -77,6 +84,28 @@
+         "rev        %[tmp]        , %[tmp]                      \n\t"
+         "lsr        %[r_c]        , %[r_c]      , #15           \n\t"
+         "lsr        %[tmp]        , %[tmp]      , #15           \n\t"
++#else /* alignment-safe refill: two byte loads, tmp = (p[0] << 9) | (p[1] << 1) */
++#if UNCHECKED_BITSTREAM_READER
++        "ldrb       %[tmp]        , [%[r_c]]                    \n\t"
++        "ldrb       %[r_b]        , [%[r_c], #1]                \n\t"
++        "add        %[r_c]        , %[r_c]      , #2            \n\t"
++        "str        %[r_c]        , [%[c], %[byte]]             \n\t"
++#else
++        "ldr        %[r_b]        , [%[c], %[end]]              \n\t"
++        "ldrb       %[tmp]        , [%[r_c]]                    \n\t"
++        "cmp        %[r_c]        , %[r_b]                      \n\t"
++        "ldrb       %[r_b]        , [%[r_c], #1]                \n\t"
++        "itt        lt                                          \n\t"
++        "addlt      %[r_c]        , %[r_c]      , #2            \n\t"
++        "strlt      %[r_c]        , [%[c], %[byte]]             \n\t"
++#endif
++        "orr        %[tmp]        , %[r_b]      , %[tmp], lsl #8\n\t"
++        "sub        %[r_c]        , %[low]      , #1            \n\t"
++        "add        %[r_b]        , %[tables]   , %[norm_off]   \n\t"
++        "eor        %[r_c]        , %[low]      , %[r_c]        \n\t"
++        "lsl        %[tmp]        , %[tmp]      , #1            \n\t"
++        "lsr        %[r_c]        , %[r_c]      , #15           \n\t"
++#endif
+         "ldrb       %[r_c]        , [%[r_b], %[r_c]]            \n\t"
+         "movw       %[r_b]        , #0xFFFF                     \n\t"
+         "sub        %[tmp]        , %[tmp]      , %[r_b]        \n\t"
+diff -ruN a/libavcodec/arm/me_cmp_init_arm.c b/libavcodec/arm/me_cmp_init_arm.c
+--- a/libavcodec/arm/me_cmp_init_arm.c	2016-03-29 04:25:11
++++ b/libavcodec/arm/me_cmp_init_arm.c	2026-11-15 11:49:39
+@@ -42,7 +42,9 @@
+ {
+     int cpu_flags = av_get_cpu_flags();
+ 
+-    if (have_armv6(cpu_flags)) {
++    /* These load blk2 with plain "ldr", which may be unaligned; only safe where
++     * unaligned access is supported (not on Windows CE). */
++    if (have_armv6(cpu_flags) && HAVE_FAST_UNALIGNED) {
+         c->pix_abs[0][0] = ff_pix_abs16_armv6;
+         c->pix_abs[0][1] = ff_pix_abs16_x2_armv6;
+         c->pix_abs[0][2] = ff_pix_abs16_y2_armv6;
+diff -ruN a/libavutil/arm/asm.S b/libavutil/arm/asm.S
+--- a/libavutil/arm/asm.S	2016-03-29 04:25:31
++++ b/libavutil/arm/asm.S	2026-11-15 11:41:28
+@@ -166,7 +166,7 @@
+ .macro  movrel rd, val
+ #if CONFIG_PIC
+         ldpic           \rd, \val
+-#elif HAVE_ARMV6T2_EXTERNAL && !defined(__APPLE__)
++#elif HAVE_ARMV6T2_EXTERNAL && !defined(__APPLE__) && defined(__ELF__)
+         movw            \rd, #:lower16:\val
+         movt            \rd, #:upper16:\val
+ #else
+diff -ruN a/libavutil/arm/timer.h b/libavutil/arm/timer.h
+--- a/libavutil/arm/timer.h	2016-03-29 04:25:31
++++ b/libavutil/arm/timer.h	2026-11-15 11:49:41
+@@ -24,7 +24,9 @@
+ #include <stdint.h>
+ #include "config.h"
+ 
+-#if HAVE_INLINE_ASM && defined(__ARM_ARCH_7A__)
++/* Reading the PMU cycle counter from user mode traps unless the kernel enabled
++ * it (PMUSERENR); Windows CE does not, so never emit it there. */
++#if HAVE_INLINE_ASM && defined(__ARM_ARCH_7A__) && !defined(__MINGW32CE__)
+ 
+ #define AV_READ_TIME read_time
+ 
+diff -ruN a/libavutil/file.c b/libavutil/file.c
+--- a/libavutil/file.c	2016-03-29 04:25:32
++++ b/libavutil/file.c	2026-11-15 11:43:59
+@@ -17,6 +17,12 @@
+  */
+ 
+ #include "config.h"
++#ifdef __MINGW32CE__
++/* Windows CE has MapViewOfFile but no _get_osfhandle() and no CreateFileMappingA:
++ * use the portable read() fallback of av_file_map(). */
++#undef HAVE_MAPVIEWOFFILE
++#define HAVE_MAPVIEWOFFILE 0
++#endif
+ #include "file.h"
+ #include "internal.h"
+ #include "log.h"
+diff -ruN a/libavutil/log.c b/libavutil/log.c
+--- a/libavutil/log.c	2016-05-03 04:10:09
++++ b/libavutil/log.c	2026-11-15 12:16:55
+@@ -356,6 +356,12 @@
+ void av_vlog(void* avcl, int level, const char *fmt, va_list vl)
+ {
+     void (*log_callback)(void*, int, const char*, va_list) = av_log_callback;
++#ifdef __MINGW32CE__
++    /* Windows CE (SYNC 2 AutoKit): logging is disabled, exactly as in the stock
++     * avutil-54.dll, whose av_vlog is a bare return. This keeps all console/stdio
++     * work (and the per-frame cost of decoder error messages) out of the decoder. */
++    return;
++#endif
+     if (log_callback)
+         log_callback(avcl, level, fmt, vl);
+ }
+diff -ruN a/libavutil/random_seed.c b/libavutil/random_seed.c
+--- a/libavutil/random_seed.c	2016-05-03 04:10:30
++++ b/libavutil/random_seed.c	2026-11-15 11:43:17
+@@ -34,6 +34,11 @@
+ #include <math.h>
+ #include <time.h>
+ #include <string.h>
++#ifdef __MINGW32CE__
++/* Windows CE's COREDLL has no clock(); GetTickCount() is a millisecond counter. */
++#include <windows.h>
++#define clock() ((clock_t)GetTickCount())
++#endif
+ #include "avassert.h"
+ #include "internal.h"
+ #include "intreadwrite.h"
