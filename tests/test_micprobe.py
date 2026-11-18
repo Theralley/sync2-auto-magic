@@ -49,9 +49,9 @@ class Summary(unittest.TestCase):
         lines = micprobe.summary(self.report(REPORT))
         self.assertEqual(lines[0], "microphone probe: 2 recording device(s) (Audio Input, unnamed)")
         self.assertIn("  the default device at 16000 Hz: sound (peak 12000 of 32767, average 900)", lines)
-        self.assertIn("  device 0 at 16000 Hz: opened, but no sound data arrived in 5 s", lines)
+        self.assertIn("  device 0 at 16000 Hz: opened, but no sound data arrived", lines)
         self.assertIn("  device 1 at 16000 Hz: data arrived, but it is silence (peak 3 of 32767)", lines)
-        self.assertIn("  the default device at 8000 Hz, 1 channel(s): would not open (error 32)", lines)
+        self.assertFalse([line for line in lines if "would not open" in line])  # it opened at 16000
         self.assertFalse([line for line in lines if "NOT complete" in line])
 
     def test_a_report_that_stops_early_says_so(self):
@@ -79,8 +79,8 @@ class Summary(unittest.TestCase):
         self.assertFalse([line for line in lines if "device 0" in line and "no sound data" in line])
         abandoned = REPORT.replace("heard|device 1|", "abandoned|result 33\r\nignored|device 1|")
         lines = micprobe.summary(self.report(abandoned[:abandoned.index("ignored")] + "end\r\n"))
-        self.assertIn("  device 1 at 16000 Hz: recorded, but the driver would not give the buffer back; "
-                      "the probe stopped there (error 33)", lines)
+        self.assertIn("  device 1 at 16000 Hz: recorded, but the driver would not give the buffers back "
+                      "(error 33)", lines)
 
     def test_no_report_or_another_version(self):
         self.assertIn("did not run", micprobe.summary(self.report(None))[0])
@@ -89,6 +89,82 @@ class Summary(unittest.TestCase):
     def test_no_devices(self):
         lines = micprobe.summary(self.report("s2am-mic-v1\r\nwave in|devices 0\r\nwave out|devices 1\r\nend\r\n"))
         self.assertEqual(lines, ["microphone probe: 0 recording device(s)"])
+
+
+V2 = "\r\n".join([
+    "s2am-mic-v2", "wave in|devices 3",
+    "in|device 0|result 0|formats 4095|channels 2|name WAV0",
+    "in|device 1|result 0|formats 4095|channels 2|name WAV1",
+    "in|device 2|result 0|formats 4095|channels 2|name WAV2",
+    "wave out|devices 1", "out|device 0|result 0|formats 4095|channels 2|name WAV0",
+    "mixers|devices 1", "mixer|device 0|result 0|destinations 1|name MIX_CS42448", "mixer open|result 0",
+    "line|destination 0|result 0|id 7|type 7|sources 1|controls 1|name Record",
+    "control|line 7|id 3|type 536936450|read 0|value 1|min 0|max 1|name Mic Mute",
+    "source|destination 0|source 0|result 0|id 9|type 4099|controls 0|name Microphone",
+    "mixer closed|result 0",
+    "open|device 0|rate 16000|channels 1", "opened|result 0", "queued|device 0|result 0",
+    "open|device 1|rate 16000|channels 1", "opened|result 4",
+    "open|device 1|rate 8000|channels 1", "opened|result 4",
+    "open|device 1|rate 44100|channels 2", "opened|result 4",
+    "open|device 1|rate 48000|channels 2", "opened|result 4",
+    "open|device 2|rate 16000|channels 1", "opened|result 32",
+    "open|device 2|rate 8000|channels 1", "opened|result 0", "queued|device 2|result 0",
+    "listening|device 0|result 0", "listening|device 2|result 0",
+    "tick|second 1|0:0|2:0", "tick|second 2|0:0|2:8000",
+    "heard|device 0|rate 16000|channels 1|bytes 0|of 640000|first second 0|peak 0|average 0"
+    "|samples not zero 0|samples above 500 0",
+    "closed|device 0|result 0",
+    "heard|device 2|rate 8000|channels 1|bytes 152000|of 320000|first second 2|peak 9000|average 700"
+    "|samples not zero 70000|samples above 500 30000",
+    "closed|device 2|result 0",
+    "end", ""])
+
+
+class Listening(unittest.TestCase):
+    def report(self, text):
+        folder = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: [p.unlink() for p in folder.iterdir()] and None or folder.rmdir())
+        (folder / "mic.txt").write_text(text)
+        return folder
+
+    def test_says_which_device_carried_sound_and_from_when_and_which_is_busy(self):
+        lines = micprobe.summary(self.report(V2))
+        self.assertEqual(lines, [
+            "microphone probe: 3 recording device(s) (WAV0, WAV1, WAV2)",
+            "  device 0 at 16000 Hz: opened, but no sound data arrived",
+            "  device 2 at 8000 Hz: sound (peak 9000 of 32767, average 700), from second 2",
+            "  device 1: would not open in any format (in use by another program)",
+            "  mixer: 1 control value(s) read; see mic.txt"])
+
+    def test_a_device_that_would_not_start_and_a_cut_report(self):
+        lines = micprobe.summary(self.report(V2.replace("listening|device 0|result 0", "listening|device 0|result 11")))
+        self.assertIn("  device 0: opened, but recording would not start (error 11)", lines)
+        for end in range(len(V2)):
+            self.assertTrue(micprobe.summary(self.report(V2[:end])))
+
+    def test_no_contradictions_between_queueing_starting_and_what_was_heard(self):
+        partial = V2.replace("queued|device 2|result 0", "queued|device 2|result 7")
+        lines = micprobe.summary(self.report(partial))
+        self.assertIn("  device 2 at 8000 Hz: sound (peak 9000 of 32767, average 700), from second 2", lines)
+        self.assertIn("  device 2: opened, but not all of its buffers could be queued (error 7)", lines)
+        self.assertFalse([line for line in lines if "would not start" in line])
+        unstarted = micprobe.summary(self.report(V2.replace("listening|device 0|result 0",
+                                                            "listening|device 0|result 11")))
+        self.assertFalse([line for line in unstarted if "device 0" in line and "no sound data" in line])
+        cut = V2[:V2.index("listening|device 0")]  # ended before anything was heard
+        lines = micprobe.summary(self.report(cut))
+        self.assertFalse([line for line in lines if "device 2" in line and "would not open" in line])
+        self.assertIn("  device 1: would not open in any format (in use by another program)", lines)
+        unread = V2.replace("|read 0|value 1|", "|read 8|value 0|")
+        self.assertFalse([line for line in micprobe.summary(self.report(unread)) if "mixer:" in line])
+
+    def test_the_probe_listens_on_every_device_before_it_closes_any(self):
+        source = (native.SOURCES / "s2ammic.c").read_text()
+        body = source[source.index("static void listen_all(void)"):]
+        self.assertLess(body.index("ear_open(i);"), body.index("waveInStart("))
+        self.assertLess(body.index("waveInStart("), body.index("Sleep(1000);"))
+        self.assertLess(body.index("Sleep(1000);"), body.index("ear_close(&ears[e]);"))
+        self.assertIn("#define MAX_DEVICES 16", source)
 
 
 class Script(unittest.TestCase):
@@ -110,10 +186,11 @@ class Script(unittest.TestCase):
         self.assertNotIn("waveOutOpen", source)
         self.assertNotIn("mixerSetControlDetails", source)
         self.assertNotIn("RegSet", source)
-        self.assertIn("record(WAVE_MAPPER, 16000);  /* as AutoKit opens it */", source)
+        for writer in ("mixerSetControlDetails", "waveOutOpen", "waveInMessage", "SetProperty"):
+            self.assertNotIn(writer, source)
         self.assertIn("TerminateProcess(GetCurrentProcess(), 4);", source)  # its own limit
         abandon = source[source.index('put("abandoned");'):]
-        self.assertLess(abandon.index("return FALSE;"), abandon.index("LocalFree(data);"))  # never freed there
+        self.assertLess(abandon.index("return;"), abandon.index("LocalFree(ear->data);"))  # never freed there
 
 
 if __name__ == "__main__":

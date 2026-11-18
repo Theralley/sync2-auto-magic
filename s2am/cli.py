@@ -443,10 +443,12 @@ def cmd_job(args) -> int:
               "Import the stick afterwards: the result is in nd.txt")
     elif args.kind == "mic-probe":
         extra = {"s2ammic.exe": native.binary("s2ammic.exe")}
-        print("mic-probe: lists SYNC's recording devices and records about three seconds from each. "
-              "It changes nothing on the car. Close AutoKit first, then insert the stick and talk "
-              "normally until 'Install successfully completed' (about half a minute). Import the stick "
-              "afterwards: the result is in mic.txt, the recordings are mic-*.wav")
+        print("mic-probe: lists SYNC's recording devices and mixer settings, then listens on every "
+              "recording device at once for 20 seconds. It changes no setting and no file on the car, but "
+              "while it listens SYNC's own voice control may not answer. Close AutoKit first. Insert the "
+              "stick, and as soon as the install starts hold the voice button on the wheel and talk until "
+              "'Install successfully completed' (about a minute, at most a minute and a half). Import the "
+              "stick afterwards: the result is in mic.txt, the recordings are mic-*.wav")
     elif args.kind == "pmic":
         extra = {"s2ampmic.exe": native.binary("s2ampmic.exe")}
         print("pmic: reads identification, SW1 voltage presets and mode/SID configuration through PMI1. "

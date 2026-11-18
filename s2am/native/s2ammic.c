@@ -1,26 +1,30 @@
-/* Microphone probe: which recording devices this SYNC offers, and whether sound comes
- * out of them. Usage: s2ammic.exe <report folder>.
+/* Microphone probe: which recording devices this SYNC offers, and which of them carries
+ * sound, and when. Usage: s2ammic.exe <report folder>.
  *
- * It lists the wave-in, wave-out and mixer devices, then records about three seconds from
- * the default device (WAVE_MAPPER, which is what AutoKit opens: AutoKit.exe 0x266e8) and
- * from each wave-in device, in the first of a few common formats the device accepts.
- * For each recording it writes how much arrived and how loud it was, and keeps the sound
- * as mic-<device>-<rate>.wav. Nothing on the car is changed: no setting, no file outside
- * the report folder. A device that delivers nothing is given up after five seconds.
+ * It lists the wave-in, wave-out and mixer devices and what the mixer's controls are set to
+ * (read only). Then it opens every wave-in device at once, each in the first of a few common
+ * formats it accepts, and listens for LISTEN_SECONDS: once a second it writes how much each
+ * device has delivered, so a device that only carries sound while SYNC itself listens (the
+ * voice button held, a call) shows, and from which second. AutoKit opens the default device
+ * (AutoKit.exe 0x266e8), which is device 0. For each device it then writes how loud it was
+ * and keeps the sound as mic-<device>-<rate>.wav. Nothing on the car is changed: no setting,
+ * no mixer control, no file outside the report folder.
  * Every step is written to mic.txt before the next one starts, so a call that never
  * returns shows where it stopped; mic-done.txt is written last.
  * It never runs longer than LIFE_MS: a second thread ends the process then, which also
- * closes the device, and the job ends it as well if it is still there after its wait.
- * A recording whose buffer the driver will not give back is not freed, and ends the probe.
+ * closes the devices, and the job ends it as well if it is still there after its wait.
+ * Buffers the driver will not give back are not freed.
  */
 #include <windows.h>
 #include <mmsystem.h>
 #include <string.h>
 
-#define SECONDS 3
-#define GIVE_UP_MS 5000
+#define LISTEN_SECONDS 20
+#define CHUNK_MS 500
+#define CHUNKS (LISTEN_SECONDS * 1000 / CHUNK_MS)
 #define POLL_MS 100
-#define MAX_DEVICES 6
+#define MAX_DEVICES 16
+#define MAX_CONTROLS 8
 #define LIFE_MS 75000   /* the job waits 90 s */
 #define CLEANUP_TRIES 10
 
@@ -100,10 +104,7 @@ static void save(UINT device, const WAVEFORMATEX *format, const char *data, DWOR
     unsigned char head[44];
     DWORD written;
     HANDLE file;
-    if (device == WAVE_MAPPER)
-        wsprintfW(name, L"mic-default-%u.wav", (unsigned)format->nSamplesPerSec);
-    else
-        wsprintfW(name, L"mic-%u-%u.wav", (unsigned)device, (unsigned)format->nSamplesPerSec);
+    wsprintfW(name, L"mic-%u-%u.wav", (unsigned)device, (unsigned)format->nSamplesPerSec);
     file = create(name);
     if (file == INVALID_HANDLE_VALUE)
         return;
@@ -131,113 +132,126 @@ static void save(UINT device, const WAVEFORMATEX *format, const char *data, DWOR
 static const struct {
     DWORD rate;
     WORD channels;
-} formats[] = {{16000, 1}, {8000, 1}, {44100, 2}, {48000, 2}, {44100, 1}, {48000, 1}};
+} formats[] = {{16000, 1}, {8000, 1}, {44100, 2}, {48000, 2}};
 
-/* One recording. "open" lines carry the system's answer for each format tried; a "heard"
- * line follows for the one that opened. ``only`` (not 0) limits it to that sample rate.
- * FALSE when the driver would not give the buffer or the device back: the buffer and its
- * header are then left allocated, since the driver may still write to them, and nothing
- * more is recorded. */
-static BOOL record(UINT device, DWORD only)
-{
+/* One recording device being listened to: CHUNKS buffers of CHUNK_MS each, all queued before
+ * the start, so what the driver has given back by each second shows when sound flowed. */
+typedef struct {
+    UINT device;
+    HWAVEIN in;
     WAVEFORMATEX format;
-    WAVEHDR *head;
-    HWAVEIN in = NULL;
-    MMRESULT result = MMSYSERR_ERROR;
-    MMRESULT prepared;
-    int tries;
-    DWORD size, waited = 0, first = 0, i, samples, peak = 0, loud = 0, nonzero = 0;
-    unsigned long long sum = 0;
+    WAVEHDR *heads;
     char *data;
-    unsigned f;
-    short *sample;
+    DWORD chunk;    /* bytes in one buffer */
+    int prepared;   /* headers prepared, counted from the first */
+    int first;      /* the first second a returned buffer held data, 0 if none */
+} Ear;
 
+static Ear ears[MAX_DEVICES];
+static int ear_count;
+
+/* Opens ``device`` in the first format it accepts and queues its buffers. Every answer of the
+ * system is written. Nothing is started here. */
+static void ear_open(UINT device)
+{
+    Ear *ear = &ears[ear_count];
+    MMRESULT result = MMSYSERR_ERROR;
+    unsigned f;
+    int i;
+    memset(ear, 0, sizeof(*ear));
+    ear->device = device;
     for (f = 0; f < sizeof(formats) / sizeof(formats[0]); f++) {
-        if (only && formats[f].rate != only)
-            continue;
-        memset(&format, 0, sizeof(format));
-        format.wFormatTag = WAVE_FORMAT_PCM;
-        format.nChannels = formats[f].channels;
-        format.nSamplesPerSec = formats[f].rate;
-        format.wBitsPerSample = 16;
-        format.nBlockAlign = (WORD)(format.nChannels * 2);
-        format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign;
+        ear->format.wFormatTag = WAVE_FORMAT_PCM;
+        ear->format.nChannels = formats[f].channels;
+        ear->format.nSamplesPerSec = formats[f].rate;
+        ear->format.wBitsPerSample = 16;
+        ear->format.nBlockAlign = (WORD)(ear->format.nChannels * 2);
+        ear->format.nAvgBytesPerSec = ear->format.nSamplesPerSec * ear->format.nBlockAlign;
         put("open");
-        field("device", device == WAVE_MAPPER ? 99 : device);
-        field("rate", format.nSamplesPerSec);
-        field("channels", format.nChannels);
+        field("device", device);
+        field("rate", ear->format.nSamplesPerSec);
+        field("channels", ear->format.nChannels);
         line_end();
-        result = waveInOpen(&in, device, &format, 0, 0, CALLBACK_NULL);
+        result = waveInOpen(&ear->in, device, &ear->format, 0, 0, CALLBACK_NULL);
         put("opened");
         field("result", result);
         line_end();
         if (result == MMSYSERR_NOERROR)
             break;
-        if (only)
-            return TRUE;
     }
     if (result != MMSYSERR_NOERROR)
-        return TRUE;
-
-    size = format.nAvgBytesPerSec * SECONDS;
-    data = (char *)LocalAlloc(LPTR, size);
-    head = (WAVEHDR *)LocalAlloc(LPTR, sizeof(WAVEHDR));
-    if (!data || !head) {
+        return;
+    ear->chunk = ear->format.nAvgBytesPerSec / (1000 / CHUNK_MS);
+    ear->data = (char *)LocalAlloc(LPTR, ear->chunk * CHUNKS);
+    ear->heads = (WAVEHDR *)LocalAlloc(LPTR, sizeof(WAVEHDR) * CHUNKS);
+    if (!ear->data || !ear->heads) {
         put("nomemory");
+        field("device", device);
         line_end();
-        if (data)
-            LocalFree(data);
-        if (head)
-            LocalFree(head);
-        result = waveInClose(in);
+        if (ear->data)
+            LocalFree(ear->data);
+        if (ear->heads)
+            LocalFree(ear->heads);
+        result = waveInClose(ear->in);
         put("closed");
+        field("device", device);
         field("result", result);
         line_end();
-        return result == MMSYSERR_NOERROR;
+        return;
     }
-    head->lpData = data;
-    head->dwBufferLength = size;
-    prepared = waveInPrepareHeader(in, head, sizeof(WAVEHDR));
-    result = prepared;
-    if (result == MMSYSERR_NOERROR)
-        result = waveInAddBuffer(in, head, sizeof(WAVEHDR));
-    if (result == MMSYSERR_NOERROR)
-        result = waveInStart(in);
-    put("started");
-    field("result", result);
-    line_end();
-    if (result == MMSYSERR_NOERROR) {
-        while (!(head->dwFlags & WHDR_DONE) && waited < GIVE_UP_MS) {
-            Sleep(POLL_MS);
-            waited += POLL_MS;
-            if (!first && head->dwBytesRecorded)
-                first = waited;
+    for (i = 0; i < CHUNKS && result == MMSYSERR_NOERROR; i++) {
+        ear->heads[i].lpData = ear->data + (DWORD)i * ear->chunk;
+        ear->heads[i].dwBufferLength = ear->chunk;
+        result = waveInPrepareHeader(ear->in, &ear->heads[i], sizeof(WAVEHDR));
+        if (result == MMSYSERR_NOERROR) {
+            ear->prepared = i + 1;
+            result = waveInAddBuffer(ear->in, &ear->heads[i], sizeof(WAVEHDR));
         }
     }
-    put("stopping");
-    field("waited ms", waited);
-    field("done", (head->dwFlags & WHDR_DONE) != 0);
+    put("queued");
+    field("device", device);
+    field("result", result);
     line_end();
-    /* The buffer is the driver's until the reset has given it back and the header is
-     * unprepared: only then is it read, and only then may it be freed. */
+    ear_count++;  /* opened: it is closed again in ear_close, whatever happened to its buffers */
+}
+
+/* Stops one device, takes its buffers back and writes what they held. A device whose buffers
+ * the driver will not give back keeps them, and its handle: they go with the process. */
+static void ear_close(Ear *ear)
+{
+    MMRESULT result = MMSYSERR_NOERROR;
+    DWORD bytes = 0, samples, i, peak = 0, loud = 0, nonzero = 0;
+    unsigned long long sum = 0;
+    short *sample;
+    int tries, h;
     for (tries = 0; tries < CLEANUP_TRIES; tries++) {
-        result = waveInReset(in);
-        if (result == MMSYSERR_NOERROR && prepared == MMSYSERR_NOERROR)
-            result = waveInUnprepareHeader(in, head, sizeof(WAVEHDR));
+        result = waveInReset(ear->in);
+        for (h = 0; h < ear->prepared && result == MMSYSERR_NOERROR; h++)
+            if (ear->heads[h].dwFlags & WHDR_PREPARED)
+                result = waveInUnprepareHeader(ear->in, &ear->heads[h], sizeof(WAVEHDR));
         if (result == MMSYSERR_NOERROR)
             break;
         Sleep(POLL_MS);
     }
     if (result != MMSYSERR_NOERROR) {
         put("abandoned");
+        field("device", ear->device);
         field("result", result);
         line_end();
-        return FALSE;  /* buffer, header and handle stay: the process ends soon and takes them */
+        return;
     }
-    samples = head->dwBytesRecorded / 2;
-    if (samples > size / 2)
-        samples = size / 2;
-    sample = (short *)data;
+    /* The buffers are ours again. What each one holds is moved up to the start, in order. */
+    for (h = 0; h < ear->prepared; h++) {
+        DWORD got = ear->heads[h].dwBytesRecorded;
+        if (got > ear->chunk)
+            got = ear->chunk;
+        got &= ~(DWORD)1;
+        if (got)
+            memmove(ear->data + bytes, ear->heads[h].lpData, got);
+        bytes += got;
+    }
+    samples = bytes / 2;
+    sample = (short *)ear->data;
     for (i = 0; i < samples; i++) {
         DWORD level = (DWORD)(sample[i] < 0 ? -(int)sample[i] : sample[i]);
         if (level > peak)
@@ -249,26 +263,63 @@ static BOOL record(UINT device, DWORD only)
         sum += level;
     }
     put("heard");
-    field("device", device == WAVE_MAPPER ? 99 : device);
-    field("rate", format.nSamplesPerSec);
-    field("channels", format.nChannels);
-    field("bytes", head->dwBytesRecorded);
-    field("of", size);
-    field("first data ms", first);
+    field("device", ear->device);
+    field("rate", ear->format.nSamplesPerSec);
+    field("channels", ear->format.nChannels);
+    field("bytes", bytes);
+    field("of", ear->chunk * CHUNKS);
+    field("first second", (DWORD)ear->first);
     field("peak", peak);
     field("average", samples ? (DWORD)(sum / samples) : 0);
     field("samples not zero", nonzero);
     field("samples above 500", loud);
     line_end();
-    if (samples)
-        save(device, &format, data, samples * 2);
-    LocalFree(data);
-    LocalFree(head);
-    result = waveInClose(in);
+    if (bytes)
+        save(ear->device, &ear->format, ear->data, bytes);
+    LocalFree(ear->data);
+    LocalFree(ear->heads);
+    result = waveInClose(ear->in);
     put("closed");
+    field("device", ear->device);
     field("result", result);
     line_end();
-    return result == MMSYSERR_NOERROR;  /* a device that will not close: no further recording */
+}
+
+/* Listens on every recording device at once for LISTEN_SECONDS, so it shows which of them
+ * carries sound while the user holds the voice button and talks, and from which second. */
+static void listen_all(void)
+{
+    UINT count = waveInGetNumDevs(), i;
+    int second, e, h;
+    for (i = 0; i < count && i < MAX_DEVICES; i++)
+        ear_open(i);
+    for (e = 0; e < ear_count; e++) {
+        MMRESULT result = waveInStart(ears[e].in);
+        put("listening");
+        field("device", ears[e].device);
+        field("result", result);
+        line_end();
+    }
+    for (second = 1; second <= LISTEN_SECONDS; second++) {
+        Sleep(1000);
+        put("tick");
+        field("second", (DWORD)second);
+        for (e = 0; e < ear_count; e++) {
+            DWORD bytes = 0;
+            for (h = 0; h < ears[e].prepared; h++)
+                if (ears[e].heads[h].dwFlags & WHDR_DONE)
+                    bytes += ears[e].heads[h].dwBytesRecorded;
+            if (bytes && !ears[e].first)
+                ears[e].first = second;
+            put("|");
+            number(ears[e].device);
+            put(":");
+            number(bytes);
+        }
+        line_end();
+    }
+    for (e = 0; e < ear_count; e++)
+        ear_close(&ears[e]);
 }
 
 /* The probe's own limit: whatever the audio driver does, the process is gone after LIFE_MS,
@@ -318,17 +369,81 @@ static void list_devices(void)
     }
 }
 
-/* The mixer's lines by name: where a microphone source, if the system names one, shows. */
+/* What one control of a mixer line is set to: read only, never written. */
+static void list_controls(HMIXER mixer, const MIXERLINE *line)
+{
+    MIXERLINECONTROLS query;
+    MIXERCONTROL *controls;
+    MIXERCONTROLDETAILS details;
+    MIXERCONTROLDETAILS_UNSIGNED value;
+    DWORD c, count = line->cControls;
+    MMRESULT result;
+    if (!count)
+        return;
+    if (count > MAX_CONTROLS)
+        count = MAX_CONTROLS;
+    controls = (MIXERCONTROL *)LocalAlloc(LPTR, sizeof(MIXERCONTROL) * line->cControls);
+    if (!controls)
+        return;
+    memset(&query, 0, sizeof(query));
+    query.cbStruct = sizeof(query);
+    query.dwLineID = line->dwLineID;
+    query.cControls = line->cControls;
+    query.cbmxctrl = sizeof(MIXERCONTROL);
+    query.pamxctrl = controls;
+    result = mixerGetLineControls((HMIXEROBJ)mixer, &query, MIXER_OBJECTF_HMIXER | MIXER_GETLINECONTROLSF_ALL);
+    if (result != MMSYSERR_NOERROR) {
+        put("controls");
+        field("line", line->dwLineID);
+        field("result", result);
+        line_end();
+        LocalFree(controls);
+        return;
+    }
+    for (c = 0; c < count; c++) {
+        memset(&details, 0, sizeof(details));
+        memset(&value, 0, sizeof(value));
+        details.cbStruct = sizeof(details);
+        details.dwControlID = controls[c].dwControlID;
+        details.cChannels = 1;
+        details.cbDetails = sizeof(value);
+        details.paDetails = &value;
+        /* A control with several items (a selector, a list) needs one value per item: its
+         * value is not read here, only that it is there and how many items it has. */
+        result = controls[c].cMultipleItems ? MMSYSERR_NOTSUPPORTED :
+                 mixerGetControlDetails((HMIXEROBJ)mixer, &details,
+                                        MIXER_OBJECTF_HMIXER | MIXER_GETCONTROLDETAILSF_VALUE);
+        put("control");
+        field("line", line->dwLineID);
+        field("id", controls[c].dwControlID);
+        field("type", controls[c].dwControlType);
+        field("read", result);
+        field("value", value.dwValue);
+        field("min", controls[c].Bounds.dwMinimum);
+        field("max", controls[c].Bounds.dwMaximum);
+        field("items", controls[c].cMultipleItems);
+        field("flags", controls[c].fdwControl);
+        put("|name ");
+        wide(controls[c].szName, 63);
+        line_end();
+    }
+    LocalFree(controls);
+}
+
+/* The mixer's lines and what their controls are set to: where a microphone source, a mute
+ * or a selector shows, if the system has one. Every answer is written, also a refusal. */
 static void list_mixers(void)
 {
     UINT count = mixerGetNumDevs(), m;
     DWORD d, s;
     MIXERCAPS caps;
     MIXERLINE line;
+    HMIXER mixer;
+    MMRESULT result;
     put("mixers");
     field("devices", count);
     line_end();
-    for (m = 0; m < count && m < 4; m++) {
+    for (m = 0; m < count && m < 2; m++) {
         memset(&caps, 0, sizeof(caps));
         put("mixer");
         field("device", m);
@@ -337,48 +452,63 @@ static void list_mixers(void)
         put("|name ");
         wide(caps.szPname, 31);
         line_end();
+        result = mixerOpen(&mixer, m, 0, 0, MIXER_OBJECTF_MIXER);
+        put("mixer open");
+        field("result", result);
+        line_end();
+        if (result != MMSYSERR_NOERROR)
+            continue;
         for (d = 0; d < caps.cDestinations && d < 16; d++) {
             memset(&line, 0, sizeof(line));
             line.cbStruct = sizeof(line);
             line.dwDestination = d;
-            if (mixerGetLineInfo((HMIXEROBJ)m, &line, MIXER_OBJECTF_MIXER | MIXER_GETLINEINFOF_DESTINATION))
-                continue;
+            result = mixerGetLineInfo((HMIXEROBJ)mixer, &line,
+                                      MIXER_OBJECTF_HMIXER | MIXER_GETLINEINFOF_DESTINATION);
             put("line");
-            field("mixer", m);
             field("destination", d);
+            field("result", result);
+            field("id", line.dwLineID);
             field("type", line.dwComponentType);
             field("sources", line.cConnections);
             field("controls", line.cControls);
             put("|name ");
             wide(line.szName, 63);
             line_end();
+            if (result != MMSYSERR_NOERROR)
+                continue;
+            list_controls(mixer, &line);
             for (s = 0; s < line.cConnections && s < 24; s++) {
                 MIXERLINE source;
                 memset(&source, 0, sizeof(source));
                 source.cbStruct = sizeof(source);
                 source.dwDestination = d;
                 source.dwSource = s;
-                if (mixerGetLineInfo((HMIXEROBJ)m, &source, MIXER_OBJECTF_MIXER | MIXER_GETLINEINFOF_SOURCE))
-                    continue;
+                result = mixerGetLineInfo((HMIXEROBJ)mixer, &source,
+                                          MIXER_OBJECTF_HMIXER | MIXER_GETLINEINFOF_SOURCE);
                 put("source");
-                field("mixer", m);
                 field("destination", d);
                 field("source", s);
+                field("result", result);
+                field("id", source.dwLineID);
                 field("type", source.dwComponentType);
                 field("controls", source.cControls);
                 put("|name ");
                 wide(source.szName, 63);
                 line_end();
+                if (result == MMSYSERR_NOERROR)
+                    list_controls(mixer, &source);
             }
         }
+        result = mixerClose(mixer);
+        put("mixer closed");
+        field("result", result);
+        line_end();
     }
 }
 
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int show)
 {
-    UINT count, i;
     HANDLE done, watch;
-    BOOL going;
     size_t length;
     (void)instance;
     (void)previous;
@@ -395,7 +525,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
     report = create(L"mic.txt");
     if (report == INVALID_HANDLE_VALUE)
         return 3;
-    put("s2am-mic-v1");
+    put("s2am-mic-v2");
     line_end();
     watch = CreateThread(NULL, 0, limit, NULL, 0, NULL);
     if (!watch) {
@@ -407,11 +537,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
     CloseHandle(watch);
     list_devices();
     list_mixers();
-    going = record(WAVE_MAPPER, 16000);  /* as AutoKit opens it */
-    going = going && record(WAVE_MAPPER, 8000);
-    count = waveInGetNumDevs();
-    for (i = 0; going && i < count && i < MAX_DEVICES; i++)
-        going = record(i, 0);
+    listen_all();
     put("end");
     line_end();
     CloseHandle(report);
