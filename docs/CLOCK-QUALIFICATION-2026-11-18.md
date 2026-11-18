@@ -1,5 +1,52 @@
 # Read-only timer and clock-output qualification
-A predecessor-bound successor captures EPIT/QPC evidence and remaining clock-output selection without changing frequency, voltage, timer controls or clock gates.
+The predecessor-bound qualification completed successfully in the car; its timer evidence is informative, but it grants no clock-write authority.
+
+## Verified car return, November 18
+
+The returned package and all eight preserved return files match their trusted hashes and
+local job/artifact/predecessor bindings. The actual child exited zero, the baseline remained
+stable, all cleanup calls succeeded and both report copies are size/CRC-bound:
+
+- Baseline journal: **1,697 bytes**, CRC32 **1012515983**.
+- Qualification report: **677 bytes**, CRC32 **642098802**.
+- All eight samples have explicit successful QPC flags and stable control/routes.
+- QPF reports **8,000,000 ticks/s** both before and after.
+- EPIT progresses **614,273 ticks**; maximum QPC bracket is **46 ticks**.
+- Independent intersection of all `[QPC_before−EPIT_elapsed, QPC_after−EPIT_elapsed]`
+  intervals is **[7,377,121,952; 7,377,121,987]**, width 35 ticks.
+
+At the reported rate, the captured span is 76.784125 ms and the widest bracket 5.75 µs.
+This supports tight unit-tick coherence and is consistent with QPC using the same EPIT
+counter. It is **not independent physical oscillator calibration**. Full 64-bit handling
+matters: both QPC high DWORDs are 1.
+
+Live EPIT control is `0x023c0005`: enabled/free-running, prescaler 1 and high-frequency
+source. CCGR2 is `0x3c000377`: EPIT1 IPG gate 1 and high-frequency gate 3 pass the guard.
+The selected timer source follows COSC→LP_APM→PERCLK/3, not PLL1 in this capture.
+
+Live CCOSR is `0x01330001`. CKO1 selects PLL1/divider 1 **but is disabled**. CKO2 is enabled,
+selecting SSI2 root/divider 2; the captured SSI2 route is SSI_APM→CKIH1/CAMP1, not PLL1.
+Thus neither enabled clock output consumes PLL1 in the sampled state. This does not prove
+what another policy actor may enable later or measure a routed board pin.
+
+Three independent return/firmware/test reviews confirm the result. Five actual-return
+regressions preserve all original report bytes and reject/invalidate correctly re-CRC'd
+counter or gate contradictions, timeout and missing cleanup. All five observation flags
+are true; **suspend exclusion, retry permission and write authority remain false**.
+No new package was prepared while analyzing this return. No repeated identical observer or
+timer trip is needed for these already obtained facts.
+
+### Remaining work before a live frequency trial
+
+1. Bind actual observations into the offline transition/restoration specification; establish
+   serialization against Ford clock/power policy, suspend handling and bounded MFN update/restore.
+2. Establish fitted-part limits/revision, loaded VDDGP behavior and credible thermal observation.
+3. Demonstrate recovery independent of the CPU/undo USB, then qualify baseline-to-baseline
+   transition and restoration before increasing frequency.
+
+The active factors make MFN 1→2 a **26/25 = +4% arithmetic step**, nominally 600→624 MHz
+if COSC is 24 MHz. That calculation is not an operating-point or safety qualification.
+The preparation/contract sections below remain the record of the one-shot diagnostic used.
 
 ## Why this follows the successful baseline
 
@@ -39,8 +86,8 @@ before EPIT mapping and every CR/CNR access and QPC/QPF call. QPC may itself acc
 IPG=1 is legitimate RUN-only configuration; requiring 3 would reject the candidate's setup.
 Gate value 2 is reserved. Even 3 is disabled in STOP. The check reduces gated-access risk but
 cannot freeze another OS clock-policy actor between the check and a subsequent access.
-Blocked MMIO or CE calls cannot be cancelled by the parent. This remains a new car-validation
-boundary, not a promise that hardware access cannot hang.
+Blocked MMIO or CE calls cannot be cancelled by the parent. The returned run exercised this new car-validation
+boundary successfully; it is still not a promise that later hardware access cannot hang.
 
 ## Successor ownership, not another recovery
 
