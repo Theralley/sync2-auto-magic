@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -39,6 +40,7 @@ from pathlib import Path
 from . import apps, autokit, bootstrap, decoder, diskcheck, native, pack, stick, theme, window
 from .container import REPO, ContainerError
 from .job import (AUTOKIT_CE, AUTOKIT_LANGS, AUTOKIT_MODULES, BOOST_LEVELS, CALM_LEVEL, DRIVE_SECONDS, LOAD_SECONDS,
+                  MIC_GATE_APPLIED, MIC_GATE_FILE,
                   NEON_CHECK, NEON_REPORT,
                   CLOCK_ROOTS, REGISTRY_ROOTS, RESTARTING,
                   SCREENS, SERIAL, STARTUP_SCREENS, SWAP_KINDS, Job, autokit_lang_file, bundle_parts, stage)
@@ -72,6 +74,7 @@ def cmd_window(args) -> int:
 
 
 JOB_KINDS = {"inventory": "inv", "autokit-stock": "akstock", "autokit-patched": "akpatch",
+             "autokit-mic-gate": "akmic",
              "remove": "rm", "install": "inst", "undo": "undo", "autokit-config": "akcfg",
              "snapshot": "snap", "logger": "log", "native-hello": "hello", "runner-guard": "guard",
              "theme": "theme", "apps-menu": "appmenu", "cleanup": "clean", "screen": "screen",
@@ -454,6 +457,21 @@ def cmd_job(args) -> int:
               "any fault (which exception, where, the registers). It changes nothing on the car and "
               "needs no phone. Usually under a minute; a stage that hangs is ended after 25 s. "
               "Import the stick afterwards: the result is in nd.txt")
+    elif args.kind == "autokit-mic-gate":
+        from . import micgate
+        from .autokit import patch_waveout
+        stock = (args.upstream / "FullPack/SyncExtendedPack/Apps/Media/AutoKit/AutoKit.exe").read_bytes()
+        patched = patch_waveout.patch(stock, (args.upstream / autokit.HOOK_SOURCE).read_bytes())
+        opened = micgate.open_gate(patched)
+        params = {"size": len(opened), "sha256": hashlib.sha256(opened).hexdigest(),
+                  "patched_sha256": hashlib.sha256(patched).hexdigest()}
+        extra = {MIC_GATE_FILE: opened}
+        print("autokit-mic-gate: AutoKit records from the car's microphone only on head units it knows, and "
+              "SYNC 2 is not one. This installs the app pack's sound-patched AutoKit.exe with that check "
+              "answering yes (one instruction changed); any other change made to the car's AutoKit.exe is "
+              "replaced. The car's AutoKit.exe.patched stays as it is, for the way back. AutoKit must not be "
+              "running: restart SYNC first. Undo: s2am job autokit-patched. The microphone also needs runner-guard --mic on and "
+              "autokit-config --mic car")
     elif args.kind == "mic-probe" and args.route:
         params = {"route": True}
         extra = {"s2ammic.exe": native.binary("s2ammic.exe")}
@@ -661,6 +679,8 @@ def cmd_stick_import(args) -> int:
             from . import neondiag
             for text in neondiag.summary(report, record.get("params")):
                 print("  " + text)
+        if record.get("kind") == "akmic" and report:
+            print("  " + _verify_mic_gate(report, record.get("params", {})))
         if record.get("kind") == "mic" and record["status"] == "applied" and report:
             from . import micprobe
             for text in micprobe.summary(report):
@@ -813,6 +833,25 @@ def _calm_acts(report: Path | None) -> bool:
     path = report / "guard-calm.txt" if report else None
     data = path.read_bytes() if path and path.is_file() else b""
     return len(data) < 16 and data.rstrip(_BLANK) == str(CALM_LEVEL).encode()
+
+
+def _verify_mic_gate(report: Path, params: dict) -> str:
+    """Compare the AutoKit.exe the car ended up with (copied into the report) with what was planned."""
+    applied = report / MIC_GATE_APPLIED
+    if (report / "rollback-failed.txt").is_file():
+        return "FAILED: the car's AutoKit.exe is damaged and could not be put back; run the autokit-patched stick"
+    for marker in ("busy.txt", "payload-bad.txt", "missing.txt", "unknown.txt"):  # stops before any change
+        if (report / marker).is_file():
+            return "nothing changed: " + (report / marker).read_text(errors="replace").strip()
+    if not applied.is_file():
+        return ("NOT verified: no copy of the car's AutoKit.exe came back, so what the car has now is not "
+                "known; run the job again or the autokit-patched stick")
+    seen = hashlib.sha256(applied.read_bytes()).hexdigest()
+    if seen == params.get("sha256"):
+        return "verified: the car's AutoKit.exe is the one with the microphone gate open, byte for byte"
+    if seen == params.get("patched_sha256"):
+        return "NOT applied: the car's AutoKit.exe is the patched one, with the gate closed"
+    return "NOT verified: the car's AutoKit.exe is neither the planned one nor the patched one; run autokit-patched"
 
 
 def _guard_mic(report: Path | None) -> bytes | None:
@@ -1181,7 +1220,9 @@ def parser() -> argparse.ArgumentParser:
     job_sub = job.add_subparsers(dest="kind", required=True)
     for name, help_text in (("inventory", "list installed apps and the menu"),
                             ("autokit-stock", "swap AutoKit to its stock audio modules"),
-                            ("autokit-patched", "swap AutoKit to the patched audio modules")):
+                            ("autokit-patched", "swap AutoKit to the patched audio modules"),
+                            ("autokit-mic-gate", "let AutoKit record from the car's microphone on SYNC 2 (one "
+                             "instruction in AutoKit.exe; undo with autokit-patched)")):
         job_sub.add_parser(name, parents=[common], help=help_text).set_defaults(func=cmd_job)
     remove = job_sub.add_parser("remove", parents=[common],
                                 help="take an app out of the Apps menu (--purge deletes its files)")

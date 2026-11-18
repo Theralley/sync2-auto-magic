@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .job import (AUTOKIT_CE, AUTOKIT_LOGS, AUTOKIT_MODULES, BACKUP_DIR, BOOST_STUCK_OFF, BOOST_STUCK_ON, CHANGING,
                   BOOST_STUCK_WRITE, CALM_LEVEL, CALM_STUCK_OFF, CALM_STUCK_ON, GUARD_BOOST, GUARD_CALM, GUARD_LOG,
-                  GUARD_MIC, MIC_STUCK_OFF, MIC_STUCK_ON, INVENTORY_ROOT, LOAD_LOGS, MENU_XML, NEON_REPORT, OLD_REPORT_MARKER,
+                  GUARD_MIC, MIC_GATE_APPLIED, MIC_GATE_FILE, MIC_STUCK_OFF, MIC_STUCK_ON, INVENTORY_ROOT, LOAD_LOGS, MENU_XML, NEON_REPORT, OLD_REPORT_MARKER,
                   PHASE_DIR, PLUGINS_MASK, REPORTS_DIR, STICK_MOUNTS, SWAP_KINDS, TOOLS_CE, Job, bundle_parts,
                   ce_path, load_folder, swap_lines, swap_target)
 
@@ -31,6 +31,8 @@ class FakeCar:
         self.autokit_running = False
         self.running: set[str] = set()  # lower-case process names
         self.broken_copies: set[str] = set()  # lower-case CE paths whose Copy silently fails
+        self.mic_gate_rollback_works = True  # False: the way back hits the same broken copy
+        self.mic_gate_readback = True        # False: the copy of the result into the report is lost
         self.garbled_copies: set[str] = set()  # lower-case CE paths whose Copy keeps the length, not the bytes
         self.locked_files: set[str] = set()  # lower-case CE paths a running program holds open
         self.stuck_files: set[str] = set()  # lower-case CE paths whose Delete (or DelTree) silently fails
@@ -124,6 +126,8 @@ class FakeCar:
             for part in bundle_parts(job) if job.kind == "bundle" else []:
                 (out.parent / part.id).mkdir(exist_ok=True)
                 (out.parent / part.id / "replayed.txt").write_text(part.id)
+            return
+        if job.kind == "akmic" and not self._mic_gate(out, job):
             return
         variant = {"akstock": "orig", "akpatch": "patched"}.get(job.kind)
         if variant:
@@ -512,6 +516,44 @@ class FakeCar:
             source = self._resolve(f"{load_folder(job_id)}\\{name}")
             if source.is_file():
                 shutil.copyfile(source, out / name)
+
+    def _mic_gate(self, out: Path, job: Job) -> bool:
+        """The steps of job.mic_gate_script."""
+        ak, size = self._resolve(AUTOKIT_CE), job.params["size"]
+        new = self._resolve(ce_path(job.job_dir)) / MIC_GATE_FILE
+        live, patched, kept = ak / "AutoKit.exe", ak / "AutoKit.exe.patched", ak / MIC_GATE_FILE
+        if self.autokit_running or "autokit.exe" in self.running:
+            (out / "busy.txt").write_text("AutoKit is running")
+            return False
+        if not new.is_file() or new.stat().st_size != size:
+            (out / "payload-bad.txt").write_text("incomplete")
+            return False
+        if not patched.is_file():
+            (out / "missing.txt").write_text("no patched copy")
+            return False
+        if patched.stat().st_size != size or not live.is_file() or live.stat().st_size != size:
+            (out / "unknown.txt").write_text("not the one planned against")
+            return False
+        self._copy(new, kept)
+        if not kept.is_file() or kept.stat().st_size != size:
+            kept.unlink(missing_ok=True)
+            (out / "copy-failed.txt").write_text("did not copy; nothing changed")
+            return False
+        self._copy(kept, live)
+        if live.stat().st_size != size:
+            if self.mic_gate_rollback_works:
+                shutil.copyfile(patched, live)
+            else:
+                self._copy(patched, live)
+            shutil.copyfile(live, out / MIC_GATE_APPLIED)
+            if live.stat().st_size != size:
+                (out / "rollback-failed.txt").write_text("damaged, and the patched one could not be put back")
+                return False
+            (out / "copy-failed.txt").write_text("did not copy whole; the patched one was put back")
+            return False
+        if self.mic_gate_readback:
+            shutil.copyfile(live, out / MIC_GATE_APPLIED)
+        return True
 
     def _autokit_config(self, out: Path, job: Job) -> bool:
         ak = self._resolve(AUTOKIT_CE)

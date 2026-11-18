@@ -302,6 +302,59 @@ def autokit_script(job: Job, variant: str) -> str:
     return _script(_header(job) + swap + _inventory() + _footer(job))
 
 
+MIC_GATE_FILE = "AutoKit.exe.mic"      # in the job folder, and kept beside AutoKit.exe on the car
+MIC_GATE_APPLIED = "AutoKit.exe.applied"  # in the report: what the car's AutoKit.exe is after the job
+
+
+def mic_gate_script(job: Job) -> str:
+    """Put an AutoKit.exe whose microphone gate is open (micgate.py) in AutoKit.exe's place.
+
+    The new program is the car's patched AutoKit.exe with one instruction changed, so it has the
+    same size; ``size`` is that size. Nothing is changed unless AutoKit is not running, the file in
+    the job folder is whole, the car's AutoKit.exe has the size planned against, and the car keeps
+    AutoKit.exe.patched, which is the way back (``s2am job autokit-patched``). A copy that did not
+    come out whole is replaced by that patched copy at once. What the car's AutoKit.exe is in the
+    end goes into the report, so the Mac compares it byte for byte."""
+    size = job.params.get("size")
+    if not isinstance(size, int) or isinstance(size, bool) or not 100_000 <= size <= 2_000_000:
+        raise ValueError(f"invalid AutoKit.exe size {size!r}")
+    new = f'{_quote(ce_path(job.job_dir))} & "\\{MIC_GATE_FILE}"'
+    return _script(_header(job) + [
+        'If (ProcExists("AutoKit.exe"))',
+        *_stop("busy.txt", "AutoKit is running: restart SYNC and re-prepare the stick on the Mac", "  "),
+        "EndIf",
+        f"ak = {_quote(AUTOKIT_CE)}",
+        f"If (FileSize({new}) <> {size})",
+        *_stop("payload-bad.txt", "the job's AutoKit.exe is incomplete; nothing changed", "  "),
+        "EndIf",
+        'If (NOT FileExists(ak & "\\AutoKit.exe.patched"))',
+        *_stop("missing.txt", "the car has no AutoKit.exe.patched to go back to; nothing changed", "  "),
+        "EndIf",
+        f'If (FileSize(ak & "\\AutoKit.exe.patched") <> {size})',
+        *_stop("unknown.txt", "the car's AutoKit.exe.patched is not the one planned against; nothing changed", "  "),
+        "EndIf",
+        f'If (FileSize(ak & "\\AutoKit.exe") <> {size})',
+        *_stop("unknown.txt", "the car's AutoKit.exe is not the one planned against; nothing changed", "  "),
+        "EndIf",
+        f'Copy({new}, ak & "\\{MIC_GATE_FILE}", TRUE)',
+        f'If (FileSize(ak & "\\{MIC_GATE_FILE}") <> {size})',
+        f'  Delete(ak & "\\{MIC_GATE_FILE}")',
+        *_stop("copy-failed.txt", "the new AutoKit.exe did not copy; nothing changed", "  "),
+        "EndIf",
+        f'Copy(ak & "\\{MIC_GATE_FILE}", ak & "\\AutoKit.exe", TRUE)',
+        f'If (FileSize(ak & "\\AutoKit.exe") <> {size})',
+        '  Copy(ak & "\\AutoKit.exe.patched", ak & "\\AutoKit.exe", TRUE)',
+        f'  Copy(ak & "\\AutoKit.exe", out & "\\{MIC_GATE_APPLIED}", TRUE)',
+        f'  If (FileSize(ak & "\\AutoKit.exe") <> {size})',
+        *_stop("rollback-failed.txt", "the new AutoKit.exe did not copy whole and the patched one could not be "
+               "put back: AutoKit.exe is damaged, run the autokit-patched stick", "    "),
+        "  EndIf",
+        *_stop("copy-failed.txt", "the new AutoKit.exe did not copy whole; the patched one was put back", "  "),
+        "EndIf",
+        f'Copy(ak & "\\AutoKit.exe", out & "\\{MIC_GATE_APPLIED}", TRUE)',
+    ] + _inventory() + _footer(job))
+
+
 def _length(value) -> int:
     if not isinstance(value, int) or value <= 0:
         raise ValueError(f"invalid menu length {value!r}")
@@ -1591,6 +1644,7 @@ SCRIPTS = {
     "inv": inventory_script,
     "akstock": lambda job: autokit_script(job, "orig"),
     "akpatch": lambda job: autokit_script(job, "patched"),
+    "akmic": mic_gate_script,
     "rm": menu_change_script,
     "inst": menu_change_script,
     "undo": undo_script,
