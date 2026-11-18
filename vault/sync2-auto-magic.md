@@ -1,6 +1,14 @@
 # SYNC 2 clock investigation
 Live clock baseline and timer qualification are verified; no overclock is qualified or deployed.
 
+## Read-only CPU availability component, November 18
+
+A standalone USEREN/PMNC/CNTENS probe and strict parser are implemented, host-fault-tested
+and compiled as one experimental CE helper. It never enables PMU state or samples CPU
+cycles. Combined targeted checks pass 72 tests. No car execution or new USB package exists;
+fault-containing parent/one-shot integration remains the next component.
+See [[clock-cpu-availability-2026-11-18]].
+
 ## Evidence-bound transition work, November 18
 
 The preserved actual return now feeds an inert specification: seven captured facts met,

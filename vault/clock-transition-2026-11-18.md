@@ -56,3 +56,6 @@ ASan/UBSan. Targeted Clang analysis and whitespace checks pass. Independent secu
 performance and tests rechecks approve this hardware-independent scope after reproduced
 state-drift, post-journal freshness and callback-result defects were fixed with regressions.
 No full CI, CE build, car transition, physical qualification or USB change ran.
+
+A subsequent [[clock-cpu-availability-2026-11-18]] component now supplies a built, tested
+read-only control probe. It has not run in the car and does not qualify CPU-rate sampling.

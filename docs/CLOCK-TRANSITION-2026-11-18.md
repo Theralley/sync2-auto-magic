@@ -178,3 +178,9 @@ remove old claims, enable PMU controls speculatively or substitute arbitrary ker
 
 Source and tests remain on the local development branch. Published documentation does not
 publish or install the coordinator, nor certify an overclock as safe.
+
+## Subsequent read-only component
+
+The [CPU availability probe](CLOCK-CPU-AVAILABILITY-2026-11-18.md) is now implemented,
+host-tested and compiled separately. It reads permission/enable controls only; no CPU-rate
+sampler or fault-containing deployment parent is qualified yet. It has not run in the car.
