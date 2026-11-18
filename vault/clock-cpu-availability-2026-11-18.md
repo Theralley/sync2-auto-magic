@@ -1,6 +1,14 @@
 # CPU-counter availability diagnostic
 Controlled v2 diagnostic returned inconclusive at preflight; exact enumeration failure remains unknown, no overclock is qualified.
 
+## Next metadata diagnostic prepared
+
+A distinct metadata-only job `20261118-185807-cpumeta-8c51` is now prepared, remount-verified
+and safely ejected on NO NAME. It isolates the ambiguous preflight stop below without
+launching a CPU probe or touching claims/edges. It is not a replay or an overclock.
+See [[clock-cpu-metadata-2026-11-18]].
+
+
 ## Controlled successor returned: preflight stop, November 18
 
 Job **`20261118-174115-cpuavail-dbf6`** returned with its exact consumed 48,760-byte pack.
