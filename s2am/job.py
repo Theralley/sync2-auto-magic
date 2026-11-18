@@ -1475,6 +1475,33 @@ def pmic_lines(job: Job) -> list[str]:
     ]
 
 
+MIC_WAIT = 90  # s2ammic.exe: at most eight recordings of 3-5 s each
+
+
+def mic_probe_script(job: Job) -> str:
+    """Read-only: s2ammic.exe lists the recording devices and records a few seconds from each
+    into the report folder. Nothing on the car is changed. The script waits for mic-done.txt;
+    without it the report says the probe did not finish, and mic.txt shows where it stopped.
+    The probe ends itself after 75 s; one that is still there after the wait is ended here, which
+    also closes its recording device."""
+    return _script(_header(job) + [
+        f'Run({_quote(ce_path(job.job_dir))} & "\\s2ammic.exe", out)',
+        "n = 0",
+        f"While (n < {MIC_WAIT})",
+        '  If (FileExists(out & "\\mic-done.txt"))',
+        f"    n = {MIC_WAIT}",
+        "  Else",
+        "    Sleep(1000)",
+        "    n = n + 1",
+        "  EndIf",
+        "EndWhile",
+        'If (ProcExists("s2ammic.exe"))',  # it ends itself after 75 s; this is the second line
+        '  Kill("s2ammic.exe")',
+        '  WriteFile(out & "\\mic-killed.txt", "the probe was still running and was ended")',
+        "EndIf",
+    ] + _inventory() + _footer(job))
+
+
 def decoder_inspect_script(job: Job) -> str:
     """A fresh harmless interpreter probe; the native POST_APP owns the real report."""
     from .decoder_inspect import target_id
@@ -1535,6 +1562,7 @@ SCRIPTS = {
     "clock": clock_script,
     "decdiag": decoder_inspect_script,
     "neondiag": neon_diagnose_script,
+    "mic": mic_probe_script,
 }
 MENU_CHANGING = ("rm", "undo", "inst")  # SYNC reads SyncApps.xml at start, so these restart it
 RESTARTING = MENU_CHANGING + SKIN_SWAPS + ("bundle",)  # and its theme, Apps menu and screens

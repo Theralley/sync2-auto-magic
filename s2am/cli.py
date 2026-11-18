@@ -76,7 +76,7 @@ JOB_KINDS = {"inventory": "inv", "autokit-stock": "akstock", "autokit-patched": 
              "snapshot": "snap", "logger": "log", "native-hello": "hello", "runner-guard": "guard",
              "theme": "theme", "apps-menu": "appmenu", "cleanup": "clean", "screen": "screen",
              "bundle": "bundle", "registry": "reg", "decoder": "dec", "pmic": "pmic", "clock": "clock",
-             "decoder-inspect": "decdiag", "neon-diagnose": "neondiag"}
+             "decoder-inspect": "decdiag", "neon-diagnose": "neondiag", "mic-probe": "mic"}
 MARK = {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
 
 
@@ -441,6 +441,12 @@ def cmd_job(args) -> int:
               "any fault (which exception, where, the registers). It changes nothing on the car and "
               "needs no phone. Usually under a minute; a stage that hangs is ended after 25 s. "
               "Import the stick afterwards: the result is in nd.txt")
+    elif args.kind == "mic-probe":
+        extra = {"s2ammic.exe": native.binary("s2ammic.exe")}
+        print("mic-probe: lists SYNC's recording devices and records about three seconds from each. "
+              "It changes nothing on the car. Close AutoKit first, then insert the stick and talk "
+              "normally until 'Install successfully completed' (about half a minute). Import the stick "
+              "afterwards: the result is in mic.txt, the recordings are mic-*.wav")
     elif args.kind == "pmic":
         extra = {"s2ampmic.exe": native.binary("s2ampmic.exe")}
         print("pmic: reads identification, SW1 voltage presets and mode/SID configuration through PMI1. "
@@ -630,6 +636,10 @@ def cmd_stick_import(args) -> int:
         if record.get("kind") == "neondiag" and record["status"] == "applied":
             from . import neondiag
             for text in neondiag.summary(report, record.get("params")):
+                print("  " + text)
+        if record.get("kind") == "mic" and record["status"] == "applied" and report:
+            from . import micprobe
+            for text in micprobe.summary(report):
                 print("  " + text)
         if record.get("kind") in ("pmic", "clock") and record["status"] == "applied" and report:
             from . import pmic
@@ -1259,6 +1269,9 @@ def parser() -> argparse.ArgumentParser:
                           help="also copy matching car files to the stick, read-only "
                                "(e.g. '\\Windows\\boot.rgu'); matched against the last drive log")
     registry.set_defaults(func=cmd_job)
+    job_sub.add_parser("mic-probe", parents=[common],
+                       help="read-only: list SYNC's recording devices and record a few seconds "
+                            "from each").set_defaults(func=cmd_job)
     pmic = job_sub.add_parser("pmic", parents=[common],
                               help="read-only MC13892 identification, SW1 presets and mode/SID through PMI1; "
                                    "no clock/voltage changes")
