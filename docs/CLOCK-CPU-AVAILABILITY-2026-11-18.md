@@ -132,7 +132,7 @@ The root file `S2AM-CPU-TEST-20261118.txt` carries these instructions. Results m
 be **inconclusive** if CE refuses debugging, suspended launch, process-handle duplication or
 CPU access. The design has no un-debugged execution fallback or automatic retry.
 
-## Three layers and the pre-read gate
+## Historical v1: three layers and the pre-read gate
 
 - **POST_APP collector, `s2amcpujob.exe`:** verifies and locks the exact controller/probe
   artifacts, creates a fresh retained CPU claim and publishes a ready receipt only after
@@ -165,7 +165,7 @@ by those checks. Failure cleanup targets only the process whose ownership was es
 Neither the event nor local artifact manifests authenticate against an equally privileged
 host process; source/artifact binding is consistency evidence, not execution attestation.
 
-## Reviewed gated artifacts
+## Historical v1: reviewed gated artifacts
 
 | Artifact | Bytes | SHA-256 |
 | --- | ---: | --- |
