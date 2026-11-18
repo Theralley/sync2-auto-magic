@@ -405,12 +405,16 @@ def cmd_job(args) -> int:
         if args.mic is not None:
             if args.off:
                 raise ValueError("--mic goes with a job that turns the guard on; --off takes it away too")
-            params["mic"] = args.mic == "on"
-            print("mic on: while the app runs, the guard asks SYNC's audio router to connect the microphone to "
-                  "the recording device the app opens, so CarPlay can hear you (Siri, calls). AutoKit must "
-                  "use the car's microphone for this: autokit-config --mic car. SYNC's own microphone route is "
-                  "not touched. Undo: --mic off (or --off for the whole guard)" if params["mic"] else
-                  "mic off: the guard stays on; the microphone is no longer connected for the app")
+            params["mic"] = "find" if args.mic == "find" else args.mic == "on"
+            print({"on": "mic on: while the app runs, the guard asks SYNC's audio router to connect the microphone "
+                         "to the recording device the app opens, so CarPlay can hear you (Siri, calls). AutoKit "
+                         "must use the car's microphone for this: autokit-config --mic car. SYNC's own microphone "
+                         "route is not touched. Undo: --mic off (or --off for the whole guard)",
+                   "find": "mic find: as mic on, but the guard asks the router for every recording device in "
+                           "turn, twice a second, and logs each device on which a recording is running, "
+                           "whoever runs it. For finding out, not for keeping: go back with --mic on or "
+                           "--mic off",
+                   "off": "mic off: the guard stays on; the microphone is no longer connected for the app"}[args.mic])
         if args.measure is not None:
             if args.off:
                 raise ValueError("--measure goes with a job that turns the guard on, not with --off")
@@ -821,7 +825,7 @@ def _mic_acts(report: Path | None) -> bool:
     """Would the guard take the microphone file as it is? As start_mic reads it: under 8 bytes,
     "on" with only blanks after it."""
     data = _guard_mic(report) or b""
-    return len(data) < 8 and data.rstrip(_BLANK) == b"on"
+    return len(data) < 8 and data.rstrip(_BLANK) in (b"on", b"find")
 
 
 def _boost_acts(report: Path | None) -> bool:
@@ -869,8 +873,9 @@ def _verify_guard(store: Store, record: dict) -> str:
         elif calm_now is not None:
             verdict += f", calm file holds {calm_now!r}: it will not act"
         mic, mic_now = record["params"].get("mic"), _guard_mic(report)
-        if mic is True and mic_now != b"on":
-            return f"NOT verified: the guard is on, but its microphone file holds {mic_now!r}, not 'on'"
+        wanted = b"find" if mic == "find" else b"on"
+        if mic and mic_now != wanted:
+            return f"NOT verified: the guard is on, but its microphone file holds {mic_now!r}, not {wanted!r}"
         if mic is False and mic_now is not None:
             return f"NOT verified: the guard is on, but its microphone file is still there ({mic_now!r})"
         if _mic_acts(report):
@@ -1246,7 +1251,7 @@ def parser() -> argparse.ArgumentParser:
                        help="on: while the app is alone on the screen, Desktop.exe's threads at 250 "
                             "(Ford's screens) run at 252, level with the app's video thread; they go "
                             "back as soon as anything else shows. Without it the calm stays as it is")
-    guard.add_argument("--mic", choices=["on", "off"],
+    guard.add_argument("--mic", choices=["on", "off", "find"],
                        help="on: while the app runs, ask SYNC's audio router to connect the microphone to "
                             "the recording device the app opens. Without it the setting stays as it is")
     guard.add_argument("--measure", metavar="SECONDS", type=int, nargs="?", const=LOAD_SECONDS,

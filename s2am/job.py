@@ -590,7 +590,7 @@ def guard_script(job: Job) -> str:
     if calm is not None and (action != "enable" or not isinstance(calm, bool)):
         raise ValueError(f"invalid runner guard calm {calm!r}")
     mic = job.params.get("mic")
-    if mic is not None and (action != "enable" or not isinstance(mic, bool)):
+    if mic is not None and (action != "enable" or not (isinstance(mic, bool) or mic == "find")):
         raise ValueError(f"invalid runner guard microphone {mic!r}")
     measure = job.params.get("measure")
     if measure is not None and action != "enable":
@@ -693,21 +693,23 @@ MIC_STUCK_OFF = ("the guard is off (the original runner is in place), but its mi
                  "would bring the microphone back")
 
 
-def _mic_lines(mic: bool, stuck: str = MIC_STUCK_ON) -> list[str]:
-    """Turn the guard's microphone on (its file holds "on") or off (no file), checked on the car.
-    The inventory then copies what is there. The guard reads the file each time it starts an app."""
+def _mic_lines(mic, stuck: str = MIC_STUCK_ON) -> list[str]:
+    """Turn the guard's microphone on (its file holds "on"; "find" for the search over every
+    recording device) or off (no file), checked on the car. The inventory then copies what is
+    there. The guard reads the file each time it starts an app."""
     mf = _quote(GUARD_MIC)
     gone = [f"Delete({mf})", f"If (FileExists({mf}))"]
     if mic:
+        text = "find" if mic == "find" else "on"
         return [
             'MkDir("\\SyncExtendedPack\\_s2am")',
-            f'WriteFile({mf}, "on")',
-            f'If (ReadFile({mf}) ne "on")',
+            f'WriteFile({mf}, "{text}")',
+            f'If (ReadFile({mf}) ne "{text}")',
             *["  " + line for line in gone],
             f'    Copy({mf}, out & "\\guard-mic.txt", TRUE)',
             "  EndIf",
             *_stop("copy-failed.txt", "the microphone did not write; the guard is on, and uses the file "
-                   "(copied as guard-mic.txt if it is still there) only if it holds on", "  "),
+                   "(copied as guard-mic.txt if it is still there) only if it holds on or find", "  "),
             "EndIf",
         ]
     return [*gone, *_stop("copy-failed.txt", stuck, "  "), "EndIf"]

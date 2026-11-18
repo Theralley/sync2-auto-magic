@@ -75,7 +75,8 @@
  * request is made four times a second, is refused while nothing records there and takes hold
  * as soon as the app starts recording; the driver drops the route by itself when the app closes the device. The request
  * is the driver's own (waveInSetProperty); SYNC's own microphone route is not touched, and
- * nothing is stored. Without the file none of this runs.
+ * nothing is stored. With "find" in the file instead, the request goes to every recording
+ * device in turn, to learn which one the app records on. Without the file none of this runs.
  *
  * Every state change is appended to \SyncExtendedPack\_s2am\guard.log.
  * Usage: SyncAppsRunner.exe <app path>       (as the app plugins call it; they use
@@ -116,6 +117,10 @@
 /* The app may open, close and open its recording at any moment, and speech starts at once. */
 #define MIC_ASK_MS 250     /* between requests while the app runs */
 #define MIC_IDLE_MS 1000   /* between looks while no app runs: nothing is asked */
+#define MIC_FIND_MS 500    /* between rounds of the search over every recording device */
+#define MIC_FORGET 7       /* the router's request "take this route out of the table" */
+#define MIC_NO_STREAM 13   /* its answer when nothing has that recording device open */
+#define MIC_DEVICES 14     /* recording devices 0-13 */
 #define MAX_LISTED 256     /* threads of the app in one list; more, and the boost waits */
 #define MAX_WINDOWS 32     /* windows of the app one look keeps for WM_CLOSE */
 #define TH32CS_SNAPPROCESS 0x00000002
@@ -929,19 +934,95 @@ static const GUID MIC_ROUTER = {0xb8ed20d3, 0x954f, 0x48d8, {0x8a, 0x71, 0xd1, 0
 static SetPropertyFn set_property;
 static volatile LONG mic_wanted;       /* 1 while the app runs, written by the watch loop */
 static DWORD mic_last = MIC_NO_ANSWER;  /* the router's last answer, so only changes are logged */
+static BOOL mic_finding;               /* the file holds "find": every device is tried */
+static DWORD mic_found[MIC_DEVICES];   /* per device, the router's last answer in the search */
+static BOOL mic_ours[MIC_DEVICES];     /* per device, the route there is one this search made */
+/* The search and its tidying up never run at the same time, and never again once the guard
+ * has begun to end: both are done inside ``mic_lock``, and ``mic_over`` is set inside it. */
+static CRITICAL_SECTION mic_lock;
+static BOOL mic_over;
+#define MIC_KEPT 3  /* routes of its own the search keeps at most: the table has few free places */
 
 /* One request: the microphone to the app's recording device. The driver adds no second table
  * entry for a route it already lists, and takes a connection that failed out again, so asking
  * again and again leaves nothing behind. */
-static DWORD mic_ask(void)
+static DWORD mic_request(ULONG what, DWORD device)
 {
     LineConnect line;
     line.source = MIC_LINE;
     line.source_dir = 0;
-    line.sink = MIC_DEVICE;
+    line.sink = device;
     line.sink_dir = 0;
     line.flags = 0;
-    return set_property(MIC_DEVICE, &MIC_ROUTER, MIC_CONNECT, NULL, 0, &line, sizeof(line));
+    return set_property(MIC_DEVICE, &MIC_ROUTER, what, NULL, 0, &line, sizeof(line));
+}
+
+static DWORD mic_ask(void)
+{
+    return mic_request(MIC_CONNECT, MIC_DEVICE);
+}
+
+/* The search ("find" in the file): it is not known which recording device the app opens, or
+ * whether it opens one at all. One round asks the router to connect the microphone to each
+ * device but three: 4 is the one SYNC keeps for its own microphone, 3 and 6 are of another
+ * kind (the telephone's sound). A device nobody has open answers MIC_NO_STREAM; any other
+ * answer is logged when it changes, with the device, so the log shows which device the app
+ * records on and when. Every request enters its route in the router's table, also one that
+ * does not connect; unless the route in place is one this search made, the entry is taken
+ * out again at once, and the ones it kept go when the app or the guard ends (mic_tidy). The
+ * entry for device 0 is one SYNC has from the start and stays. The search keeps at most
+ * MIC_KEPT routes of its own: the table has five free places, and a connect that finds it
+ * full connects without an entry and answers as if it had failed. */
+static void mic_find(void)
+{
+    DWORD device, answer;
+    int kept = 0;
+    for (device = 0; device < MIC_DEVICES; device++)
+        kept += mic_ours[device] && device != MIC_DEVICE;
+    for (device = 0; device < MIC_DEVICES; device++) {
+        if (device == 3 || device == 4 || device == 6)
+            continue;
+        if (kept >= MIC_KEPT && !mic_ours[device] && device != MIC_DEVICE)
+            continue;  /* no room in the table for a route to one more device */
+        answer = mic_request(MIC_CONNECT, device);
+        if (answer == 0) {
+            kept += !mic_ours[device] && device != MIC_DEVICE;
+            mic_ours[device] = TRUE;
+        } else if (answer != MIC_HELD) {  /* MIC_HELD may be ours or somebody else's */
+            kept -= mic_ours[device] && device != MIC_DEVICE;
+            mic_ours[device] = FALSE;     /* ours is gone */
+        }
+        if (!mic_ours[device] && device != MIC_DEVICE)
+            mic_request(MIC_FORGET, device);
+        if (answer != mic_found[device] && !(answer == MIC_HELD && mic_found[device] == 0) &&
+            !(answer == MIC_NO_STREAM && mic_found[device] == MIC_NO_ANSWER)) {
+            char line[80], *at = line;
+            at = put_text(at, "mic|device ");
+            at = put_uint(at, device);
+            at = put_text(at, answer == 0 ? " connected" : answer == MIC_NO_STREAM ?
+                          " is closed again" : " answers ");
+            if (answer != 0 && answer != MIC_NO_STREAM)
+                at = put_uint(at, answer);
+            *at = '\0';
+            note(line, NULL, 0);
+        }
+        mic_found[device] = answer;
+    }
+}
+
+/* The app is gone, or the guard ends: the table entries the search may have left are taken
+ * out (the driver has dropped the routes with the devices), and what the search knew is
+ * forgotten. Asking for an entry that is not there is refused and changes nothing. */
+static void mic_tidy(void)
+{
+    DWORD device;
+    for (device = 0; device < MIC_DEVICES; device++) {
+        if (mic_finding && mic_ours[device] && device != MIC_DEVICE)
+            mic_request(MIC_FORGET, device);
+        mic_ours[device] = FALSE;
+        mic_found[device] = MIC_NO_ANSWER;
+    }
+    mic_last = MIC_NO_ANSWER;
 }
 
 /* One look of the microphone thread; returns how long to wait before the next. No app: nothing
@@ -951,22 +1032,41 @@ static DWORD mic_ask(void)
  * does not record. An answer of MIC_HELD right after 0 is the same state and not logged. */
 static DWORD mic_look(void)
 {
-    DWORD answer;
-    if (!mic_wanted) {
-        mic_last = MIC_NO_ANSWER;
-        return MIC_IDLE_MS;
+    DWORD answer, wait = MIC_IDLE_MS;
+    EnterCriticalSection(&mic_lock);
+    if (mic_over) {
+        /* the guard is ending and has tidied up: nothing more is asked */
+    } else if (!mic_wanted) {
+        mic_tidy();
+    } else if (mic_finding) {
+        mic_find();
+        wait = MIC_FIND_MS;
+    } else {
+        answer = mic_ask();
+        if (answer != mic_last && !(answer == MIC_HELD && mic_last == 0)) {
+            if (answer == 0)
+                note("mic", "connected to recording device ", MIC_DEVICE);
+            else if (answer == MIC_HELD)
+                note("mic", "the route to the recording device is in place already, device ", MIC_DEVICE);
+            else
+                note("mic", "not connected, the router answers ", answer);
+        }
+        mic_last = answer;
+        wait = MIC_ASK_MS;
     }
-    answer = mic_ask();
-    if (answer != mic_last && !(answer == MIC_HELD && mic_last == 0)) {
-        if (answer == 0)
-            note("mic", "connected to recording device ", MIC_DEVICE);
-        else if (answer == MIC_HELD)
-            note("mic", "the route to the recording device is in place already, device ", MIC_DEVICE);
-        else
-            note("mic", "not connected, the router answers ", answer);
-    }
-    mic_last = answer;
-    return MIC_ASK_MS;
+    LeaveCriticalSection(&mic_lock);
+    return wait;
+}
+
+/* The guard ends: the thread asks for nothing more, and what the search left is tidied up. */
+static void mic_end(void)
+{
+    if (!set_property)
+        return;  /* off: never started */
+    EnterCriticalSection(&mic_lock);
+    mic_over = TRUE;
+    mic_tidy();
+    LeaveCriticalSection(&mic_lock);
 }
 
 static DWORD WINAPI mic_thread(LPVOID unused)
@@ -981,7 +1081,7 @@ static DWORD WINAPI mic_thread(LPVOID unused)
 static void start_mic(void)
 {
     char text[8];
-    DWORD got = 0;
+    DWORD got = 0, got_device;
     HMODULE core;
     HANDLE thread;
     HANDLE file = CreateFileW(MIC_PATH, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
@@ -995,8 +1095,14 @@ static void start_mic(void)
         got = 0;  /* unreadable, or longer than any valid file */
     while (got && is_blank(text[got - 1]))
         got--;
-    if (got != 2 || text[0] != 'o' || text[1] != 'n') {
-        note("mic|off: the microphone file does not hold on", NULL, 0);
+    InitializeCriticalSection(&mic_lock);
+    for (got_device = 0; got_device < MIC_DEVICES; got_device++) {
+        mic_found[got_device] = MIC_NO_ANSWER;
+        mic_ours[got_device] = FALSE;
+    }
+    mic_finding = got == 4 && text[0] == 'f' && text[1] == 'i' && text[2] == 'n' && text[3] == 'd';
+    if (!mic_finding && (got != 2 || text[0] != 'o' || text[1] != 'n')) {
+        note("mic|off: the microphone file holds neither on nor find", NULL, 0);
         return;
     }
     core = LoadLibraryW(L"coredll.dll");
@@ -1012,7 +1118,9 @@ static void start_mic(void)
         return;
     }
     CloseHandle(thread);
-    note("mic|on: the router is asked to connect the microphone to the app's recording device", NULL, 0);
+    note(mic_finding ? "mic|find: the router is asked to connect the microphone to every recording device"
+                     : "mic|on: the router is asked to connect the microphone to the app's recording device",
+         NULL, 0);
     /* With the boost on, the app's video may run above this thread and keep it waiting. */
 }
 
@@ -1346,6 +1454,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
             break;  /* never started, back to normal, or repaired */
     }
     InterlockedExchange(&mic_wanted, 0);
+    mic_end();
     calm_end();  /* whatever ended the watch: Ford's screens are back at 250 */
     if (watched.process)
         CloseHandle(watched.process);

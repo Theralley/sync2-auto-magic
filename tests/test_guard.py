@@ -1656,8 +1656,15 @@ class Loop(unittest.TestCase):
         self.assertIn("failed", imported)
         self.assertEqual(self.marker(imported), MIC_STUCK_ON)
 
+    def test_mic_find_writes_find_and_reads_as_enabled(self):
+        imported = self.run_job("runner-guard", "--mic", "find")
+        self.assertIn(", microphone enabled", imported)
+        self.assertEqual(self.mic_file(), b"find")
+        self.run_job("runner-guard", "--mic", "on")
+        self.assertEqual(self.mic_file(), b"on")
+
     def test_mic_script_passes_the_car_rules(self):
-        for mic in (True, False):
+        for mic in (True, False, "find"):
             mortscript.check(guard_script(Job(SERIAL, "guard", params={"action": "enable", "mic": mic, **PARAMS})))
         with self.assertRaises(ValueError):
             guard_script(Job(SERIAL, "guard", params={"action": "disable", "mic": True, **PARAMS}))
@@ -1976,10 +1983,17 @@ class Microphone(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.work = Path(tempfile.mkdtemp())
-        names = ("is_blank", "mic_ask", "mic_look", "start_mic")
+        names = ("put_uint", "put_text", "is_blank", "mic_request", "mic_ask", "mic_find", "mic_tidy", "mic_look",
+                 "mic_end", "start_mic")
         cls.program = build(cls.work, [
             *WINDOWS, define("MIC_PATH"), define("MIC_LINE"), define("MIC_DEVICE"), define("MIC_CONNECT"),
             define("MIC_HELD"), define("MIC_ASK_MS"), define("MIC_IDLE_MS"), define("MIC_NO_ANSWER"),
+            define("MIC_FIND_MS"), define("MIC_FORGET"), define("MIC_NO_STREAM"), define("MIC_DEVICES"),
+            define("MIC_KEPT"), "typedef int CRITICAL_SECTION;",
+            "static int inside;",
+            "static void InitializeCriticalSection(CRITICAL_SECTION *c) { *c = 0; }",
+            "static void EnterCriticalSection(CRITICAL_SECTION *c) { (void)c; inside++; }",
+            "static void LeaveCriticalSection(CRITICAL_SECTION *c) { (void)c; inside--; }",
             "#define GENERIC_READ 0x80000000", "#define FILE_SHARE_READ 1", "#define OPEN_EXISTING 3",
             "#define FILE_ATTRIBUTE_NORMAL 0x80", "#define WINAPI", "typedef void *LPVOID;", "typedef void *HMODULE;",
             "typedef unsigned int UINT;", "typedef unsigned long ULONG;",
@@ -1988,11 +2002,16 @@ class Microphone(unittest.TestCase):
             declared(r"typedef struct \{\s*DWORD source, source_dir, sink, sink_dir, flags;\s*\} LineConnect;"),
             declared(r"static const GUID MIC_ROUTER = [^;]*;"),
             declared(r"static SetPropertyFn set_property;"), declared(r"static volatile LONG mic_wanted;"),
-            declared(r"static DWORD mic_last = MIC_NO_ANSWER;"),
+            declared(r"static DWORD mic_last = MIC_NO_ANSWER;"), declared(r"static BOOL mic_finding;"),
+            declared(r"static DWORD mic_found\[MIC_DEVICES\];"), declared(r"static BOOL mic_ours\[MIC_DEVICES\];"),
+            declared(r"static CRITICAL_SECTION mic_lock;"), declared(r"static BOOL mic_over;"),
             r"""
 #define LOOKUP(module, type, name) ((type)lookup(module, name))
 static const char *content;  /* the microphone file's text; NULL: there is none */
 static int has_function = 1, thread_starts = 1, recording, connected, asks, threads, broken;
+static int records_on, table[14], forgets;  /* the device the app records on; junk table entries */
+static int taken = -1;  /* a device somebody else has a route to already: it answers 12 */
+static int many;        /* devices 7-13 all record at once */
 
 static HANDLE CreateFileW(const WCHAR *path, DWORD access, DWORD share, void *security, DWORD disposition,
                           DWORD attributes, HANDLE template_file)
@@ -2019,16 +2038,37 @@ static DWORD router(UINT device, const GUID *set, ULONG what, void *params, ULON
     const LineConnect *line = data;
     static const unsigned char id[16] = {0xd3, 0x20, 0xed, 0xb8, 0x4f, 0x95, 0xd8, 0x48,
                                          0x8a, 0x71, 0xd1, 0x36, 0xae, 0xb0, 0x8d, 0xb4};
-    asks++;
-    if (device != 0 || memcmp(set, id, 16) || what != 0 || params || params_size || size != 20 ||
-        line->source != 0x8003 || line->source_dir || line->sink != 0 || line->sink_dir || line->flags) {
+    if (device != 0 || memcmp(set, id, 16) || (what != 0 && what != 7) || params || params_size || size != 20 ||
+        line->source != 0x8003 || line->source_dir || line->sink > 13 || line->sink_dir || line->flags ||
+        line->sink == 3 || line->sink == 4 || line->sink == 6) {
         printf("wrong request\n");
         return 11;
     }
+    if (what == 7) {  /* take the entry out of the table; never asked for device 0 */
+        if (line->sink == 0)
+            printf("forgot the entry for device 0\n");
+        table[line->sink] = 0;
+        forgets++;
+        return 0;
+    }
+    asks++;
+    if (inside != 1)
+        printf("asked outside the lock\n");
+    if (line->sink)
+        table[line->sink] = 1;  /* a connect enters the route in the table, also when it fails */
     if (broken)
         return 7;  /* a refusal of another kind */
-    if (!recording)
-        return 4;
+    if ((int)line->sink == taken)
+        return 12;
+    if (!recording || ((int)line->sink != records_on && !(many && line->sink >= 7)))
+        return 13;
+    if (many && line->sink >= 7) {  /* several devices record at once */
+        static int made[14];
+        if (made[line->sink])
+            return 12;
+        made[line->sink] = 1;
+        return 0;
+    }
     if (connected)
         return 12;
     connected = 1;
@@ -2079,13 +2119,25 @@ int main(int argc, char **argv)
         case 'r': recording = 1; break;
         case 's': recording = connected = 0; break;  /* the driver drops the route with the device */
         case 'b': broken = 1; break;
+        case '5': records_on = 5; break;
+        case 't': taken = 2; break;
+        case 'm': many = 1; break;
+        case 'e': mic_end(); break;
         case 'l':
             if (set_property)
                 printf("wait %u\n", (unsigned)mic_look());
             break;
         }
     }
-    printf("on %d threads %d asks %d connected %d\n", set_property != NULL, threads, asks, connected);
+    {
+        int k, junk = 0;
+        for (k = 0; k < 14; k++)
+            junk += table[k];
+        if (mic_finding)
+            printf("find asks %d forgets %d junk %d connected %d\n", asks, forgets, junk, connected);
+        else
+            printf("on %d threads %d asks %d connected %d\n", set_property != NULL, threads, asks, connected);
+    }
     return 0;
 }
 """])
@@ -2100,9 +2152,9 @@ int main(int argc, char **argv)
 
     def test_without_a_valid_file_nothing_runs(self):
         self.assertEqual(self.run_mic("-", "arlll"), ["on 0 threads 0 asks 0 connected 0"])  # not even a log line
-        for content in ("off", "onn", "on      x", "1", ""):
+        for content in ("off", "onn", "on      x", "1", "", "finder", "fin"):
             out = self.run_mic(content, "arlll")
-            self.assertEqual(out, ["log mic|off: the microphone file does not hold on",
+            self.assertEqual(out, ["log mic|off: the microphone file holds neither on nor find",
                                    "on 0 threads 0 asks 0 connected 0"], content)
 
     def test_off_without_the_function_or_the_thread(self):
@@ -2120,9 +2172,9 @@ int main(int argc, char **argv)
         # no app: nothing asked, a slow look; the app runs: four requests a second, recording or not
         self.assertEqual(waits, ["wait 1000"] * 2 + ["wait 250"] * 10 + ["wait 1000"])
         logs = [line for line in out if line.startswith("log mic|") and "on:" not in line]
-        self.assertEqual(logs, ["log mic|not connected, the router answers 4",
+        self.assertEqual(logs, ["log mic|not connected, the router answers 13",
                                 "log mic|connected to recording device 0",
-                                "log mic|not connected, the router answers 4",
+                                "log mic|not connected, the router answers 13",
                                 "log mic|connected to recording device 0"])  # only changes
         self.assertEqual(out[-1], "on 1 threads 1 asks 10 connected 0")
 
@@ -2135,16 +2187,54 @@ int main(int argc, char **argv)
     def test_a_refusal_of_another_kind_is_logged_when_it_begins(self):
         out = self.run_mic("on", "alllblll")
         logs = [line for line in out if line.startswith("log mic|") and "on:" not in line]
-        self.assertEqual(logs, ["log mic|not connected, the router answers 4",
+        self.assertEqual(logs, ["log mic|not connected, the router answers 13",
                                 "log mic|not connected, the router answers 7"])
         again = self.run_mic("on", "arlzlarl")  # after a look without the app, a new start logs its first answer again
         self.assertEqual(len([line for line in again if "connected to recording device" in line]), 2)
 
+    def test_find_tries_every_device_but_three_and_leaves_no_table_entry_behind(self):
+        out = self.run_mic("find\r\n", "5alllrlllslllz")
+        self.assertNotIn("wrong request", out)  # never devices 3, 4, 6
+        self.assertNotIn("forgot the entry for device 0", out)
+        self.assertEqual(out[0], "log mic|find: the router is asked to connect the microphone to every recording "
+                                 "device")
+        self.assertEqual([line for line in out if line.startswith("wait ")], ["wait 500"] * 9)
+        logs = [line for line in out if line.startswith("log mic|device")]
+        self.assertEqual(logs, ["log mic|device 5 connected", "log mic|device 5 is closed again"])
+        self.assertNotIn("asked outside the lock", out)
+        # 9 rounds over 11 devices; every refused request for a device other than 0 is forgotten again
+        self.assertEqual(out[-1], "find asks 99 forgets 87 junk 0 connected 0")
+
+    def test_find_tidies_up_when_the_app_or_the_guard_ends_while_it_records(self):
+        gone = self.run_mic("find", "5arllzl")  # the app ends while device 5 is connected; one idle look
+        self.assertEqual(gone[-1].split(" junk ")[1], "0 connected 0")
+        ended = self.run_mic("find", "5arlle")  # the guard itself ends: no look comes after
+        self.assertEqual(ended[-1].split(" junk ")[1], "0 connected 1")
+        after = self.run_mic("find", "5arllell")  # and the thread asks for nothing once it has
+        self.assertEqual(after[-1], ended[-1])
+        self.assertEqual([line for line in after if line.startswith("wait ")][-2:], ["wait 1000"] * 2)
+
+    def test_find_keeps_at_most_three_routes_of_its_own(self):
+        out = self.run_mic("find", "marlllz" + "l")
+        connected = [line for line in out if line.endswith(" connected")]
+        self.assertEqual(connected, ["log mic|device 0 connected", "log mic|device 7 connected",
+                                     "log mic|device 8 connected", "log mic|device 9 connected"])  # 0, and three more
+        self.assertEqual(out[-1].split(" junk ")[1].split()[0], "0")
+        nothing = self.run_mic("find", "alll")  # the app never records: not one line per device
+        self.assertFalse([line for line in nothing if line.startswith("log mic|device")])
+        taken = self.run_mic("find", "talllz")  # device 2 is somebody else's: asked, logged once, entry removed
+        self.assertEqual([line for line in taken if line.startswith("log mic|device")], ["log mic|device 2 answers 12"])
+        self.assertEqual(taken[-1].split(" junk ")[1], "0 connected 0")
+        other = self.run_mic("find", "alblz")
+        self.assertEqual(len([line for line in other if " answers 7" in line]), 11)
+
     def test_the_thread_is_started_only_in_the_watching_instance_and_follows_the_app(self):
         self.assertIn("    if (watching)\n        start_mic();", SOURCE)
         self.assertIn("InterlockedExchange(&mic_wanted, app);", SOURCE)
-        self.assertLess(SOURCE.index("InterlockedExchange(&mic_wanted, 0);"), SOURCE.index("    calm_end();"))
-        self.assertEqual(SOURCE.count("set_property("), 1)  # one request, to the microphone line only
+        self.assertLess(SOURCE.index("InterlockedExchange(&mic_wanted, 0);"), SOURCE.index("    mic_end();"))
+        self.assertLess(SOURCE.index("    mic_end();"), SOURCE.index("    calm_end();"))
+        self.assertEqual(SOURCE.count("set_property("), 1)  # one way to the router, the microphone line only
+        self.assertIn("line.source = MIC_LINE;", function("mic_request"))
         self.assertIn("for (;;)\n        Sleep(mic_look());", function("mic_thread"))
         append = function("append")  # two threads log now: one writer at a time
         self.assertLess(append.index("EnterCriticalSection(&log_lock);"), append.index("CreateFileW("))

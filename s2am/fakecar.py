@@ -610,7 +610,8 @@ class FakeCar:
             if job.params.get("calm") is not None and not self._guard_calm(out, job.params["calm"], CALM_STUCK_ON):
                 return False
             if job.params.get("mic") is not None:
-                return self._guard_flag(out, GUARD_MIC, b"on", job.params["mic"], MIC_STUCK_ON, "microphone")
+                return self._guard_flag(out, GUARD_MIC, b"find" if job.params["mic"] == "find" else b"on",
+                                        bool(job.params["mic"]), MIC_STUCK_ON, "microphone")
             return True
         elif original.exists():
             if size(original) != stock:
