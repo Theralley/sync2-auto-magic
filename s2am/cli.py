@@ -361,6 +361,8 @@ def cmd_job(args) -> int:
                   "of Ford's screen files. Pull the stick when you are done, then import it")
         elif args.load:
             params["load"] = True
+            if args.where:
+                params["where"] = True
             extra["s2amdrive.exe"] = native.binary("s2amdrive.exe")
             print(f"load logger: for {seconds} s it records the processor's load per program and thread, "
                   "and nothing else, on the car, so the stick can leave. Build the second stick "
@@ -1099,6 +1101,9 @@ def parser() -> argparse.ArgumentParser:
                            "thread, writing to the car so the stick can leave (docs/PERFORMANCE.md)")
     kind.add_argument("--collect", metavar="JOB_ID",
                       help="fetch from the car what that logger --load job wrote")
+    logger.add_argument("--where", action="store_true",
+                        help="with --load: also sample where the busiest threads are (program counter "
+                             "and the module list), to find what a program spends its time on")
     logger.add_argument("--native", action="store_true",
                         help="also run notifylog.exe, which records AutoKit's window messages")
     logger.set_defaults(func=cmd_job)

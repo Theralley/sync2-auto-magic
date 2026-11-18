@@ -1364,6 +1364,184 @@ static void look_at_screen(DWORD now)
 
 /* ---- main ---- */
 
+/* ---- where the busiest threads are: a sampling profile ---- */
+
+#define TH32CS_SNAPMODULE 0x00000008
+#define GET_CONTEXT 0x0008
+#define WHERE_SAMPLES 40
+#define WHERE_GAP_MS 3
+#define WHERE_THREADS 2
+#define WHERE_MIN_PRIORITY 248  /* only threads at ordinary application priorities are looked at */
+#define WHERE_SHOWN 8
+#define WHERE_PROGRAMS 6
+#define WHERE_MODULES 160
+
+typedef struct {
+    DWORD dwSize, th32ModuleID, th32ProcessID, GlblcntUsage, ProccntUsage;
+    BYTE *modBaseAddr;
+    DWORD modBaseSize;
+    HMODULE hModule;
+    WCHAR szModule[MAX_PATH], szExePath[MAX_PATH];
+    DWORD dwFlags;
+} ModuleEntry;
+typedef BOOL (WINAPI *ModuleFn)(HANDLE, ModuleEntry *);
+typedef BOOL (WINAPI *SetPriorityFn)(HANDLE, int);
+typedef int (WINAPI *GetPriorityFn)(HANDLE);
+
+static BOOL where_on;
+static DWORD listed_programs[WHERE_PROGRAMS];
+static int listed_count;
+
+/* Once for each program looked at: module|<program>|<name> <base> <size>, so that the addresses
+ * of the where lines can be placed in a file. */
+static void list_modules(DWORD pid, const WCHAR *exe)
+{
+    static ModuleEntry module;
+    HMODULE toolhelp = GetModuleHandleW(L"toolhelp.dll");
+    ModuleFn first = toolhelp ? LOOKUP(toolhelp, ModuleFn, L"Module32First") : NULL;
+    ModuleFn next = toolhelp ? LOOKUP(toolhelp, ModuleFn, L"Module32Next") : NULL;
+    HANDLE list;
+    int i, shown = 0;
+    for (i = 0; i < listed_count; i++)
+        if (listed_programs[i] == pid)
+            return;
+    if (listed_count == WHERE_PROGRAMS || !snapshot || !close_snapshot || !first || !next)
+        return;
+    flush();  /* the list is long: it must not push the lines after it out of the buffer */
+    list = snapshot(TH32CS_SNAPMODULE, pid);
+    if (list == INVALID_HANDLE_VALUE) {
+        begin("module|");
+        put_wide(exe, 31);
+        put("|no list, error ");
+        put_uint(GetLastError());
+        end_line();
+        return;
+    }
+    memset(&module, 0, sizeof(module));
+    module.dwSize = sizeof(module);
+    if (first(list, &module)) {
+        do {
+            begin("module|");
+            put_wide(exe, 31);
+            put("|");
+            put_wide(module.szModule, 40);
+            put(" ");
+            put_hex((unsigned long)module.modBaseAddr);
+            put(" ");
+            put_hex(module.modBaseSize);
+            end_line();
+            if (shown % 16 == 15)
+                flush();
+            module.dwSize = sizeof(module);
+        } while (++shown < WHERE_MODULES && next(list, &module));
+        listed_programs[listed_count++] = pid;  /* listed: not again */
+    } else {
+        begin("module|");
+        put_wide(exe, 31);
+        put("|empty list, error ");
+        put_uint(GetLastError());
+        end_line();
+    }
+    close_snapshot(list);
+    flush();
+}
+
+static void put_counted(const DWORD *values, int count)
+{
+    DWORD place[WHERE_SAMPLES], times[WHERE_SAMPLES];
+    int places = 0, i, j, shown;
+    for (i = 0; i < count; i++) {  /* 64-byte pieces of code */
+        DWORD at = values[i] & ~63UL;
+        for (j = 0; j < places && place[j] != at; j++)
+            ;
+        if (j == places) {
+            place[places] = at;
+            times[places++] = 0;
+        }
+        times[j]++;
+    }
+    for (shown = 0; shown < WHERE_SHOWN; shown++) {
+        int best = -1;
+        for (j = 0; j < places; j++)
+            if (times[j] && (best < 0 || times[j] > times[best]))
+                best = j;
+        if (best < 0)
+            break;
+        put(shown ? " " : "");
+        put_hex(place[best]);
+        put("x");
+        put_uint(times[best]);
+        times[best] = 0;
+    }
+}
+
+/* For the busiest threads of the last sample: where each one is, WHERE_SAMPLES times a few
+ * milliseconds apart. This thread runs just above the one it looks at for that short time, so
+ * that it finds it in the middle of its work and not only when it waits; it stops or changes
+ * nothing in it. where|<program> <thread>|p<priority>|n <samples>|pc <place>x<times> ...|lr ... */
+static void sample_where(DWORD interval)
+{
+    static DWORD pcs[WHERE_SAMPLES], lrs[WHERE_SAMPLES];
+    HMODULE core = GetModuleHandleW(L"coredll.dll");
+    SetPriorityFn set_priority = core ? LOOKUP(core, SetPriorityFn, L"CeSetThreadPriority") : NULL;
+    GetPriorityFn get_priority = core ? LOOKUP(core, GetPriorityFn, L"CeGetThreadPriority") : NULL;
+    int own, looked = 0, b;
+    if (!set_priority || !get_priority)
+        return;
+    own = get_priority(GetCurrentThread());
+    if (own < 0 || own > 255 || !interval)
+        return;
+    for (b = 0; b < busy_count && looked < WHERE_THREADS; b++) {
+        CONTEXT context;
+        HANDLE thread;
+        int got = 0, i;
+        if (busy[b].base < WHERE_MIN_PRIORITY || busy[b].base > 255 ||
+            usage[busy[b].program].pid == GetCurrentProcessId())
+            continue;
+        if (busy[b].delta / (interval * 100UL) < 5)
+            break;  /* under 5% of the processor: not worth a look */
+        thread = open_thread ? open_thread(GET_CONTEXT | QUERY_THREAD, FALSE, busy[b].id) : NULL;
+        if (!thread)
+            continue;
+        looked++;
+        list_modules(usage[busy[b].program].pid, usage[busy[b].program].exe);
+        if (!set_priority(GetCurrentThread(), busy[b].base - 1)) {
+            CloseHandle(thread);
+            begin("where|cannot run above the thread, error ");
+            put_uint(GetLastError());
+            end_line();
+            return;
+        }
+        for (i = 0; i < WHERE_SAMPLES; i++) {
+            Sleep(WHERE_GAP_MS);
+            memset(&context, 0, sizeof(context));
+            context.ContextFlags = CONTEXT_CONTROL;
+            if (GetThreadContext(thread, &context)) {
+                pcs[got] = context.Pc;
+                lrs[got++] = context.Lr;
+            }
+        }
+        if (!set_priority(GetCurrentThread(), own)) {
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+            where_on = FALSE;  /* never again in this run */
+        }
+        CloseHandle(thread);
+        begin("where|");
+        put_wide(usage[busy[b].program].exe, 31);
+        put(" ");
+        put_uint(busy[b].id);
+        put("|p");
+        put_uint((unsigned long)busy[b].base);
+        put("|n ");
+        put_uint((unsigned long)got);
+        put("|pc ");
+        put_counted(pcs, got);
+        put("|lr ");
+        put_counted(lrs, got);
+        end_line();
+    }
+}
+
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int show)
 {
     DWORD seconds = 0, started, last_load, last_look, last_heartbeat, idle_before = 0, reported_files = 0;
@@ -1391,6 +1569,12 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
         at += same;
         while (*at == L' ' || *at == L'"')
             at++;
+        if (at[0] == L'w' && at[1] == L'h' && at[2] == L'e' && at[3] == L'r' && at[4] == L'e' && at[5] == L' ') {
+            where_on = TRUE;  /* "<seconds> load where <folder>" */
+            at += 6;
+            while (*at == L' ' || *at == L'"')
+                at++;
+        }
     }
     if (seconds < 10 || seconds > 14400 || !*at || wcslen(at) + 40 >= MAX_PATH)
         return 1;
@@ -1452,6 +1636,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
             sample_load(now - last_load, idle_now - idle_before, idle_known);
             if (load_only)
                 sample_clock();
+            if (where_on)
+                sample_where(now - last_load);
             idle_before = idle_now;
             last_load = now;
         }

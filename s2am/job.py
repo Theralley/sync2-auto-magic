@@ -737,7 +737,7 @@ def _measure(job: Job, seconds: int) -> list[str]:
             f'Copy({folder} & "\\s2amwatch.exe", logs & "\\s2amwatch.exe", TRUE)',
             f'Copy({folder} & "\\s2amdrive.exe", logs & "\\s2amdrive.exe", TRUE)',
             f'Run(logs & "\\s2amwatch.exe", "{seconds} " & logs)',
-            f'Run(logs & "\\s2amdrive.exe", "{seconds} load " & logs)',
+            f'Run(logs & "\\s2amdrive.exe", "{seconds} load {"where " if job.params.get("where") else ""}" & logs)',
             'WriteFile(out & "\\logger-started.txt", "this job also measures, writing to the car; '
             'insert the stick again to fetch the logs")']
 
@@ -782,7 +782,7 @@ def logger_script(job: Job) -> str:
     if job.params.get("drive"):
         lines += [f'Run({folder} & "\\s2amdrive.exe", "{seconds} " & out)']
     if job.params.get("load"):
-        lines += [f'Run({folder} & "\\s2amdrive.exe", "{seconds} load " & logs)']
+        lines += [f'Run({folder} & "\\s2amdrive.exe", "{seconds} load {"where " if job.params.get("where") else ""}" & logs)']
     if job.params.get("native"):
         lines += [f'Run({folder} & "\\notifylog.exe", "{seconds} " & out & "\\notify.txt")']
     started = "this logger writes to the car; the stick can leave" if logs == "logs" else \

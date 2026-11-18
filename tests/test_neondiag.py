@@ -338,3 +338,19 @@ class Loop(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Where(unittest.TestCase):
+    """logger --load --where: the load logger also samples where the busiest threads are."""
+
+    def test_the_word_reaches_the_program_only_when_asked(self):
+        plain = SCRIPTS["log"](Job(SERIAL, "log", params={"load": True, "seconds": 600}))
+        asked = SCRIPTS["log"](Job(SERIAL, "log", params={"load": True, "where": True, "seconds": 600}))
+        mortscript.check(asked)
+        self.assertIn('"600 load " & logs', plain)
+        self.assertIn('"600 load where " & logs', asked)
+
+    def test_the_program_reads_the_word(self):
+        source = (native.SOURCES / "s2amdrive.c").read_text()
+        self.assertIn('"<seconds> load where <folder>"', source)
+        self.assertIn("sample_where(now - last_load);", source)
