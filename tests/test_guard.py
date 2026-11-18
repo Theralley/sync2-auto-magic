@@ -19,7 +19,7 @@ from s2am import apps, cli, mortscript, native, stick  # noqa: E402
 from s2am.fakecar import FakeCar  # noqa: E402
 from s2am.state import Store  # noqa: E402
 from s2am.job import (BOOST_LEVELS, BOOST_STUCK_OFF, BOOST_STUCK_ON, BOOST_STUCK_WRITE, CALM_STUCK_OFF,  # noqa: E402
-                      CALM_STUCK_ON, GUARD_BOOST, GUARD_CALM,
+                      CALM_STUCK_ON, GUARD_BOOST, GUARD_CALM, GUARD_MIC, MIC_STUCK_ON,
                       MENU_XML, TOOLS_CE, Job, guard_script, load_folder)
 
 UPSTREAM = ROOT.parent / "syncextpack"
@@ -1627,6 +1627,43 @@ class Loop(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertFalse((self.tmp / "never" / "job.json").exists())
 
+    def mic_file(self):
+        path = self.car._resolve(GUARD_MIC)
+        return path.read_bytes() if path.exists() else None
+
+    def test_mic_on_then_off_keeps_the_guard_and_off_takes_it_away(self):
+        imported = self.run_job("runner-guard", "--mic", "on")
+        self.assertIn("verified: runner guard is on", imported)
+        self.assertIn(", microphone enabled", imported)
+        self.assertEqual(self.mic_file(), b"on")
+        self.assertIn("runner guard (fixes the freeze when leaving an app): on, microphone enabled", self.status())
+        self.assertIn(", microphone enabled", self.run_job("runner-guard"))  # turned on again: it stays
+        self.assertNotIn("microphone enabled", self.run_job("runner-guard", "--mic", "off"))
+        self.assertIsNone(self.mic_file())
+        self.run_job("runner-guard", "--mic", "on", "--calm", "on")
+        self.assertIn("verified: runner guard is off", self.run_job("runner-guard", "--off"))
+        self.assertIsNone(self.mic_file())
+        self.assertIsNone(self.calm_file())
+
+    def test_a_microphone_file_that_does_not_write_or_go_is_reported(self):
+        self.car.broken_copies.add(GUARD_MIC.lower())
+        self.assertIn("failed", self.run_job("runner-guard", "--mic", "on"))
+        self.assertIsNone(self.mic_file())
+        self.car.broken_copies.clear()
+        self.run_job("runner-guard", "--mic", "on")
+        self.car.stuck_files.add(GUARD_MIC.lower())
+        imported = self.run_job("runner-guard", "--mic", "off")
+        self.assertIn("failed", imported)
+        self.assertEqual(self.marker(imported), MIC_STUCK_ON)
+
+    def test_mic_script_passes_the_car_rules(self):
+        for mic in (True, False):
+            mortscript.check(guard_script(Job(SERIAL, "guard", params={"action": "enable", "mic": mic, **PARAMS})))
+        with self.assertRaises(ValueError):
+            guard_script(Job(SERIAL, "guard", params={"action": "disable", "mic": True, **PARAMS}))
+        with self.assertRaises(ValueError):
+            guard_script(Job(SERIAL, "guard", params={"action": "enable", "mic": "on", **PARAMS}))
+
     def test_boost_and_off_cannot_be_combined(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             cli.main(["job", "runner-guard", "--off", "--boost", "250", "--serial", SERIAL, "--no-pack",
@@ -1928,6 +1965,191 @@ int main(int argc, char **argv)
         self.assertIn("    if (watching)\n        start_calm();", SOURCE)
         self.assertLess(SOURCE.index("        start_boost();"), SOURCE.index("        start_calm();"))
         self.assertIn("if (!calm_on)\n        return;", function("calm"))
+
+
+@unittest.skipUnless(shutil.which("cc"), "needs a C compiler")
+class Microphone(unittest.TestCase):
+    """start_mic() and mic_look() from s2amrun.c over a fake router: it refuses (error 4) while
+    nothing records on device 0, connects (0) once something does, and answers 12 while the
+    route is in place."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.work = Path(tempfile.mkdtemp())
+        names = ("is_blank", "mic_ask", "mic_look", "start_mic")
+        cls.program = build(cls.work, [
+            *WINDOWS, define("MIC_PATH"), define("MIC_LINE"), define("MIC_DEVICE"), define("MIC_CONNECT"),
+            define("MIC_HELD"), define("MIC_ASK_MS"), define("MIC_IDLE_MS"), define("MIC_NO_ANSWER"),
+            "#define GENERIC_READ 0x80000000", "#define FILE_SHARE_READ 1", "#define OPEN_EXISTING 3",
+            "#define FILE_ATTRIBUTE_NORMAL 0x80", "#define WINAPI", "typedef void *LPVOID;", "typedef void *HMODULE;",
+            "typedef unsigned int UINT;", "typedef unsigned long ULONG;",
+            "typedef struct { unsigned int a; unsigned short b, c; unsigned char d[8]; } GUID;",
+            declared(r"typedef DWORD \(WINAPI \*SetPropertyFn\)\([^;]*\);"),
+            declared(r"typedef struct \{\s*DWORD source, source_dir, sink, sink_dir, flags;\s*\} LineConnect;"),
+            declared(r"static const GUID MIC_ROUTER = [^;]*;"),
+            declared(r"static SetPropertyFn set_property;"), declared(r"static volatile LONG mic_wanted;"),
+            declared(r"static DWORD mic_last = MIC_NO_ANSWER;"),
+            r"""
+#define LOOKUP(module, type, name) ((type)lookup(module, name))
+static const char *content;  /* the microphone file's text; NULL: there is none */
+static int has_function = 1, thread_starts = 1, recording, connected, asks, threads, broken;
+
+static HANDLE CreateFileW(const WCHAR *path, DWORD access, DWORD share, void *security, DWORD disposition,
+                          DWORD attributes, HANDLE template_file)
+{
+    (void)path; (void)access; (void)share; (void)security; (void)disposition; (void)attributes;
+    (void)template_file;
+    return content ? (HANDLE)2000 : INVALID_HANDLE_VALUE;
+}
+
+static BOOL ReadFile(HANDLE file, void *buffer, DWORD size, DWORD *got, void *overlapped)
+{
+    (void)file; (void)overlapped;
+    *got = (DWORD)strlen(content) < size ? (DWORD)strlen(content) : size;
+    memcpy(buffer, content, *got);
+    return TRUE;
+}
+
+static BOOL CloseHandle(HANDLE handle) { (void)handle; return TRUE; }
+static HMODULE LoadLibraryW(const WCHAR *name) { (void)name; return (HMODULE)1; }
+
+static DWORD router(UINT device, const GUID *set, ULONG what, void *params, ULONG params_size, void *data,
+                    ULONG size)
+{
+    const LineConnect *line = data;
+    static const unsigned char id[16] = {0xd3, 0x20, 0xed, 0xb8, 0x4f, 0x95, 0xd8, 0x48,
+                                         0x8a, 0x71, 0xd1, 0x36, 0xae, 0xb0, 0x8d, 0xb4};
+    asks++;
+    if (device != 0 || memcmp(set, id, 16) || what != 0 || params || params_size || size != 20 ||
+        line->source != 0x8003 || line->source_dir || line->sink != 0 || line->sink_dir || line->flags) {
+        printf("wrong request\n");
+        return 11;
+    }
+    if (broken)
+        return 7;  /* a refusal of another kind */
+    if (!recording)
+        return 4;
+    if (connected)
+        return 12;
+    connected = 1;
+    return 0;
+}
+
+static void *lookup(HMODULE module, const WCHAR *name)
+{
+    (void)module; (void)name;
+    return has_function ? (void *)router : NULL;
+}
+
+static DWORD mic_thread(LPVOID unused) { (void)unused; return 0; }
+
+static HANDLE CreateThread(void *security, DWORD stack, DWORD (*start)(LPVOID), LPVOID argument, DWORD flags,
+                           DWORD *id)
+{
+    (void)security; (void)stack; (void)start; (void)argument; (void)flags; (void)id;
+    threads++;
+    return thread_starts ? (HANDLE)3000 : NULL;
+}
+
+static void note(const char *event, const char *detail, unsigned long value)
+{
+    printf("log %s%s", event, detail ? "|" : "\n");
+    if (detail)
+        printf("%s%lu\n", detail, value);
+}
+""",
+            *(function(name) for name in names),
+            r"""
+int main(int argc, char **argv)
+{
+    /* the file's text ("-": none), flags (f: no waveInSetProperty, t: the thread does not
+       start), then one letter per step: a the app starts, z it ends, r it starts recording,
+       s it stops, b the router starts refusing in another way, l one look of the thread (its
+       wait is printed) */
+    const char *step;
+    (void)argc;
+    content = strcmp(argv[1], "-") ? argv[1] : NULL;
+    has_function = !strchr(argv[2], 'f');
+    thread_starts = !strchr(argv[2], 't');
+    start_mic();
+    for (step = argv[3]; *step; step++) {
+        switch (*step) {
+        case 'a': mic_wanted = 1; break;
+        case 'z': mic_wanted = 0; recording = connected = 0; break;
+        case 'r': recording = 1; break;
+        case 's': recording = connected = 0; break;  /* the driver drops the route with the device */
+        case 'b': broken = 1; break;
+        case 'l':
+            if (set_property)
+                printf("wait %u\n", (unsigned)mic_look());
+            break;
+        }
+    }
+    printf("on %d threads %d asks %d connected %d\n", set_property != NULL, threads, asks, connected);
+    return 0;
+}
+"""])
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.work)
+
+    def run_mic(self, content, steps, flags="-"):
+        return subprocess.run([str(self.program), content, flags, steps], capture_output=True, text=True,
+                              check=True).stdout.splitlines()
+
+    def test_without_a_valid_file_nothing_runs(self):
+        self.assertEqual(self.run_mic("-", "arlll"), ["on 0 threads 0 asks 0 connected 0"])  # not even a log line
+        for content in ("off", "onn", "on      x", "1", ""):
+            out = self.run_mic(content, "arlll")
+            self.assertEqual(out, ["log mic|off: the microphone file does not hold on",
+                                   "on 0 threads 0 asks 0 connected 0"], content)
+
+    def test_off_without_the_function_or_the_thread(self):
+        self.assertEqual(self.run_mic("on", "arl", "f"), ["log mic|off: this SYNC has no waveInSetProperty",
+                                                           "on 0 threads 0 asks 0 connected 0"])
+        self.assertEqual(self.run_mic("on", "arl", "t"), ["log mic|off: its thread did not start",
+                                                           "on 0 threads 1 asks 0 connected 0"])
+
+    def test_asks_only_while_the_app_runs_and_connects_when_it_records(self):
+        out = self.run_mic("on\r\n", "llalllrlllslllrlzl")
+        self.assertNotIn("wrong request", out)
+        self.assertEqual(out[0], "log mic|on: the router is asked to connect the microphone to the app's "
+                                 "recording device")
+        waits = [line for line in out if line.startswith("wait ")]
+        # no app: nothing asked, a slow look; the app runs: four requests a second, recording or not
+        self.assertEqual(waits, ["wait 1000"] * 2 + ["wait 250"] * 10 + ["wait 1000"])
+        logs = [line for line in out if line.startswith("log mic|") and "on:" not in line]
+        self.assertEqual(logs, ["log mic|not connected, the router answers 4",
+                                "log mic|connected to recording device 0",
+                                "log mic|not connected, the router answers 4",
+                                "log mic|connected to recording device 0"])  # only changes
+        self.assertEqual(out[-1], "on 1 threads 1 asks 10 connected 0")
+
+    def test_a_recording_reopened_between_two_looks_is_connected_on_the_next(self):
+        out = self.run_mic("on", "arllsrll")  # stopped and started again without a look in between
+        logs = [line for line in out if line.startswith("log mic|") and "on:" not in line]
+        self.assertEqual(logs, ["log mic|connected to recording device 0"] * 2)
+        self.assertEqual(out[-1], "on 1 threads 1 asks 4 connected 1")
+
+    def test_a_refusal_of_another_kind_is_logged_when_it_begins(self):
+        out = self.run_mic("on", "alllblll")
+        logs = [line for line in out if line.startswith("log mic|") and "on:" not in line]
+        self.assertEqual(logs, ["log mic|not connected, the router answers 4",
+                                "log mic|not connected, the router answers 7"])
+        again = self.run_mic("on", "arlzlarl")  # after a look without the app, a new start logs its first answer again
+        self.assertEqual(len([line for line in again if "connected to recording device" in line]), 2)
+
+    def test_the_thread_is_started_only_in_the_watching_instance_and_follows_the_app(self):
+        self.assertIn("    if (watching)\n        start_mic();", SOURCE)
+        self.assertIn("InterlockedExchange(&mic_wanted, app);", SOURCE)
+        self.assertLess(SOURCE.index("InterlockedExchange(&mic_wanted, 0);"), SOURCE.index("    calm_end();"))
+        self.assertEqual(SOURCE.count("set_property("), 1)  # one request, to the microphone line only
+        self.assertIn("for (;;)\n        Sleep(mic_look());", function("mic_thread"))
+        append = function("append")  # two threads log now: one writer at a time
+        self.assertLess(append.index("EnterCriticalSection(&log_lock);"), append.index("CreateFileW("))
+        self.assertLess(append.index("CloseHandle(file);"), append.index("LeaveCriticalSection(&log_lock);"))
+        self.assertLess(SOURCE.index("InitializeCriticalSection(&log_lock);"), SOURCE.index("judge_again(&rules);"))
 
 
 if __name__ == "__main__":

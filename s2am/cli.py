@@ -402,6 +402,15 @@ def cmd_job(args) -> int:
                   "video. Test calls, climate, volume and the reversing camera with CarPlay open. "
                   "Undo: --calm off (or --off for the whole guard)" if params["calm"] else
                   "calm off: the guard stays on; Desktop.exe's threads keep their priority")
+        if args.mic is not None:
+            if args.off:
+                raise ValueError("--mic goes with a job that turns the guard on; --off takes it away too")
+            params["mic"] = args.mic == "on"
+            print("mic on: while the app runs, the guard asks SYNC's audio router to connect the microphone to "
+                  "the recording device the app opens, so CarPlay can hear you (Siri, calls). AutoKit must "
+                  "use the car's microphone for this: autokit-config --mic car. SYNC's own microphone route is "
+                  "not touched. Undo: --mic off (or --off for the whole guard)" if params["mic"] else
+                  "mic off: the guard stays on; the microphone is no longer connected for the app")
         if args.measure is not None:
             if args.off:
                 raise ValueError("--measure goes with a job that turns the guard on, not with --off")
@@ -802,6 +811,19 @@ def _calm_acts(report: Path | None) -> bool:
     return len(data) < 16 and data.rstrip(_BLANK) == str(CALM_LEVEL).encode()
 
 
+def _guard_mic(report: Path | None) -> bytes | None:
+    """What the car's microphone file held when the report was written (every inventory copies it)."""
+    path = report / "guard-mic.txt" if report else None
+    return path.read_bytes() if path and path.is_file() else None
+
+
+def _mic_acts(report: Path | None) -> bool:
+    """Would the guard take the microphone file as it is? As start_mic reads it: under 8 bytes,
+    "on" with only blanks after it."""
+    data = _guard_mic(report) or b""
+    return len(data) < 8 and data.rstrip(_BLANK) == b"on"
+
+
 def _boost_acts(report: Path | None) -> bool:
     """Would the guard take the boost file as it is? As start_boost reads it: under 16 bytes,
     one of BOOST_LEVELS with only blanks around it."""
@@ -846,11 +868,22 @@ def _verify_guard(store: Store, record: dict) -> str:
                         ", calm written, but this SYNC lacks a thread function: it will not act")
         elif calm_now is not None:
             verdict += f", calm file holds {calm_now!r}: it will not act"
+        mic, mic_now = record["params"].get("mic"), _guard_mic(report)
+        if mic is True and mic_now != b"on":
+            return f"NOT verified: the guard is on, but its microphone file holds {mic_now!r}, not 'on'"
+        if mic is False and mic_now is not None:
+            return f"NOT verified: the guard is on, but its microphone file is still there ({mic_now!r})"
+        if _mic_acts(report):
+            verdict += ", microphone enabled"
+        elif mic_now is not None:
+            verdict += f", microphone file holds {mic_now!r}: it will not act"
         return verdict
     if on:
         return "NOT verified: the guard is still on"
     if _guard_calm(report) is not None:
         return "NOT verified: the guard is off, but its calm file is still there"
+    if _guard_mic(report) is not None:
+        return "NOT verified: the guard is off, but its microphone file is still there"
     return "verified: runner guard is off" if now is None else \
         "NOT verified: the guard is off, but its boost file is still there"
 
@@ -927,7 +960,7 @@ def cmd_status(args) -> int:
     boost = _guard_boost(store.report(args.serial, job_id))
     calm = _calm_acts(store.report(args.serial, job_id)) and not _boost_acts(store.report(args.serial, job_id))
     print(f"  runner guard (fixes the freeze when leaving an app): "
-          f"{('on' + (f', boost {boost}' if boost else '') + (', calm on' if calm else '')) if _guard_on(entries) else 'off'}")
+          f"{('on' + (f', boost {boost}' if boost else '') + (', calm on' if calm else '') + (', microphone enabled' if _mic_acts(store.report(args.serial, job_id)) else '')) if _guard_on(entries) else 'off'}")
     guard_log = store.report(args.serial, job_id) / "guard.log"
     if guard_log.is_file():
         lines = guard_log.read_text(errors="replace").strip().splitlines()
@@ -1213,6 +1246,9 @@ def parser() -> argparse.ArgumentParser:
                        help="on: while the app is alone on the screen, Desktop.exe's threads at 250 "
                             "(Ford's screens) run at 252, level with the app's video thread; they go "
                             "back as soon as anything else shows. Without it the calm stays as it is")
+    guard.add_argument("--mic", choices=["on", "off"],
+                       help="on: while the app runs, ask SYNC's audio router to connect the microphone to "
+                            "the recording device the app opens. Without it the setting stays as it is")
     guard.add_argument("--measure", metavar="SECONDS", type=int, nargs="?", const=LOAD_SECONDS,
                        help="also record the processor's load per program and thread afterwards (default "
                             "30 minutes), on the car; the same stick fetches the logs when it is inserted again")

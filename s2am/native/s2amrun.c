@@ -67,6 +67,16 @@
  * above them. Not together with the boost: with both files the calm stays off. Without the
  * file none of this runs.
  *
+ * Optional, off unless \SyncExtendedPack\_s2am\guard-mic.txt holds "on"
+ * (`s2am job runner-guard --mic`): SYNC's audio driver is a router, and a recording device
+ * carries sound only while a route connects a line to it. The app (AutoKit) opens recording
+ * device 0 and asks for no route, so it hears nothing. While the app runs, a second thread
+ * of the guard asks the router to connect the microphone (line 0x8003) to device 0: the
+ * request is made four times a second, is refused while nothing records there and takes hold
+ * as soon as the app starts recording; the driver drops the route by itself when the app closes the device. The request
+ * is the driver's own (waveInSetProperty); SYNC's own microphone route is not touched, and
+ * nothing is stored. Without the file none of this runs.
+ *
  * Every state change is appended to \SyncExtendedPack\_s2am\guard.log.
  * Usage: SyncAppsRunner.exe <app path>       (as the app plugins call it; they use
  *                                             forward slashes: /SyncExtendedPack/...)
@@ -98,6 +108,14 @@
 #define CALM_LEVEL 252     /* level with the app's video thread: shared, never starved */
 #define MAX_CALMED 32
 #define CALM_END_TRIES 30  /* looks, a second apart, before the guard ends with one left */
+#define MIC_PATH L"\\SyncExtendedPack\\_s2am\\guard-mic.txt"
+#define MIC_LINE 0x8003    /* the microphone, as the audio driver numbers its lines */
+#define MIC_DEVICE 0       /* the recording device the app opens (the default one) */
+#define MIC_CONNECT 0      /* the router's request "connect a line" */
+#define MIC_HELD 12        /* its answer when that route is in place already */
+/* The app may open, close and open its recording at any moment, and speech starts at once. */
+#define MIC_ASK_MS 250     /* between requests while the app runs */
+#define MIC_IDLE_MS 1000   /* between looks while no app runs: nothing is asked */
 #define MAX_LISTED 256     /* threads of the app in one list; more, and the boost waits */
 #define MAX_WINDOWS 32     /* windows of the app one look keeps for WM_CLOSE */
 #define TH32CS_SNAPPROCESS 0x00000002
@@ -125,6 +143,7 @@ typedef BOOL (WINAPI *ThreadFn)(HANDLE, ThreadEntry *);
 typedef BOOL (WINAPI *CloseSnapshotFn)(HANDLE);
 typedef HANDLE (WINAPI *OpenThreadFn)(DWORD, BOOL, DWORD);
 typedef BOOL (WINAPI *SetPriorityFn)(HANDLE, int);
+typedef DWORD (WINAPI *SetPropertyFn)(UINT, const GUID *, ULONG, void *, ULONG, void *, ULONG);
 
 /* via void (*)(void): GCC's sanctioned way to cast between function types */
 #define LOOKUP(module, type, name) ((type)(void (*)(void))GetProcAddressW(module, name))
@@ -144,16 +163,23 @@ static DWORD started;
 
 /* ---- log ------------------------------------------------------------------------- */
 
+/* One writer at a time: the microphone thread logs too, and a second open of the file while
+ * the first is still writing would fail, and its line be lost. */
+static CRITICAL_SECTION log_lock;
+
 static void append(const WCHAR *path, const char *text, BOOL truncate)
 {
     DWORD written;
-    HANDLE file = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, NULL,
-                              truncate ? CREATE_ALWAYS : OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (file == INVALID_HANDLE_VALUE)
-        return;
-    SetFilePointer(file, 0, NULL, FILE_END);
-    WriteFile(file, text, (DWORD)strlen(text), &written, NULL);
-    CloseHandle(file);
+    HANDLE file;
+    EnterCriticalSection(&log_lock);
+    file = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, NULL,
+                       truncate ? CREATE_ALWAYS : OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file != INVALID_HANDLE_VALUE) {
+        SetFilePointer(file, 0, NULL, FILE_END);
+        WriteFile(file, text, (DWORD)strlen(text), &written, NULL);
+        CloseHandle(file);
+    }
+    LeaveCriticalSection(&log_lock);
 }
 
 static char *put_uint(char *at, unsigned long value)
@@ -890,6 +916,106 @@ static void start_calm(void)
          CALM_LEVEL);
 }
 
+/* ---- the microphone: the router is asked to connect it to the app's recording device ----- */
+
+typedef struct {
+    DWORD source, source_dir, sink, sink_dir, flags;
+} LineConnect;
+
+#define MIC_NO_ANSWER 0xFFFFFFFF  /* nothing asked yet since the app started */
+
+/* The audio router's property set in wavedev2_cs42448.dll. */
+static const GUID MIC_ROUTER = {0xb8ed20d3, 0x954f, 0x48d8, {0x8a, 0x71, 0xd1, 0x36, 0xae, 0xb0, 0x8d, 0xb4}};
+static SetPropertyFn set_property;
+static volatile LONG mic_wanted;       /* 1 while the app runs, written by the watch loop */
+static DWORD mic_last = MIC_NO_ANSWER;  /* the router's last answer, so only changes are logged */
+
+/* One request: the microphone to the app's recording device. The driver adds no second table
+ * entry for a route it already lists, and takes a connection that failed out again, so asking
+ * again and again leaves nothing behind. */
+static DWORD mic_ask(void)
+{
+    LineConnect line;
+    line.source = MIC_LINE;
+    line.source_dir = 0;
+    line.sink = MIC_DEVICE;
+    line.sink_dir = 0;
+    line.flags = 0;
+    return set_property(MIC_DEVICE, &MIC_ROUTER, MIC_CONNECT, NULL, 0, &line, sizeof(line));
+}
+
+/* One look of the microphone thread; returns how long to wait before the next. No app: nothing
+ * is asked. Otherwise the router is asked, and its answer is logged whenever it differs from
+ * the last one: 0 means the route was made (the app has begun to record), MIC_HELD that it is
+ * still in place, anything else that it was refused, which is the usual answer while the app
+ * does not record. An answer of MIC_HELD right after 0 is the same state and not logged. */
+static DWORD mic_look(void)
+{
+    DWORD answer;
+    if (!mic_wanted) {
+        mic_last = MIC_NO_ANSWER;
+        return MIC_IDLE_MS;
+    }
+    answer = mic_ask();
+    if (answer != mic_last && !(answer == MIC_HELD && mic_last == 0)) {
+        if (answer == 0)
+            note("mic", "connected to recording device ", MIC_DEVICE);
+        else if (answer == MIC_HELD)
+            note("mic", "the route to the recording device is in place already, device ", MIC_DEVICE);
+        else
+            note("mic", "not connected, the router answers ", answer);
+    }
+    mic_last = answer;
+    return MIC_ASK_MS;
+}
+
+static DWORD WINAPI mic_thread(LPVOID unused)
+{
+    (void)unused;
+    for (;;)
+        Sleep(mic_look());
+    return 0;
+}
+
+/* Reads the microphone file once per start. Without it nothing of this runs. */
+static void start_mic(void)
+{
+    char text[8];
+    DWORD got = 0;
+    HMODULE core;
+    HANDLE thread;
+    HANDLE file = CreateFileW(MIC_PATH, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+                              FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE)
+        return;
+    if (!ReadFile(file, text, sizeof(text), &got, NULL))
+        got = sizeof(text);
+    CloseHandle(file);
+    if (got >= sizeof(text))
+        got = 0;  /* unreadable, or longer than any valid file */
+    while (got && is_blank(text[got - 1]))
+        got--;
+    if (got != 2 || text[0] != 'o' || text[1] != 'n') {
+        note("mic|off: the microphone file does not hold on", NULL, 0);
+        return;
+    }
+    core = LoadLibraryW(L"coredll.dll");
+    set_property = core ? LOOKUP(core, SetPropertyFn, L"waveInSetProperty") : NULL;
+    if (!set_property) {
+        note("mic|off: this SYNC has no waveInSetProperty", NULL, 0);
+        return;
+    }
+    thread = CreateThread(NULL, 0, mic_thread, NULL, 0, NULL);
+    if (!thread) {
+        set_property = NULL;
+        note("mic|off: its thread did not start", NULL, 0);
+        return;
+    }
+    CloseHandle(thread);
+    note("mic|on: the router is asked to connect the microphone to the app's recording device", NULL, 0);
+    /* With the boost on, the app's video may run above this thread and keep it waiting. */
+}
+
 /* ---- the app's process ---------------------------------------------------------------- */
 
 /* One look at the app's process. While the guard holds a handle for it, only that handle says
@@ -1097,6 +1223,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
     (void)show;
 
     started = GetTickCount();
+    InitializeCriticalSection(&log_lock);
     judge_again(&rules);
     if (wcsncmp(command, L"--s2am-selftest", 15) == 0)
         return selftest(command + 15);
@@ -1130,6 +1257,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
         start_boost();
     if (watching)
         start_calm();
+    if (watching)
+        start_mic();
     if (!CreateProcessW(original, command, NULL, NULL, FALSE, 0, NULL, NULL, NULL, &runner)) {
         note("error", "original runner did not start, error ", GetLastError());
         return 1;
@@ -1163,6 +1292,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
             restore_again(&restore);
         }
         app = watched.pid != 0;
+        InterlockedExchange(&mic_wanted, app);  /* the microphone thread asks only while the app runs */
         scan_screen(watched.pid, &scan);
         vis = scan.app_visible;
         sync = sync_visible();
@@ -1215,6 +1345,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPWSTR command, int s
         if (act & STOP)
             break;  /* never started, back to normal, or repaired */
     }
+    InterlockedExchange(&mic_wanted, 0);
     calm_end();  /* whatever ended the watch: Ford's screens are back at 250 */
     if (watched.process)
         CloseHandle(watched.process);

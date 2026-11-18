@@ -13,7 +13,8 @@ import shutil
 from pathlib import Path
 
 from .job import (AUTOKIT_CE, AUTOKIT_LOGS, AUTOKIT_MODULES, BACKUP_DIR, BOOST_STUCK_OFF, BOOST_STUCK_ON, CHANGING,
-                  BOOST_STUCK_WRITE, CALM_LEVEL, CALM_STUCK_OFF, CALM_STUCK_ON, GUARD_BOOST, GUARD_CALM, GUARD_LOG, INVENTORY_ROOT, LOAD_LOGS, MENU_XML, NEON_REPORT, OLD_REPORT_MARKER,
+                  BOOST_STUCK_WRITE, CALM_LEVEL, CALM_STUCK_OFF, CALM_STUCK_ON, GUARD_BOOST, GUARD_CALM, GUARD_LOG,
+                  GUARD_MIC, MIC_STUCK_OFF, MIC_STUCK_ON, INVENTORY_ROOT, LOAD_LOGS, MENU_XML, NEON_REPORT, OLD_REPORT_MARKER,
                   PHASE_DIR, PLUGINS_MASK, REPORTS_DIR, STICK_MOUNTS, SWAP_KINDS, TOOLS_CE, Job, bundle_parts,
                   ce_path, load_folder, swap_lines, swap_target)
 
@@ -223,6 +224,8 @@ class FakeCar:
             shutil.copyfile(self._resolve(GUARD_BOOST), out / "guard-boost.txt")
         if self.exists(GUARD_CALM):
             shutil.copyfile(self._resolve(GUARD_CALM), out / "guard-calm.txt")
+        if self.exists(GUARD_MIC):
+            shutil.copyfile(self._resolve(GUARD_MIC), out / "guard-mic.txt")
         for name in AUTOKIT_LOGS:
             if self._resolve(f"{AUTOKIT_CE}\\{name}").exists():
                 shutil.copyfile(self._resolve(f"{AUTOKIT_CE}\\{name}"), out / f"autokit-{name}")
@@ -604,8 +607,10 @@ class FakeCar:
             shutil.copyfile(self._resolve(ce_path(job.job_dir)) / "s2amrun.exe", runner)
             if job.params.get("boost") is not None and not self._guard_boost(out, job.params["boost"]):
                 return False
-            if job.params.get("calm") is not None:
-                return self._guard_calm(out, job.params["calm"], CALM_STUCK_ON)
+            if job.params.get("calm") is not None and not self._guard_calm(out, job.params["calm"], CALM_STUCK_ON):
+                return False
+            if job.params.get("mic") is not None:
+                return self._guard_flag(out, GUARD_MIC, b"on", job.params["mic"], MIC_STUCK_ON, "microphone")
             return True
         elif original.exists():
             if size(original) != stock:
@@ -621,7 +626,29 @@ class FakeCar:
             if not self._remove_boost(out, BOOST_STUCK_OFF):
                 return False
         if job.params["action"] == "disable":
-            return self._guard_calm(out, False, CALM_STUCK_OFF)
+            return (self._guard_calm(out, False, CALM_STUCK_OFF)
+                    and self._guard_flag(out, GUARD_MIC, b"on", False, MIC_STUCK_OFF, "microphone"))
+        return True
+
+    def _guard_flag(self, out: Path, where: str, text: bytes, on: bool, stuck: str, what: str) -> bool:
+        """A guard option kept as a small file (job._mic_lines): written and checked, or removed."""
+        path = self._resolve(where)
+        if on:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._copy_text(text, path)
+            if path.read_bytes() == text:
+                return True
+            if self._ce(path).lower() in self.stuck_files:
+                shutil.copyfile(path, out / Path(where.replace(chr(92), "/")).name)
+            else:
+                path.unlink()
+            (out / "copy-failed.txt").write_text(f"the {what} did not write")
+            return False
+        if path.exists():
+            if self._ce(path).lower() in self.stuck_files:
+                (out / "copy-failed.txt").write_text(stuck)
+                return False
+            path.unlink()
         return True
 
     def _guard_calm(self, out: Path, calm: bool, stuck: str) -> bool:
