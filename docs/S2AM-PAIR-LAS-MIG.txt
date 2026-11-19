@@ -1,0 +1,17 @@
+NO NAME – nytt manuellt mättest för SYNC 2
+Det här är inte det tidigare CPU-jobbet. Inget ska installeras.
+
+1. Parkera. Låt SYNC starta helt. Använd bara NO NAME för det här testet.
+2. Öppna Appar (i) > Total Commander. Öppna USB Disk eller USB Disk2.
+3. Öppna mappen S2AM-PAIR. Dubbeltryck en gång på S2AMPAIR.EXE.
+   Ingen dialog och ingen installationsruta förväntas.
+4. Vänta cirka 30 sekunder. Gå upp en mapp och öppna S2AM-PAIR igen
+   för att uppdatera listan. RESULT.CSV betyder att mätningen blev klar.
+5. Om bara RESULT.TMP syns: vänta tills programmet stängts. Låt filen
+   vara. Försök inte igen. Om ingen fil syns, eller om SYNC vägrar
+   öppna programmet, notera vad som visas. Installera inget annat.
+6. Ta tillbaka stickan efter testet. Radera eller byt inte namn på filer.
+
+Programmet mäter hur lång tid två räkneslingor tar i olika ordning.
+Det sparar råa tidsvärden på stickan; det läser inte ut fysisk MHz och
+ändrar inte klockfrekvens, spänning eller systeminställningar.
