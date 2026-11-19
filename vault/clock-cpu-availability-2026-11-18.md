@@ -1,7 +1,26 @@
 # CPU-counter availability diagnostic
-Controlled v2 diagnostic returned inconclusive at preflight; exact enumeration failure remains unknown, no overclock is qualified.
+The November 19 controlled diagnostic passed preflight and reported USEREN zero, but failed independent exit observation; no overclock is qualified.
 
-## New CPU-read diagnostic ready, November 19
+## CPU-read returned, November 19 — no new test package
+
+Job **`20261119-090912-cpuavail-a8cd`** has now run. The consumed pack matches its prepared
+49,784-byte SHA-256 identity. All **80 managed files / 761,777 bytes** were preserved and
+hash-verified before import. Import is **`not-verified`**, not success.
+
+The complete nine-row successor ledger passes preflight and records the spent one-shot
+edge. The probe reports `R|useren|0` and `T|complete|useren-disabled`, but the controller exits
+with code 1 after `X|4|0`, `E|api|exit-query|0` and `K|termination|1|0`. Its independent clean
+process-completion evidence is missing; the authoritative CPU observation stays inconclusive.
+The bound source identifies a non-signalled/error result from the immediate process wait,
+not a proven failed exit-code query. A deferred signal is plausible, not proven.
+
+No CPU rate, PMNC/CNTENS values or overclock is qualified. No PMU, clock or voltage setting
+was changed. **Do not reinsert this consumed job or remove/reset its claims or edge.**
+No new USB test is prepared; see [[clock-cpu-exit-return-2026-11-19]] for the scoped repair
+and remaining independent-rate/recovery boundaries. Older readiness instructions below are
+historical and superseded.
+
+## Historical CPU-read preparation, November 19
 
 The actual metadata return exposed a DLL-only self-module representation. A narrow preflight
 repair and failure-stage logging are now prepared as fresh job `20261119-090912-cpuavail-a8cd`

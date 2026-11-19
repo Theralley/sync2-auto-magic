@@ -1,6 +1,25 @@
 # Controlled CPU read after live CE module evidence
 A narrow preflight correction uses the actual metadata return while preserving the gated read-only CPU probe, old claims and one-shot successor edge.
 
+## CPU-read returned, November 19 — no new test package
+
+Job **`20261119-090912-cpuavail-a8cd`** has now run. The consumed pack matches its prepared
+49,784-byte SHA-256 identity. All **80 managed files / 761,777 bytes** were preserved and
+hash-verified before import. Import is **`not-verified`**, not success.
+
+The complete nine-row successor ledger passes preflight and records the spent one-shot
+edge. The probe reports `R|useren|0` and `T|complete|useren-disabled`, but the controller exits
+with code 1 after `X|4|0`, `E|api|exit-query|0` and `K|termination|1|0`. Its independent clean
+process-completion evidence is missing; the authoritative CPU observation stays inconclusive.
+The bound source identifies a non-signalled/error result from the immediate process wait,
+not a proven failed exit-code query. A deferred signal is plausible, not proven.
+
+No CPU rate, PMNC/CNTENS values or overclock is qualified. No PMU, clock or voltage setting
+was changed. **Do not reinsert this consumed job or remove/reset its claims or edge.**
+No new USB test is prepared; see [[clock-cpu-exit-return-2026-11-19]] for the scoped repair
+and remaining independent-rate/recovery boundaries. Older readiness instructions below are
+historical and superseded.
+
 ## New gated CPU-read USB ready, November 19
 
 NO NAME now contains **`20261119-090912-cpuavail-a8cd`**. The **49,784-byte** pack has SHA-256
