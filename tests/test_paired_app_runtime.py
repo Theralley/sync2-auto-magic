@@ -56,7 +56,12 @@ SHIM = r'''
 int WINAPI WinMain(HINSTANCE,HINSTANCE,LPWSTR,int);
 static const char *mode;
 static WCHAR module[1024];
-static const WCHAR *root = L"\\USB Disk\\S2AM-PAIR\\";
+#ifdef S2AM_PAIR_V2
+#define ROOT_SUBDIR L"S2AM-RAM\\"
+#else
+#define ROOT_SUBDIR L"S2AM-PAIR\\"
+#endif
+static const WCHAR *root = L"\\USB Disk\\" ROOT_SUBDIR;
 static const char old[] = "previous result\r\n";
 static char scratch[8192], result[8192];
 static int calls, creates, opened, flushes, closes, moves, writes, error;
@@ -94,6 +99,9 @@ HANDLE CreateFileW(LPCWSTR p,DWORD access,DWORD share,void *sec,DWORD disp,DWORD
 }
 BOOL WriteFile(HANDLE h,const void *body,DWORD len,DWORD *n,void *overlap) {
     assert(opened && h==(HANDLE)(intptr_t)1 && !overlap && used+len<sizeof scratch);
+#ifdef S2AM_PAIR_V2
+    assert(calls >= 64);
+#endif
     ++writes; *n=0;
     if((is("write-fail") && writes==2) || (is("write-final-fail") && writes==35)) return FALSE;
     if(is("zero-write")) return TRUE;
@@ -120,20 +128,28 @@ BOOL QueryPerformanceFrequency(LARGE_INTEGER *n) {
     return !is("qpf-fail");
 }
 BOOL QueryPerformanceCounter(LARGE_INTEGER *n) {
+#ifdef S2AM_PAIR_V2
+    assert(!writes && !flushes);
+#endif
     ++calls;
     n->QuadPart=INT64_C(4294967000)+200*calls;
     if(calls==12 && is("negative-qpc")) n->QuadPart=-1;
     if(calls==12 && is("frozen-qpc")) n->QuadPart-=200;
     if(calls==13 && is("backward-qpc")) n->QuadPart-=1200;
-    return !(calls==12 && is("qpc-fail"));
+    return !((calls==12 && is("qpc-fail")) || (calls==64 && is("last-qpc-fail")));
 }
 DWORD GetTickCount(void) {
     static DWORD ticks; return ticks+=is("timeout") ? 60001 : 1;
 }
-void Sleep(DWORD millis) { assert(millis<1000); }
+void Sleep(DWORD millis) {
+#ifdef S2AM_PAIR_V2
+    assert(!calls || calls >= 64);
+#endif
+    assert(millis<1000);
+}
 int main(int argc,char **argv) {
     assert(argc==3); mode=argv[1]; assert(mbstowcs(module,argv[2],1024)<1024);
-    if(wcsstr(module,L"Disk2") || wcsstr(module,L"disk2")) root=L"\\USB Disk2\\S2AM-PAIR\\";
+    if(wcsstr(module,L"Disk2") || wcsstr(module,L"disk2")) root=L"\\USB Disk2\\" ROOT_SUBDIR;
     if(is("existing") || is("existing-tmp")) {
         if(is("existing")) { strcpy(result,old); final_exists=1; }
         else { tmp_exists=1; strcpy(scratch,old); }
@@ -150,6 +166,11 @@ MODULE = r"\USB Disk\S2AM-PAIR\S2AMPAIR.EXE"
 
 
 class PairedAppRuntime(unittest.TestCase):
+    version = 1
+    module = MODULE
+    rounds_by_block = (16384,) * 4 + (32768,) * 4
+    flags = ()
+
     @classmethod
     def setUpClass(cls):
         cc = shutil.which("cc")
@@ -162,31 +183,31 @@ class PairedAppRuntime(unittest.TestCase):
         (d / "shim.c").write_text(SHIM)
         cls.exe = d / "paired-host"
         subprocess.run(
-            [cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-O1", "-DS2AM_PAIR_HOST_TEST",
+            [cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-O1", "-DS2AM_PAIR_HOST_TEST", *cls.flags,
              "-I", str(d), str(d / "shim.c"), str(ROOT / "s2am/native/s2ampair.c"),
              "-o", str(cls.exe)], check=True,
         )
 
-    def app(self, mode, path=MODULE):
-        raw = subprocess.run([str(self.exe), mode, path], capture_output=True, timeout=6)
+    def app(self, mode, path=None):
+        raw = subprocess.run([str(self.exe), mode, path or self.module], capture_output=True, timeout=6)
         self.assertEqual(raw.returncode, 0, raw.stderr)
         summary, body = raw.stdout.split(b"\n", 1)
         return [int(x) for x in summary.split()], body
 
-    def check_success(self, mode="ok", path=MODULE):
+    def check_success(self, mode="ok", path=None):
         (rc, creates, writes, flushes, closes, moves, exists), body = self.app(mode, path)
         self.assertEqual((rc, creates, closes, moves, exists), (0, 1, 1, 1, 1))
         self.assertGreater(writes, 0)
         self.assertGreater(flushes, 0)
         lines = body.decode("ascii").split("\r\n")
-        self.assertEqual(lines[:2], ["S2AM-PAIR,1", "qpf,1000000"])
+        self.assertEqual(lines[:2], [f"S2AM-PAIR,{self.version}", "qpf,1000000"])
         self.assertEqual(lines[-2:], ["complete,32", ""])
         self.assertEqual(len(lines[2:-2]), 32)
         last = 0
         for row, line in enumerate(lines[2:-2]):
             label, *fields = line.split(",")
             block, slot = divmod(row, 4)
-            rounds = 16384 if block < 4 else 32768
+            rounds = self.rounds_by_block[block]
             width = (32, 64, 64, 32)[slot]
             if block % 2:
                 width = 96 - width
@@ -200,15 +221,16 @@ class PairedAppRuntime(unittest.TestCase):
         return body
 
     def test_exact_32_samples_and_disk_variants(self):
-        for path in (MODULE, MODULE.lower(), MODULE.replace("Disk", "Disk2")):
+        for path in (self.module, self.module.lower(), self.module.replace("Disk", "Disk2")):
             with self.subTest(path=path):
                 self.check_success(path=path)
 
     def test_wrong_module_never_touches_storage(self):
-        for path in (r"\Windows\S2AMPAIR.EXE", r"\Storage Card\S2AM-PAIR\S2AMPAIR.EXE",
-                     MODULE.replace("Disk", "Disk3"), MODULE.replace("Disk", "Diskette"),
-                     MODULE.replace("S2AM-PAIR", "S2AM-PAIR\\..\\S2AM-PAIR"),
-                     MODULE+"2", MODULE[1:]):
+        folder, exe = self.module.rsplit("\\", 2)[1:]
+        for path in ("\\Windows\\" + exe, "\\Storage Card\\" + folder + "\\" + exe,
+                     self.module.replace("Disk", "Disk3"), self.module.replace("Disk", "Diskette"),
+                     self.module.replace(folder, folder + "\\..\\" + folder),
+                     self.module+"2", self.module[1:]):
             with self.subTest(path=path):
                 data, body = self.app("ok", path)
                 self.assertNotEqual(data[0], 0)
@@ -223,7 +245,7 @@ class PairedAppRuntime(unittest.TestCase):
 
     def test_errors_never_publish_final(self):
         for mode in ("stat-fail", "create-fail", "existing-tmp", "qpf-fail", "negative-qpf", "zero-qpf",
-                     "qpc-fail", "negative-qpc", "frozen-qpc", "backward-qpc", "timeout",
+                     "qpc-fail", "last-qpc-fail", "negative-qpc", "frozen-qpc", "backward-qpc", "timeout",
                      "write-fail", "write-final-fail", "zero-write", "flush-fail", "close-fail", "move-fail"):
             with self.subTest(mode=mode):
                 data, body = self.app(mode)
@@ -247,6 +269,24 @@ class PairedAppRuntime(unittest.TestCase):
             self.assertFalse(body)
         else:
             self.assertEqual(body, self.check_success())
+
+
+class RamPairedAppRuntime(PairedAppRuntime):
+    version = 2
+    module = r"\USB Disk\S2AM-RAM\S2AMRAM.EXE"
+    rounds_by_block = (16384, 32768, 32768, 16384) * 2
+    flags = ("-DS2AM_PAIR_V2",)
+
+    def test_rejects_old_module_path(self):
+        summary, body = self.app("ok", MODULE)
+        self.assertNotEqual(summary[0], 0)
+        self.assertEqual(summary[1:], [0] * 6)
+        self.assertFalse(body)
+
+    def test_no_partial_output_on_final_measurement_failure(self):
+        (rc, _creates, writes, flushes, _closes, moves, exists), _ = self.app("last-qpc-fail")
+        self.assertNotEqual(rc, 0)
+        self.assertEqual((writes, flushes, moves, exists), (0, 0, 0, 0))
 
 
 if __name__ == "__main__":

@@ -6,10 +6,11 @@ from pathlib import Path
 from tools.paired_loop_report import analyze, read_result
 
 
-def capture(effects=(5,) * 8, extra=None, start=101):
-    lines = ["S2AM-PAIR,1", "qpf,1000000"]
+def capture(effects=(5,) * 8, extra=None, start=101, version=1):
+    lines = [f"S2AM-PAIR,{version}", "qpf,1000000"]
     for block, effect in enumerate(effects):
-        n = 16384 if block < 4 else 32768
+        short = block < 4 if version == 1 else block in (0, 3, 4, 7)
+        n = 16384 if short else 32768
         widths = (32, 64, 64, 32) if block % 2 == 0 else (64, 32, 32, 64)
         for slot, width in enumerate(widths):
             # Fixed overhead + linear drift in slot; ABBA should cancel both.
@@ -29,6 +30,26 @@ class PairedLoopReport(unittest.TestCase):
         self.assertEqual((result["order_delta"], result["size_delta"]), (0, 0))
         self.assertEqual(result["status"], "coherent")
         self.assertIs(result["qualified"], False)
+
+    def test_v2_balanced_schedule_uses_actual_size_groups(self):
+        result = analyze(capture((5, 7, 7, 5, 5, 7, 7, 5), version=2))
+        self.assertEqual(result["version"], 2)
+        self.assertEqual((result["order_delta"], result["size_delta"]), (0, 2))
+        self.assertEqual(result["status"], "noisy")
+        for key in ("qualified", "cpu_rate_qualified", "write_authorized"):
+            self.assertIs(result[key], False)
+        self.assertEqual(analyze(capture())["version"], 1)
+
+    def test_v2_wrong_schedule_version_or_missing_window_rejected(self):
+        body = capture(version=2)
+        for bad in (body.replace(b"S2AM-PAIR,2", b"S2AM-PAIR,1"),
+                    body.replace(b"S2AM-PAIR,2", b"S2AM-PAIR,02"),
+                    body.replace(b"S2AM-PAIR,2", b"S2AM-PAIR,3"),
+                    body.replace(b"sample,1,0,32768,64,", b"sample,1,0,32768,32,"),
+                    body.replace(b"sample,3,1,16384,32,", b"sample,3,1,32768,32,"),
+                    b"\r\n".join(body.split(b"\r\n")[0:2] + body.split(b"\r\n")[3:])):
+            with self.subTest(case=bad[:100]), self.assertRaises(ValueError):
+                analyze(bad)
 
     def test_read_only_published_file(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -1,0 +1,17 @@
+NO NAME – mättest 2: S2AM-RAM
+Det första biltestet lyckades. RESULT.CSV i S2AM-PAIR är det gamla resultatet.
+Låt den filen vara. Test 2 använder en annan mapp. Ingen installation.
+
+1. Parkera och låt SYNC starta färdigt. Sätt i NO NAME.
+2. Appar > Total Commander > USB Disk (eller USB Disk2) > S2AM-RAM.
+3. Dubbeltryck en gång på S2AMRAM.EXE. Ingen dialog förväntas.
+4. Vänta 30 sekunder. Gå upp en mapp och öppna S2AM-RAM igen för att
+   se resultatet. En ny RESULT.CSV i just S2AM-RAM betyder att testet
+   blev klart. Om du bara ser RESULT.TMP, vänta tills programmet
+   stängts. Låt filen vara och kör inte igen.
+5. Ta tillbaka stickan. Om programmet inte gick att starta, notera
+   felmeddelandet. Inget ska installeras eller ändras i SYNC.
+
+Testet värmer upp räkneslingorna och växlar mellan två arbetsmängder.
+Det samlar tiderna i arbetsminnet och skriver rapporten först efter
+sista mätningen. Det ändrar inte klockfrekvens eller spänning.
