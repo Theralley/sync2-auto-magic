@@ -1,0 +1,15 @@
+{
+  "image": "ghcr.io/enlyze/windows-ce-build-environment-arm@sha256:22ea23d697accaab2b98fb12d81ccc1faade90f9fe490f554ae7c5c194dfe27c",
+  "flags": [
+    "-O2",
+    "-Wall",
+    "-Wextra",
+    "-Werror"
+  ],
+  "exe": "S2AMPAIR.EXE",
+  "sha256": "25d8ca420735b4ef0c9d9f78e66d708671b8c2527adf62a61e25b82897583427",
+  "bytes": 7680,
+  "source_sha256": "bb78b02ce00be67cab951b174839158eda22531a62d03986b0dfc33ac29ad79c",
+  "source_commit": "2cbc0b0a35dcbb0508a39246e473ce2634f2a17a",
+  "observation": "returned complete"
+}

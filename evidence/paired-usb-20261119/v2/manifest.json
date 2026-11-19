@@ -1,0 +1,16 @@
+{
+  "image": "ghcr.io/enlyze/windows-ce-build-environment-arm@sha256:22ea23d697accaab2b98fb12d81ccc1faade90f9fe490f554ae7c5c194dfe27c",
+  "flags": [
+    "-O2",
+    "-Wall",
+    "-Wextra",
+    "-Werror",
+    "-DS2AM_PAIR_V2"
+  ],
+  "exe": "S2AMRAM.EXE",
+  "sha256": "f0bb59f7b91bb020b31f2cae788d4e2b4aa0ee399b6b4c4bf8ebfcbbb53ae4db",
+  "bytes": 8192,
+  "source_sha256": "b0ba490a584332afb54bcb16823fb7b2ddcd86d0e4697750607343d58e3073f6",
+  "source_commit": "327e6b9a556764fa5d5104dfdb8676358eb3caad",
+  "observation": "USB verified; in-car result pending"
+}
