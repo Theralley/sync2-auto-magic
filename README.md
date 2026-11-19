@@ -19,7 +19,9 @@ and free software.** It also includes a Mac tool that shows what is installed on
 >   DLLs were still active. The reporting defect is fixed and a corrected test is prepared.
 > - **Clock work is active:** a temporary read-only driver prototype has been built and host-tested.
 >   Review and car validation come next. No overclock package or measured clock increase is ready.
-> - **Calls over CarPlay don't work yet** (the microphone). Don't rely on CarPlay for calls.
+> - **The microphone works over CarPlay since 2026-11-19** (`s2am job autokit-mic-gate`): Siri hears
+>   you and calls connect. Call quality is not good yet: the other side hears an echo of
+>   themselves, and the sound is choppy and late.
 
 ## Tested and working
 
@@ -59,8 +61,8 @@ Tested in a real car: a **2016 Ford Mondeo Mk5, 8" SYNC 2, software 3.10 (EU)**,
   picture is choppy. Measured 2026-11-14: with CarPlay running, the processor is at 100%, and
   most of that is AutoKit's software video decoding. Open issue, with what is known and the plan:
   [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
-- **A call over CarPlay did not work** (2026-11-14: microphone and phone). Don't rely on CarPlay
-  for calls yet ([TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)).
+- **Calls over CarPlay have poor sound for the other side** (2026-11-19: echo, choppy, late). The
+  microphone itself works after `autokit-mic-gate` ([TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)).
 - **Switching to the radio while CarPlay plays** stopped CarPlay's music, and pulling the cable
   out and in did not bring CarPlay back ([TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)).
 - **After Exit, CarPlay sometimes cannot be started again** until SYNC is restarted. Seen

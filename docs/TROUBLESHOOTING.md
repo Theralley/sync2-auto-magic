@@ -86,15 +86,23 @@ That brought SYNC back every time. Last resort: engine off, lock the car, wait 1
   AutoKit's software video decoding takes the biggest share.
 - **Status:** open. Everything known, and the plan, is in [PERFORMANCE.md](PERFORMANCE.md).
 
-### A call over CarPlay does not work
-- **Seen:** 2026-11-14, a call at 12:06 with CarPlay running. In the owner's words: the
-  microphone and phone do not work.
-- **Cause:** not known. The wired adapter has no microphone of its own, so AutoKit has to take
-  the sound from SYNC's microphone. AutoKit's log says nothing about the microphone. SYNC's own
-  hands-free service may hold the microphone, or AutoKit may not open it on this system.
-- **For now:** don't rely on CarPlay for calls. Whether SYNC's own Bluetooth phone works while
-  CarPlay runs, or only after Exit with the cable out, has not been tested yet. Test it before
-  you depend on it.
+### The microphone over CarPlay: works, but calls sound bad to the other side
+- **Seen first:** 2026-11-14, a call with CarPlay running: the microphone did not work. Siri inside
+  CarPlay did not hear anything either.
+- **Cause:** AutoKit only records from the car's microphone on a short list of systems, and SYNC 2
+  is not on it. It never opened a recording device. SYNC does not block the microphone: its audio
+  driver already feeds the microphone to the first recording device when an app opens it.
+- **Fix:** `s2am job autokit-mic-gate` changes one instruction in AutoKit.exe so that it records on
+  SYNC 2. The job checks the file before and after, and `autokit-patched` undoes it. AutoKit must
+  be set to the car's microphone (`autokit-config --mic car`).
+- **Result, 2026-11-19:** Siri inside CarPlay hears the driver, and a call works in both
+  directions.
+- **Still open:** the person called hears an echo of themselves, and the driver's voice arrives
+  choppy and late. Likely causes, not confirmed: nothing removes the echo of the car's speakers
+  from the microphone signal, and the processor is near 100% while CarPlay runs
+  ([PERFORMANCE.md](PERFORMANCE.md)).
+- **Not needed:** `runner-guard --mic`. The log shows the driver had already connected the
+  microphone each time (the router answered "already connected"), so leave it off.
 
 ### CarPlay does not come back after switching to the radio
 - **Seen:** 2026-11-14. The radio was started while CarPlay played music. The music then played
