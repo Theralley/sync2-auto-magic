@@ -1,8 +1,22 @@
 # CPU startup metadata diagnostic
-A separate metadata-only diagnostic isolates the CPU-startup preflight failure; it does not access CPU controls or qualify an overclock.
+Actual car metadata confirms a DLL-only self-module list; parent PID is unavailable, and CPU/overclock permissions remain unqualified.
 
 
-## New metadata diagnostic USB ready, November 18
+## Actual metadata return, November 19
+
+Job `20261118-185807-cpumeta-8c51` returned and was preserved before import. It completed
+its diagnostic: qualified Toolhelp loading and all six exports succeeded, process12/end18,
+and its self module list contained three valid DLLs/end18 but **no own EXE**. All parent
+PIDs were zero, so parent enumeration is inconclusive. This does not grant CPU permissions.
+
+The live representation contradicts an old mandatory-self-EXE preflight predicate. The
+next controlled CPU-read revision corrects only that assumption while retaining independent
+self identity, complete scans and all old barriers. No metadata job is repeated. Historical
+flush/next-write ambiguity in the prior CPU return remains; failure-stage logging is added.
+See [next CPU read](CLOCK-CPU-READ-2026-11-19.md).
+
+
+## Historical metadata USB preparation, November 18
 
 NO NAME now contains **`20261118-185807-cpumeta-8c51`**. Its **29,584-byte** pack has SHA-256
 `be71ca43b769944167cf856cbf728e64ea9db885aa2f693c50c4bea8742d1001`.

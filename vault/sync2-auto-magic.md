@@ -1,7 +1,31 @@
 # SYNC 2 clock investigation
 Live clock baseline and timer qualification are verified; no overclock is qualified or deployed.
 
-## New metadata diagnostic USB ready, November 18
+## New gated CPU-read USB ready, November 19
+
+NO NAME now contains **`20261119-090912-cpuavail-a8cd`**. The **49,784-byte** pack has SHA-256
+`85f5de9cb500c861345bb22aacc297a6fc8d1cd75caa49cc2e6a32cc2cc9841c`.
+The official unpacker reproduced all five payload files exactly: three executables, the
+canonical predecessor receipt and `job.json`. No MortScript or restart action is included.
+
+All 71 previous managed USB files were backed up and hash-verified before mutation. Consumed
+updater files and old root instructions were archived; old reports remain preserved. The
+new pack, single pending identity and Swedish instructions matched after ordinary
+unmount/remount. The stick is **safely ejected**. Other sticks were untouched.
+
+While parked: disconnect the CarPlay adapter, restart SYNC and open no app. Insert NO NAME
+**once**, wait for install completion plus at least one minute, then return the stick.
+Photograph errors; do not repeat insertion, remove claims or use an old undo package. Root
+instructions: `S2AM-CPU-READ-20261119.txt`. Use before **December 17, 2026, 09:35:59 UTC**.
+
+This is a new controlled attempt to read existing CPU control registers, **not an overclock**
+or CPU-rate measurement. Its on-car read/debug behavior remains unverified. No frequency,
+voltage or PMU enable/reset operation exists.
+
+See [[clock-cpu-read-2026-11-19]]; metadata return and earlier readiness below are historical.
+
+
+## Historical metadata USB preparation, November 18
 
 NO NAME now contains **`20261118-185807-cpumeta-8c51`**. Its **29,584-byte** pack has SHA-256
 `be71ca43b769944167cf856cbf728e64ea9db885aa2f693c50c4bea8742d1001`.

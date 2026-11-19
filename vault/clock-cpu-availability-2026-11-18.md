@@ -1,7 +1,16 @@
 # CPU-counter availability diagnostic
 Controlled v2 diagnostic returned inconclusive at preflight; exact enumeration failure remains unknown, no overclock is qualified.
 
-## Next metadata diagnostic prepared
+## New CPU-read diagnostic ready, November 19
+
+The actual metadata return exposed a DLL-only self-module representation. A narrow preflight
+repair and failure-stage logging are now prepared as fresh job `20261119-090912-cpuavail-a8cd`
+on NO NAME, remount-verified and safely ejected. Probe/controller bytes are unchanged from
+the reviewed v2 version; all old claims, edge, identity and gate constraints remain. This is
+CPU control observation only, not a clock change. See [[clock-cpu-read-2026-11-19]].
+
+
+## Historical metadata diagnostic preparation
 
 A distinct metadata-only job `20261118-185807-cpumeta-8c51` is now prepared, remount-verified
 and safely ejected on NO NAME. It isolates the ambiguous preflight stop below without
