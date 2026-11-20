@@ -138,15 +138,21 @@ static int write_new(LPCWSTR path,const char *text) {
     return ok;
 }
 static int matching_claim(void) {
-    HANDLE h;char expected[128],body[128];DWORD size=0,got=0;int ok;
+    HANDLE h;char expected[128],body[128];DWORD size=0,total=0;int ok;
     claim_text(expected);
     h=CreateFileW(RUN_CLAIM,GENERIC_READ,FILE_SHARE_READ,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
     if(h==INVALID_HANDLE_VALUE) return 0;
-    ok=size_of(h,(DWORD)strlen(expected),&size)&&size<sizeof(body)&&
-       ReadFile(h,body,size,&got,NULL)&&got==size&&!memcmp(body,expected,size);
+    ok=size_of(h,(DWORD)strlen(expected),&size)&&size<sizeof(body);
+    while(ok&&total<size) {
+        DWORD got=0;
+        if(!admitted()||!ReadFile(h,body+total,size-total,&got,NULL)||!got||got>size-total) ok=0;
+        else total+=got;
+    }
+    if(ok&&memcmp(body,expected,size)) ok=0;
     if(!CloseHandle(h)) ok=0;
     return ok;
 }
+
 static HANDLE copy_collector(void) {
     HANDLE in=INVALID_HANDLE_VALUE,out=INVALID_HANDLE_VALUE,lock=INVALID_HANDLE_VALUE;
     DWORD size=0,check_size=0;char digest[65],copied[65];int ok=0;
@@ -252,10 +258,14 @@ static int paths(void) {
     return 0;
 }
 int WINAPI WinMain(HINSTANCE instance,HINSTANCE prior,LPWSTR command,int show) {
-    char claim[128];int action=0;DWORD error;
+    char claim[128];int action=0;DWORD error,attributes;
     (void)instance;(void)prior;(void)show;started=GetTickCount();
     if((command&&*command)||!paths()) goto done;
     if(!missing(usb_result)||!missing(usb_scratch)) goto done;
+    if(!missing(usb_receipt)) {
+        attributes=GetFileAttributesW(RUN_DIR);
+        if(attributes==INVALID_FILE_ATTRIBUTES||!(attributes&FILE_ATTRIBUTE_DIRECTORY)) goto done;
+    }
     if(!directory(L"\\SyncExtendedPack\\_s2am")||!directory(L"\\SyncExtendedPack\\_s2am\\load")) goto done;
     SetLastError(0);
     if(CreateDirectoryW(RUN_DIR,NULL)) {
