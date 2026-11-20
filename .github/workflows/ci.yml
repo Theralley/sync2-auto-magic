@@ -31,7 +31,7 @@ jobs:
           git -C syncextpack checkout -q FETCH_HEAD
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.9"
+          python-version: "3.12"
       - name: Unit tests
         working-directory: sync2-auto-magic
         run: python3 -m unittest discover -s tests
