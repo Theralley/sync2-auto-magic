@@ -14,10 +14,12 @@ Older preparation and pending-return entries below are historical, not current l
 
 ## Logger design discussion, November 20
 
-The live Qwen peer and Codex selected a separate ordinary-API raw load observer as
-the next useful diagnostic design. It would improve CPU-time attribution, not measure
-physical MHz or prove the CarPlay bottleneck. No new logger is built or deployed;
-see [[load-observer-design-2026-11-20]] for the scope and implementation acceptance.
+The live Qwen peer and Codex implemented the separate ordinary-API raw load observer
+locally. Seventy-one focused host tests pass, but the CE executable is not built:
+server access is unavailable. USB contents are unchanged and no ready-for-car claim
+is made. See [[load-observer-implementation-2026-11-20]] for exact verification and
+remaining compilation/port-lifecycle work. [[load-observer-design-2026-11-20]] records
+the design; it is not physical MHz measurement or proof of the CarPlay bottleneck.
 
 ## Latest verified results and source publication, November 16
 
