@@ -204,6 +204,9 @@ run the same system, but nothing is guaranteed.
 
 ## Easiest: the guided installer
 
+**New here? Follow the [step-by-step install guide](docs/INSTALL.md).** It goes from an
+unopened adapter to CarPlay on the screen, in plain words.
+
 No terminal experience needed. It asks plain questions, checks your Mac and USB stick, builds
 everything, and tells you exactly what to do in the car, one trip at a time.
 

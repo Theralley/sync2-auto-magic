@@ -470,8 +470,8 @@ def cmd_job(args) -> int:
               "SYNC 2 is not one. This installs the app pack's sound-patched AutoKit.exe with that check "
               "answering yes (one instruction changed); any other change made to the car's AutoKit.exe is "
               "replaced. The car's AutoKit.exe.patched stays as it is, for the way back. AutoKit must not be "
-              "running: restart SYNC first. Undo: s2am job autokit-patched. The microphone also needs runner-guard --mic on and "
-              "autokit-config --mic car")
+              "running: restart SYNC first. Undo: s2am job autokit-patched. AutoKit must be set to the car's microphone, which is its "
+              "default (autokit-config --mic car)")
     elif args.kind == "flash-tune":
         from . import flashtune
         values = {name: getattr(args, option) for name, (_, _, _, option) in flashtune.LIMITS.items()
