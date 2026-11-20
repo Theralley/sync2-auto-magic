@@ -1,0 +1,37 @@
+name: tests
+
+on:
+  push:
+    branches: [main, "ci/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: sync2-auto-magic
+      # The tests read fixtures from a SyncExtPack clone next to this one; it is never modified.
+      - name: Fetch SyncExtPack at the tested commit
+        run: |
+          git init -q syncextpack
+          git -C syncextpack remote add origin https://github.com/chr0m1ng/syncextpack
+          git -C syncextpack fetch -q --depth 1 origin 1a1eda00aea2d319dc850b6e7a118c67ebd3e0de
+          git -C syncextpack checkout -q FETCH_HEAD
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: Unit tests
+        working-directory: sync2-auto-magic
+        run: python3 -m unittest discover -s tests
