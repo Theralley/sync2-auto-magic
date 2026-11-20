@@ -15,8 +15,9 @@ Older preparation and pending-return entries below are historical, not current l
 ## Logger design discussion, November 20
 
 The live Qwen peer and Codex implemented the separate ordinary-API raw load observer
-locally. Seventy-one focused host tests pass, but the CE executable is not built:
-server access is unavailable. USB contents are unchanged and no ready-for-car claim
+locally. Seventy-three focused host tests pass, but the CE executable is not built:
+server SSH authentication is unavailable; an owned-branch Actions alternative is
+prepared but not published/dispatched. USB contents are unchanged and no ready-for-car claim
 is made. See [[load-observer-implementation-2026-11-20]] for exact verification and
 remaining compilation/port-lifecycle work. [[load-observer-design-2026-11-20]] records
 the design; it is not physical MHz measurement or proof of the CarPlay bottleneck.

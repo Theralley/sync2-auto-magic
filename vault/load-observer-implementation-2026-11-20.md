@@ -1,6 +1,18 @@
 # Raw load observer implementation — November 20, 2026
 Native collector and host parser are implemented and host-tested; no CE executable or USB delivery is ready.
 
+## Later build-route update
+
+The server became network-reachable but refuses SSH authentication. An explicit
+GitHub Actions build-only alternative is prepared locally, pinned to the owned
+repository and one non-main build branch, with read-only permissions, pinned actions,
+offline compiler and run/attempt-bound receipts. Its additional routing regressions
+bring the focused test total to 73. The prospective publication branch is based on
+already-public history and contains only the selected observer changes, not unrelated
+local development ancestry. No code has been pushed or Actions build dispatched:
+publication to the public repository is awaiting explicit owner authorization.
+Neither route has produced a CE executable. The USB remains unchanged.
+
 ## Implemented locally
 
 Local branch `feat/raw-load-20261120` contains the frozen v1 contract, ordinary-API
