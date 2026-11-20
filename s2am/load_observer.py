@@ -302,10 +302,8 @@ def _interpret(rounds, qpf, self_pid, self_tid):
     identities = {}
     self_obs = {}
     idle_obs = {}
-    processes = {}
     for round_ in rounds:
         seq = round_["seq"]
-        processes.update(round_["processes"])
         for thread in round_["threads"]:
             if thread["status"] == "ok":
                 key = (thread["pid"], thread["tid"], thread["creation"])
@@ -353,11 +351,24 @@ def _interpret(rounds, qpf, self_pid, self_tid):
         "thread_enum_error_rounds": sum(1 for r in rounds if r["thread_enum_error"]),
         "process_enum_error_rounds": sum(1 for r in rounds if r["process_enum_error"]),
     }
-    return observed, self_intervals, idle_intervals, processes, partial
+    # Process basenames stay per-round in rounds[seq]["processes"]; a PID alone is
+    # not a stable identity, so no global latest-basename map is published.
+    return observed, self_intervals, idle_intervals, partial
 
 
 def analyze(body: bytes) -> dict:
-    """Strictly parse a complete S2AM-LOAD,1 journal and derive observed shares."""
+    """Strictly parse a complete S2AM-LOAD,1 journal and derive observed shares.
+
+    Any IndexError from a truncated journal is translated to ValueError at this
+    strict boundary; the contract requires ValueError for malformed/truncated input.
+    """
+    try:
+        return _analyze(body)
+    except IndexError as error:
+        raise ValueError("truncated journal") from error
+
+
+def _analyze(body: bytes) -> dict:
     lines = _lines(body)
     if lines[0] != "S2AM-LOAD,1":
         raise ValueError("wrong journal header")
@@ -394,7 +405,7 @@ def analyze(body: bytes) -> dict:
     if cursor != len(lines):
         raise ValueError("extra or reordered rows after complete")
 
-    observed, self_intervals, idle_intervals, processes, partial = \
+    observed, self_intervals, idle_intervals, partial = \
         _interpret(rounds, qpf, self_pid, self_tid)
     return {
         "complete": True, "qpf": qpf,
@@ -403,7 +414,6 @@ def analyze(body: bytes) -> dict:
         "observed_intervals": observed,
         "self_intervals": self_intervals,
         "idle_intervals": idle_intervals,
-        "processes": processes,
         "partial": partial,
         "qualified": False, "settled": False,
         "cpu_rate_qualified": False, "write_authorized": False,

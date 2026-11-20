@@ -462,5 +462,32 @@ class InterpretationTests(unittest.TestCase):
         self.assertEqual(result["partial"]["open_fail"], 1)
 
 
+class TruncationTests(unittest.TestCase):
+    def test_header_only_rejected(self):
+        with self.assertRaises(ValueError):
+            lo.analyze(b"S2AM-LOAD,1\r\n")
+
+    def test_every_line_boundary_truncation_rejected(self):
+        lines = build().decode("ascii")[:-2].split("\r\n")
+        for keep in range(1, len(lines)):
+            body = ("\r\n".join(lines[:keep]) + "\r\n").encode("ascii")
+            with self.assertRaises(ValueError, msg=f"prefix kept {keep} lines"):
+                lo.analyze(body)
+
+
+class ProcessMappingTests(unittest.TestCase):
+    def test_no_global_latest_process_map(self):
+        result = lo.analyze(build())
+        self.assertNotIn("processes", result)
+        self.assertEqual(result["rounds"][0]["processes"], {200: "AutoKit.exe"})
+
+    def test_pid_reuse_basenames_stay_per_round(self):
+        rounds = default_rounds()
+        rounds[30]["processes"] = [(200, "Other.exe")]
+        result = lo.analyze(build(rounds))
+        self.assertEqual(result["rounds"][0]["processes"][200], "AutoKit.exe")
+        self.assertEqual(result["rounds"][30]["processes"][200], "Other.exe")
+
+
 if __name__ == "__main__":
     unittest.main()
