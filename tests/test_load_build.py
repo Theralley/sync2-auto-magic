@@ -75,3 +75,14 @@ class Build(unittest.TestCase):
                 self.assertEqual(check.call_count,0)
             self.assertEqual(json.loads((out/"result.json").read_text())["state"],"failed")
             self.assertFalse((out/"manifest.json").exists())
+
+    def test_checked_reads_reject_nonregular_paths_without_blocking(self):
+        import os
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d); regular=p/"regular"; regular.write_bytes(b"ok")
+            link=p/"link"; link.symlink_to(regular)
+            fifo=p/"fifo"; os.mkfifo(fifo)
+            self.assertEqual(build.checked_read(regular),b"ok")
+            for target in (link,fifo,p):
+                with self.subTest(target=target.name),self.assertRaises((OSError,ValueError)):
+                    build.checked_read(target)
