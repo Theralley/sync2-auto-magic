@@ -60,7 +60,9 @@ Obtain documentary evidence against those gates. A Swedish service question is
 prepared privately but has not been sent; request documentation only, not programming
 or reset. A response must be checked for exact revision and semantics before use.
 
-Do not start a clock writer, repeat the consumed `cpuavail` edge, prepare a new car
-test or connect timing CSVs to clock control. No clock/voltage change, USB mutation,
-installation, merge, deployment or release occurred in this review. The overclock
-objective remains unachieved.
+Do not start a clock writer, repeat the consumed `cpuavail` edge, prepare another
+clock/throughput car test or connect timing CSVs to clock control. The separately
+owner-authorized ordinary-API load observer is not such a test; its current build and
+USB status are recorded in [[load-observer-implementation-2026-11-20]]. No clock/voltage
+change, USB mutation, installation, merge, deployment or release occurred in this
+documentary review itself. The overclock objective remains unachieved.
