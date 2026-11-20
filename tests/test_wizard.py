@@ -27,6 +27,8 @@ class FakeCli:
     def __init__(self, tmp: Path, inventory="applied", menu=("Video Player", "Reboot")):
         self.tmp, self.inventory, self.menu = tmp, inventory, list(menu)
         self.calls, self.jobs = [], []
+        self.fail = None  # a job kind whose stick comes back untouched
+        self.unverified = None  # a job kind that ran to its end, but whose check of the car failed
 
     def __call__(self, argv):
         self.calls.append(argv)
@@ -37,7 +39,7 @@ class FakeCli:
         elif argv[:2] == ["stick", "import"]:
             job_id, kind = self.jobs[-1]
             store = Store()
-            status = self.inventory if kind == "inventory" else "applied"
+            status = self.inventory if kind == "inventory" else "pending" if kind == self.fail else "applied"
             applied = status == "applied"
             if applied:
                 report = self.tmp / "report"
@@ -47,7 +49,9 @@ class FakeCli:
                 (report / "SyncApps.xml").write_bytes(apps.render_menu(
                     [(n, n.replace(" ", "") + "Plugin", "") for n in self.menu]))
                 store.save_report(SERIAL, job_id, report)
-            store.save_job(SERIAL, job_id, {"id": job_id, "serial": SERIAL, "kind": kind,
+            short = {"runner-guard": "guard", "autokit-mic-gate": "akmic"}.get(kind, kind)
+            check = {"check": {"ok": kind != self.unverified, "text": "x"}} if short in wizard.CHECKED else {}
+            store.save_job(SERIAL, job_id, {"id": job_id, "serial": SERIAL, "kind": short, **check,
                                             "status": status,
                                             "imported_utc": f"2026-10-30T00:00:{len(self.jobs):02d}"})
             print(f"{job_id}: {status}")
@@ -99,16 +103,16 @@ class Conversation(unittest.TestCase):
 
     def test_serial_with_letter_o_is_read_as_zero_and_saved(self):
         cli = FakeCli(self.tmp)
-        code, text = self.talk(["xv3o m13h", "5"], cli)
+        code, text = self.talk(["xv3o m13h", "6"], cli)
         self.assertEqual(code, 0)
         self.assertIn("read as a zero: XV30M13H", text)
         saved = json.loads((self.tmp / "home" / "wizard.json").read_text())
         self.assertEqual(saved["serial"], "XV30M13H")
-        self.talk(["y", "5"], cli)  # the next run offers the saved serial
+        self.talk(["y", "6"], cli)  # the next run offers the saved serial
 
     def test_car_with_old_syncextpack_gets_cleanup_and_the_app_pack(self):
         cli = FakeCli(self.tmp, menu=("Video Player", "Navitel", "Reboot"))
-        code, text = self.talk([SERIAL, "1", "2", "", "y", "", "", "n", "5"], cli)
+        code, text = self.talk([SERIAL, "1", "2", "", "y", "", "", "n", "6"], cli)
         self.assertEqual(code, 0)
         self.assertEqual(cli.commands(), ["job inventory", "stick prepare", "stick import",
                                           "status --serial", "job remove", "stick prepare",
@@ -120,7 +124,7 @@ class Conversation(unittest.TestCase):
 
     def test_ford_only_menu_goes_straight_to_the_first_install(self):
         cli = FakeCli(self.tmp)
-        code, text = self.talk([SERIAL, "1", "1", "", "", "n", "5"], cli)
+        code, text = self.talk([SERIAL, "1", "1", "", "", "n", "6"], cli)
         self.assertEqual(cli.commands(), ["bootstrap prepare", "bootstrap finish"])
         self.assertNotIn("--apps-only", cli.calls[0])
         self.assertIn("Installer.jpg", text)
@@ -131,7 +135,7 @@ class Conversation(unittest.TestCase):
         updater.mkdir()
         (updater / "install.bin").write_bytes(b"the inventory nobody ran")
         (updater / "notes.txt").write_text("not ours")
-        code, text = self.talk([SERIAL, "1", "3", "", "", "", "n", "5"], cli)
+        code, text = self.talk([SERIAL, "1", "3", "", "", "", "n", "6"], cli)
         self.assertEqual(cli.commands(), ["job inventory", "stick prepare", "stick import",
                                           "bootstrap prepare", "bootstrap finish"])
         self.assertIn("did not touch the stick", text)
@@ -142,7 +146,7 @@ class Conversation(unittest.TestCase):
 
     def test_unclear_inventory_stops_instead_of_guessing(self):
         cli = FakeCli(self.tmp, inventory="processed-no-report")
-        code, text = self.talk([SERIAL, "1", "2", "", "5"], cli)
+        code, text = self.talk([SERIAL, "1", "2", "", "6"], cli)
         self.assertEqual(cli.commands(), ["job inventory", "stick prepare", "stick import"])
         self.assertIn("not clear why", text)
 
@@ -176,11 +180,64 @@ class Conversation(unittest.TestCase):
 
     def test_remove_picks_apps_by_number_and_confirms(self):
         cli = FakeCli(self.tmp, menu=("MirrorLink", "Navitel", "Reboot"))
-        code, _ = self.talk([SERIAL, "2", "", "3", "1, 2", "y", "y", "", "5"], cli)
+        code, _ = self.talk([SERIAL, "2", "", "3", "1, 2", "y", "y", "", "6"], cli)
         removes = [c for c in cli.calls if c[:2] == ["job", "remove"]]
         self.assertEqual(removes[0][2:], ["MirrorLink", "Navitel", "--purge", "--serial", SERIAL,
                                           "--dry-run"])
         self.assertEqual(removes[1][2:5], ["MirrorLink", "Navitel", "--purge"])
+
+    def test_improve_runs_the_three_jobs_in_order(self):
+        cli = FakeCli(self.tmp, menu=("AutoKit", "Total Commander", "Reboot"))
+        # serial, improve; no report yet, so an inventory trip first; then yes + stick back, three times
+        code, text = self.talk([SERIAL, "5", "", "", "", "y", "", "", "", "6"], cli)
+        self.assertEqual(code, 0)
+        jobs = [c[1:] for c in cli.calls if c[0] == "job"]
+        self.assertEqual([j[0] for j in jobs], ["inventory", "runner-guard", "autokit-config", "autokit-mic-gate"])
+        self.assertEqual(jobs[2][:3], ["autokit-config", "--screen", "640,384,10"])
+        self.assertEqual(cli.commands().count("stick import"), 4)
+        self.assertIn("That was all of them", text)
+        self.assertEqual(text.count("Restart SYNC: hold"), 3)  # none of the three runs with an app open
+
+    def test_improve_can_skip_a_step(self):
+        cli = FakeCli(self.tmp, menu=("AutoKit",))
+        self.talk([SERIAL, "5", "", "n", "n", "y", "", "6"], cli)
+        self.assertEqual([c[1] for c in cli.calls if c[0] == "job"], ["inventory", "autokit-mic-gate"])
+
+    def test_improve_stops_at_a_step_that_did_not_come_back(self):
+        cli = FakeCli(self.tmp, menu=("AutoKit",))
+        cli.fail = "runner-guard"
+        code, text = self.talk([SERIAL, "5", "", "y", "", "6"], cli)
+        self.assertEqual([c[1] for c in cli.calls if c[0] == "job"], ["inventory", "runner-guard"])
+        self.assertIn("did not come back as done", text)
+        self.assertNotIn("That was all of them", text)
+
+    def test_improve_does_not_call_an_unverified_step_done(self):
+        """The script ran to its end ("applied"), but the import's own check of the car failed."""
+        for kind, jobs in (("runner-guard", ["inventory", "runner-guard"]),
+                           ("autokit-mic-gate", ["inventory", "runner-guard", "autokit-config", "autokit-mic-gate"])):
+            with self.subTest(kind=kind):
+                self.said.clear()
+                shutil.rmtree(self.tmp / "home", ignore_errors=True)
+                cli = FakeCli(self.tmp, menu=("AutoKit",))
+                cli.unverified = kind
+                answers = [SERIAL, "5", ""] + ["y", ""] * (len(jobs) - 1) + ["6"]
+                code, text = self.talk(answers, cli)
+                self.assertEqual([c[1] for c in cli.calls if c[0] == "job"], jobs)
+                self.assertIn("did not come back as done", text)
+                self.assertEqual(text.count("Done: "), len(jobs) - 2)
+                self.assertNotIn("That was all of them", text)
+
+    def test_improve_needs_a_check_for_the_checked_jobs(self):
+        self.assertEqual(wizard.CHECKED, ("guard", "akmic"))
+        source = (ROOT / "s2am" / "cli.py").read_text()
+        self.assertEqual(source.count("_keep_check(store, record, _verify_guard("), 1)
+        self.assertEqual(source.count("_keep_check(store, record, _verify_mic_gate("), 1)
+
+    def test_improve_needs_autokit_on_the_car(self):
+        cli = FakeCli(self.tmp, menu=("Video Player", "Reboot"))
+        code, text = self.talk([SERIAL, "5", "", "6"], cli)
+        self.assertEqual([c[1] for c in cli.calls if c[0] == "job"], ["inventory"])
+        self.assertIn("Run the install first", text)
 
     def test_quit_anywhere(self):
         code, text = self.talk(["q"], FakeCli(self.tmp))

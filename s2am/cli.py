@@ -680,7 +680,7 @@ def cmd_stick_import(args) -> int:
                   if text.startswith("s2am native hello ok") and "|" in text else
                   "  NOT verified: hello.exe wrote nothing; native code may not run here")
         if record.get("kind") == "guard" and record["status"] == "applied":
-            print(f"  {_verify_guard(store, record)}")
+            print(f"  {_keep_check(store, record, _verify_guard(store, record))}")
         if record.get("kind") == "dec" and (record.get("params") or {}).get("neon_check") and report \
                 and not record.get("replayed"):
             print(f"  {_neon_summary(report / NEON_REPORT)}")
@@ -699,7 +699,7 @@ def cmd_stick_import(args) -> int:
             for text in neondiag.summary(report, record.get("params")):
                 print("  " + text)
         if record.get("kind") == "akmic" and report:
-            print("  " + _verify_mic_gate(report, record.get("params", {})))
+            print("  " + _keep_check(store, record, _verify_mic_gate(report, record.get("params", {}))))
         if record.get("kind") == "flash" and report:
             from . import flashtune
             for text in flashtune.summary(report, record.get("params", {})):
@@ -856,6 +856,15 @@ def _calm_acts(report: Path | None) -> bool:
     path = report / "guard-calm.txt" if report else None
     data = path.read_bytes() if path and path.is_file() else b""
     return len(data) < 16 and data.rstrip(_BLANK) == str(CALM_LEVEL).encode()
+
+
+def _keep_check(store: Store, record: dict, verdict: str) -> str:
+    """Store what the import's own check of the car's state found, next to the job: "applied" only
+    says the script ran to its end. The guided installer reads this before it says a step is done."""
+    check = {"ok": verdict.startswith("verified"), "text": verdict}
+    record["check"] = check
+    store.save_job(record["serial"], record["id"], {**store.job(record["serial"], record["id"]), "check": check})
+    return verdict
 
 
 def _verify_mic_gate(report: Path, params: dict) -> str:

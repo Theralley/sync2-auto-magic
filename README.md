@@ -204,8 +204,9 @@ run the same system, but nothing is guaranteed.
 
 ## Easiest: the guided installer
 
-**New here? Follow the [step-by-step install guide](docs/INSTALL.md).** It goes from an
-unopened adapter to CarPlay on the screen, in plain words.
+**New here? Follow the [step-by-step install guide](docs/INSTALL.md)** (also
+[in Swedish](docs/INSTALL.sv.md)). It goes from an unopened adapter to CarPlay on the screen,
+in plain words, with no Terminal needed.
 
 No terminal experience needed. It asks plain questions, checks your Mac and USB stick, builds
 everything, and tells you exactly what to do in the car, one trip at a time.
@@ -224,6 +225,8 @@ The installer offers:
 - **See what is on my SYNC.**
 - **Remove apps.**
 - **Help: SYNC is frozen.**
+- **Make CarPlay better (after the install).** The runner guard, a smaller and faster CarPlay
+  picture, and the car's microphone, one car visit each.
 
 If SyncExtPack (an upstream project) is missing, it offers to download it. Type `q` at any
 prompt to stop; nothing is lost.

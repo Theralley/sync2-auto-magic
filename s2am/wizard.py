@@ -28,6 +28,26 @@ SKIP_VOLUMES = {"Macintosh HD", "Recovery", "Preboot", "VM", "Update", "Data"}
 SERIAL_HELP = "8 characters, under Settings > General > About SYNC on the car"
 
 
+IMPROVE = "Make CarPlay better (after the install)"
+# (question, name of the trip, job arguments, what to say when it is done)
+IMPROVEMENTS = (
+    ("Stop the screen from freezing when you leave CarPlay (the runner guard)?",
+     "runner guard", ("runner-guard",),
+     "Done: leaving AutoKit with its Exit button now returns to SYNC in a few seconds."),
+    ("Make CarPlay faster with a smaller picture (it gets a black frame around it)?",
+     "smaller picture", ("autokit-config", "--screen", "640,384,10"),
+     "Done: CarPlay now draws 640x384 in the middle of the screen."),
+    ("Let Siri and phone calls use the car's microphone?",
+     "microphone", ("autokit-mic-gate",),
+     "Done: try Siri inside CarPlay. In calls the other side may hear an echo; that is a known problem."),
+)
+CHECKED = ("guard", "akmic")  # jobs whose import checks the car's state itself: "applied" is not enough
+# None of the three can run while an app from the Apps menu is open, and AutoKit's Exit only hides it.
+APPS_CLOSED = ("Restart SYNC: hold the power/volume knob and Seek-Up (next track) together for about "
+               "10 seconds, and wait until it is back. Do not open AutoKit or any other app from the "
+               "Apps menu.")
+
+
 class Quit(Exception):
     pass
 
@@ -225,8 +245,10 @@ class Wizard:
 
     # ---- one car trip with a job ------------------------------------------------------------
 
-    def job_trip(self, title: str, job_args: list[str], restarts: bool = False) -> dict | None:
-        """Build a job, put it on the stick, send the user to the car, read the report back."""
+    def job_trip(self, title: str, job_args: list[str], restarts: bool = False,
+                 first: list[str] = ()) -> dict | None:
+        """Build a job, put it on the stick, send the user to the car, read the report back.
+        ``first``: extra steps in the car before the stick goes in."""
         self.say(f"\nBuilding the {title} stick. This takes up to a minute (longer the first time).")
         code, output = self.cli("job", *job_args, "--serial", self.serial)
         match = re.search(r"^job (\S+): (.+install\.bin)$", output, re.M)
@@ -240,6 +262,7 @@ class Wizard:
             return None
         self.steps(f"In the car: {title}", [
             "Start the car and wait until SYNC has fully started.",
+            *first,
             "Insert the USB stick.",
             "Wait for \"Install successfully completed\"."
             + (" SYNC then restarts by itself; wait until it is back." if restarts else ""),
@@ -294,8 +317,9 @@ class Wizard:
         if self.yes("Check the result with one more short car trip (recommended)?"):
             self.inventory()
         self.say("\nDone. Plug the Carlinkit adapter into the car's USB port, connect the phone "
-                 "to it, and open i > Apps > AutoKit. If the screen freezes when you leave "
-                 "AutoKit, use the soft reset (menu item 4).")
+                 "to it, and open i > Apps > AutoKit. Leaving AutoKit can freeze the screen "
+                 f"until you have run \"{IMPROVE}\" from the menu; if it freezes, use the soft "
+                 "reset (\"Help: SYNC is frozen\").")
 
     def install_apps_only(self) -> None:
         menu = self.latest_menu()
@@ -362,6 +386,31 @@ class Wizard:
             "be there."])
         self.stick_back()
 
+    def improve(self) -> None:
+        """The three changes that make CarPlay usable day to day, one car trip each, in the order
+        that matters most first. Each is the same job the command line builds; a step that does
+        not come back as done stops the rest, so nothing is built on an unknown state."""
+        if not any(name.lower() == "autokit" for name in self.latest_menu()):
+            self.say("First I need to see that AutoKit is on SYNC.")
+            if self.inventory() != "present":
+                return
+            if not any(name.lower() == "autokit" for name in self.latest_menu()):
+                self.say("AutoKit is not in the Apps menu yet. Run the install first (menu item 1).")
+                return
+        for question, title, args, done in IMPROVEMENTS:
+            self.say("")
+            if not self.yes(question):
+                continue
+            record = self.job_trip(title, list(args), first=[APPS_CLOSED]) or {}
+            checked = record.get("kind") not in CHECKED or (record.get("check") or {}).get("ok") is True
+            if record.get("status") not in ("applied", "already-applied") or not checked:
+                self.say("That step did not come back as done (see the lines above), so I stop here. "
+                         "Nothing else was changed. Search docs/TROUBLESHOOTING.md for what you saw, "
+                         f"or choose \"{IMPROVE}\" again to retry.")
+                return
+            self.say(done)
+        self.say("\nThat was all of them. To put one back, see \"Undo\" in docs/INSTALL.md.")
+
     def remove(self) -> None:
         menu = self.latest_menu()
         if not menu:
@@ -410,6 +459,7 @@ class Wizard:
                      ("See what is on my SYNC", self.inventory),
                      ("Remove apps from SYNC", self.remove),
                      ("Help: SYNC is frozen", self.help),
+                     (IMPROVE, self.improve),
                      ("Quit", None)]
             while True:
                 index = self.choose("What do you want to do?", [t[0] for t in tasks])
