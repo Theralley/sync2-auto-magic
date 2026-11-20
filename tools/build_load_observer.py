@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 
@@ -16,10 +17,26 @@ SOURCES=("s2amload.c","load_observer_protocol.h")
 BINARY="S2AMLOAD.EXE"
 
 
+def checked_read(path):
+    flags=os.O_RDONLY|os.O_NONBLOCK|getattr(os,"O_NOFOLLOW",0)
+    fd=os.open(path,flags)
+    try:
+        before=os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode) or before.st_size>1024*1024:
+            raise ValueError("invalid build input/artifact")
+        with os.fdopen(fd,"rb",closefd=False) as stream:
+            body=stream.read(1024*1024+1)
+        after=os.fstat(fd)
+        if (len(body)!=before.st_size or len(body)>1024*1024 or
+                (before.st_size,before.st_mtime_ns)!=(after.st_size,after.st_mtime_ns)):
+            raise ValueError("build input/artifact changed during read")
+        return body
+    finally:
+        os.close(fd)
+
+
 def sha(p):
-    if p.is_symlink() or not p.is_file() or p.stat().st_size>1024*1024:
-        raise ValueError("invalid build input/artifact")
-    return hashlib.sha256(p.read_bytes()).hexdigest()
+    return hashlib.sha256(checked_read(p)).hexdigest()
 
 
 def write_json(path,data):
@@ -54,7 +71,7 @@ def build(sources,out):
                 subprocess.run([*docker,*command],env=container.docker_env(),stdout=log,
                                stderr=subprocess.STDOUT,check=True,timeout=120)
         frozen()
-        body=(out/BINARY).read_bytes(); native.check(body,BINARY)
+        body=checked_read(out/BINARY); native.check(body,BINARY)
         binaries={BINARY:sha(out/BINARY)}
         if hashlib.sha256(body).hexdigest()!=binaries[BINARY]:
             raise ValueError("executable changed during validation")

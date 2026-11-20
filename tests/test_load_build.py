@@ -55,3 +55,23 @@ class Build(unittest.TestCase):
             self.assertEqual(json.loads((out/"result.json").read_text())["state"],"failed")
             self.assertTrue((out/"dispatch.json").exists())
             self.assertFalse((out/"manifest.json").exists())
+
+    def test_oversized_compiler_output_is_rejected_before_pe_parser(self):
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d); source=p/"source"; source.mkdir()
+            for name in build.SOURCES:
+                (source/name).write_text("fixture")
+            out=p/"out"
+            def run(cmd,**kw):
+                if "arm-mingw32ce-gcc" in cmd:
+                    (out/"S2AMLOAD.EXE").write_bytes(b"x"*(1024*1024+1))
+            with mock.patch.object(build.sys,"platform","linux"), \
+                 mock.patch.object(build.socket,"gethostname",return_value="ant-srv-001"), \
+                 mock.patch.object(build.container,"docker",return_value=["docker"]), \
+                 mock.patch.object(build.subprocess,"run",side_effect=run), \
+                 mock.patch.object(build.native,"check") as check:
+                with self.assertRaises(ValueError):
+                    build.build(source,out)
+                self.assertEqual(check.call_count,0)
+            self.assertEqual(json.loads((out/"result.json").read_text())["state"],"failed")
+            self.assertFalse((out/"manifest.json").exists())
