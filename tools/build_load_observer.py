@@ -53,11 +53,13 @@ def build(sources,out,*,github_actions=False):
                 env.get("GITHUB_REF")!="refs/heads/build/raw-load-20261120" or
                 env.get("GITHUB_EVENT_NAME") not in ("push","workflow_dispatch") or
                 not re.fullmatch(r"[0-9a-f]{40}",env.get("GITHUB_SHA","")) or
-                not re.fullmatch(r"[1-9][0-9]*",env.get("GITHUB_RUN_ID",""))):
+                not re.fullmatch(r"[1-9][0-9]*",env.get("GITHUB_RUN_ID","")) or
+                not re.fullmatch(r"[1-9][0-9]*",env.get("GITHUB_RUN_ATTEMPT",""))):
             raise RuntimeError("Actions requires the explicit owned Linux build-branch context")
         location={"build_host":"github-actions","ci":{
             "repository":env["GITHUB_REPOSITORY"],"ref":env["GITHUB_REF"],
-            "sha":env["GITHUB_SHA"],"run_id":env["GITHUB_RUN_ID"]}}
+            "sha":env["GITHUB_SHA"],"run_id":env["GITHUB_RUN_ID"],
+            "run_attempt":env["GITHUB_RUN_ATTEMPT"]}}
     else:
         if sys.platform!="linux" or socket.gethostname().split(".")[0]!="ant-srv-001":
             raise RuntimeError("CE builds require ant-srv-001 or explicit GitHub Actions; no Mac fallback")
