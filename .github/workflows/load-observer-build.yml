@@ -1,0 +1,37 @@
+name: Build raw load observer (no deploy)
+
+on:
+  push:
+    branches: [build/raw-load-20261120]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: raw-load-observer-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'Theralley/sync2-auto-magic' && github.ref == 'refs/heads/build/raw-load-20261120'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Focused observer tests
+        run: python3 -m unittest tests.test_load_native tests.test_load_observer tests.test_load_build tests.test_load_report
+      - name: Compile isolated CE ARM observer
+        run: |
+          mkdir -p build
+          python3 tools/build_load_observer.py --github-actions --sources s2am/native --out build/actions-load
+      - name: Preserve artifact and build receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: raw-load-observer-${{ github.sha }}
+          path: build/actions-load/
+          if-no-files-found: warn
+          retention-days: 14

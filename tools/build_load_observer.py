@@ -1,8 +1,9 @@
-"""Build only S2AMLOAD on ant-srv-001, with frozen sources and durable receipts."""
+"""Build only S2AMLOAD on ant-srv-001 or an explicit own-branch Actions run."""
 import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import socket
@@ -44,15 +45,29 @@ def write_json(path,data):
         json.dump(data,f,indent=2); f.write("\n"); f.flush(); os.fsync(f.fileno())
 
 
-def build(sources,out):
-    if sys.platform!="linux" or socket.gethostname().split(".")[0]!="ant-srv-001":
-        raise RuntimeError("CE builds run only on ant-srv-001; no Mac fallback")
+def build(sources,out,*,github_actions=False):
+    if github_actions:
+        env=os.environ
+        if (sys.platform!="linux" or env.get("GITHUB_ACTIONS")!="true" or
+                env.get("GITHUB_REPOSITORY")!="Theralley/sync2-auto-magic" or
+                env.get("GITHUB_REF")!="refs/heads/build/raw-load-20261120" or
+                env.get("GITHUB_EVENT_NAME") not in ("push","workflow_dispatch") or
+                not re.fullmatch(r"[0-9a-f]{40}",env.get("GITHUB_SHA","")) or
+                not re.fullmatch(r"[1-9][0-9]*",env.get("GITHUB_RUN_ID",""))):
+            raise RuntimeError("Actions requires the explicit owned Linux build-branch context")
+        location={"build_host":"github-actions","ci":{
+            "repository":env["GITHUB_REPOSITORY"],"ref":env["GITHUB_REF"],
+            "sha":env["GITHUB_SHA"],"run_id":env["GITHUB_RUN_ID"]}}
+    else:
+        if sys.platform!="linux" or socket.gethostname().split(".")[0]!="ant-srv-001":
+            raise RuntimeError("CE builds require ant-srv-001 or explicit GitHub Actions; no Mac fallback")
+        location={"build_host":"ant-srv-001"}
     sources,out=Path(sources).resolve(),Path(out).resolve()
     out.mkdir(mode=0o700,exist_ok=False)
     for name in SOURCES:
         sha(sources/name); shutil.copyfile(sources/name,out/name)
     hashes={name:sha(out/name) for name in SOURCES}
-    identity={"build_host":"ant-srv-001","sources":hashes,"image":native.IMAGE,
+    identity={**location,"sources":hashes,"image":native.IMAGE,
               "flags":list(native.CFLAGS)}
     write_json(out/"dispatch.json",{"state":"dispatched",**identity})
     result={"state":"failed",**identity}
@@ -97,5 +112,6 @@ if __name__=="__main__":
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument("--sources",required=True,type=Path)
     p.add_argument("--out",required=True,type=Path)
+    p.add_argument("--github-actions",action="store_true",help="require exact owned Actions build-branch context")
     a=p.parse_args()
-    print(json.dumps(build(a.sources,a.out)))
+    print(json.dumps(build(a.sources,a.out,github_actions=a.github_actions)))

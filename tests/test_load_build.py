@@ -86,3 +86,42 @@ class Build(unittest.TestCase):
             for target in (link,fifo,p):
                 with self.subTest(target=target.name),self.assertRaises((OSError,ValueError)):
                     build.checked_read(target)
+
+    def test_explicit_actions_route_requires_own_build_branch(self):
+        good={"GITHUB_ACTIONS":"true","GITHUB_REPOSITORY":"Theralley/sync2-auto-magic",
+              "GITHUB_REF":"refs/heads/build/raw-load-20261120","GITHUB_EVENT_NAME":"push",
+              "GITHUB_SHA":"a"*40,"GITHUB_RUN_ID":"123"}
+        with tempfile.TemporaryDirectory() as d:
+            source=Path(d)/"source";source.mkdir()
+            for name in build.SOURCES: (source/name).write_text("fixture")
+            out=Path(d)/"out"
+            def run(cmd,**kw):
+                if "arm-mingw32ce-gcc" in cmd: (out/"S2AMLOAD.EXE").write_bytes(b"synthetic executable")
+                if "arm-mingw32ce-objdump" in cmd: kw["stdout"].write(b"synthetic disassembly")
+            with mock.patch.object(build.sys,"platform","linux"), \
+                 mock.patch.object(build.socket,"gethostname",return_value="github-runner"), \
+                 mock.patch.dict(build.os.environ,good,clear=True), \
+                 mock.patch.object(build.container,"docker",return_value=["docker"]), \
+                 mock.patch.object(build.subprocess,"run",side_effect=run), \
+                 mock.patch.object(build.native,"check"):
+                result=build.build(source,out,github_actions=True)
+            self.assertEqual(result["build_host"],"github-actions")
+            self.assertEqual(result["ci"]["sha"],"a"*40)
+
+    def test_actions_route_refuses_wrong_repo_main_and_nonlinux(self):
+        good={"GITHUB_ACTIONS":"true","GITHUB_REPOSITORY":"Theralley/sync2-auto-magic",
+              "GITHUB_REF":"refs/heads/build/raw-load-20261120","GITHUB_EVENT_NAME":"push",
+              "GITHUB_SHA":"a"*40,"GITHUB_RUN_ID":"123"}
+        variants=[("linux",{"GITHUB_REPOSITORY":"vendor/other"}),
+                  ("linux",{"GITHUB_REF":"refs/heads/main"}),
+                  ("linux",{"GITHUB_ACTIONS":"false"}),
+                  ("linux",{"GITHUB_EVENT_NAME":"pull_request"}),
+                  ("darwin",{})]
+        for platform,change in variants:
+            with self.subTest(platform=platform,change=change),tempfile.TemporaryDirectory() as d, \
+                 mock.patch.object(build.sys,"platform",platform), \
+                 mock.patch.object(build.socket,"gethostname",return_value="github-runner"), \
+                 mock.patch.dict(build.os.environ,{**good,**change},clear=True):
+                out=Path(d)/"out"
+                with self.assertRaises(RuntimeError): build.build(Path(d),out,github_actions=True)
+                self.assertFalse(out.exists())
