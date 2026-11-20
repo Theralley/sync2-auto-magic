@@ -207,6 +207,26 @@ class Native(unittest.TestCase):
         self.assertIn(b"Auto?Kit.exe",b)
         self.assertNotIn(b"private",b)
 
+    def test_real_producer_outputs_match_strict_host_parser(self):
+        from s2am.load_observer import analyze
+        modes=("ok","shortwrite","openfail","readfail","zerocreation","partial",
+               "snapshotfail","noidle","truncated","processcap","processexact",
+               "threadexact","zeroenum","processzeroenum","wide","tickwrap","sanitize")
+        for mode in modes:
+            with self.subTest(mode=mode):
+                p,f=self.run_case(mode)
+                self.assertEqual(p.returncode,0,p.stderr)
+                r=analyze((f/"LOAD.CSV").read_bytes())
+                self.assertEqual(len(r["rounds"]),60)
+                self.assertFalse(r["qualified"] or r["cpu_rate_qualified"] or r["write_authorized"])
+                self.assertEqual(r["rounds"][0]["self"]["creation"],107)
+                self.assertGreater(r["rounds"][0]["self"]["kernel"],1<<32 if mode=="wide" else (1<<32)-1)
+                if mode=="openfail": self.assertEqual(r["partial"]["open_fail"],60)
+                if mode=="readfail": self.assertEqual(r["partial"]["times_fail"],60)
+                if mode=="zerocreation": self.assertEqual(r["partial"]["no_creation"],60)
+                if mode=="truncated": self.assertEqual(r["partial"]["thread_truncated_rounds"],60)
+                if mode=="processcap": self.assertEqual(r["partial"]["process_truncated_rounds"],60)
+
 
 if __name__ == "__main__":
     unittest.main()
