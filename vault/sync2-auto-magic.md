@@ -1,5 +1,16 @@
 # SYNC 2 clock investigation
-Two native decoder inspections found stock active DLLs; a corrected swap awaits car testing, and a reviewed read-only clock-driver prototype awaits USB integration and car validation.
+Both manual timing captures returned; no physical CPU-rate measurement or overclock is qualified.
+
+## Current evidence boundary, November 20
+
+V1 and V2 are archived. They show historical loop throughput, not live physical MHz.
+Separate register configuration implies 600 MHz only with a 24 MHz reference; it was
+not captured simultaneously with V2. The fitted ordering code, supported live CPU-rate
+channel and APIM-CPU-independent recovery remain unverified. Do not start a clock writer
+or another identical USB test. See [[clock-evidence-boundary-2026-11-20]] for checked
+sources, exact evidence identities and the documentary acceptance gates.
+
+Older preparation and pending-return entries below are historical, not current launch instructions.
 
 ## Latest verified results and source publication, November 16
 
