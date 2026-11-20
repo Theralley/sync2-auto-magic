@@ -22,7 +22,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Focused observer tests
-        run: python3 -m unittest tests.test_load_native tests.test_load_observer tests.test_load_build tests.test_load_report
+        run: python3 -m unittest tests.test_load_native tests.test_load_observer tests.test_load_build tests.test_load_report tests.test_load_ctl_pure tests.test_load_lifecycle
       - name: Compile isolated CE ARM observer
         run: |
           mkdir -p build

@@ -23,7 +23,7 @@ class Build(unittest.TestCase):
             out=p/"out"
             def run(cmd,**kw):
                 if "arm-mingw32ce-gcc" in cmd:
-                    (out/"S2AMLOAD.EXE").write_bytes(b"synthetic executable")
+                    (out/cmd[cmd.index("-o")+1]).write_bytes(b"synthetic executable")
                 if "arm-mingw32ce-objdump" in cmd:
                     kw["stdout"].write(b"synthetic disassembly")
             with mock.patch.object(build.sys,"platform","linux"), \
@@ -35,7 +35,7 @@ class Build(unittest.TestCase):
             result=json.loads((out/"result.json").read_text())
             self.assertEqual(result["state"],"complete")
             self.assertIn("S2AMLOAD.EXE",result["binaries"])
-            self.assertEqual(len(result["sources"]),2)
+            self.assertEqual(len(result["sources"]),4)
             for args in call.call_args_list:
                 self.assertIn("--network",args.args[0])
                 self.assertIn("none",args.args[0])
@@ -96,7 +96,7 @@ class Build(unittest.TestCase):
             for name in build.SOURCES: (source/name).write_text("fixture")
             out=Path(d)/"out"
             def run(cmd,**kw):
-                if "arm-mingw32ce-gcc" in cmd: (out/"S2AMLOAD.EXE").write_bytes(b"synthetic executable")
+                if "arm-mingw32ce-gcc" in cmd: (out/cmd[cmd.index("-o")+1]).write_bytes(b"synthetic executable")
                 if "arm-mingw32ce-objdump" in cmd: kw["stdout"].write(b"synthetic disassembly")
             with mock.patch.object(build.sys,"platform","linux"), \
                  mock.patch.object(build.socket,"gethostname",return_value="github-runner"), \
@@ -127,3 +127,28 @@ class Build(unittest.TestCase):
                 out=Path(d)/"out"
                 with self.assertRaises(RuntimeError): build.build(Path(d),out,github_actions=True)
                 self.assertFalse(out.exists())
+
+    def test_controller_compilation_is_bound_to_new_payload(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d); source=p/"source"; source.mkdir()
+            for name in build.SOURCES: (source/name).write_text("fixture "+name)
+            out=p/"out"; commands=[]
+            def run(cmd,**kw):
+                commands.append(cmd)
+                if "arm-mingw32ce-gcc" in cmd:
+                    name=cmd[cmd.index("-o")+1]
+                    (out/name).write_bytes(b"synthetic "+name.encode())
+                if "arm-mingw32ce-objdump" in cmd: kw["stdout"].write(b"synthetic disassembly")
+            with mock.patch.object(build.sys,"platform","linux"), \
+                 mock.patch.object(build.socket,"gethostname",return_value="ant-srv-001"), \
+                 mock.patch.object(build.container,"docker",return_value=["docker"]), \
+                 mock.patch.object(build.subprocess,"run",side_effect=run), \
+                 mock.patch.object(build.native,"check"):
+                result=build.build(source,out)
+            expected=hashlib.sha256(b"synthetic S2AMLOAD.EXE").hexdigest()
+            self.assertEqual(set(result["binaries"]),{"S2AMLOAD.EXE","S2AMCTL.EXE"})
+            ctl=next(cmd for cmd in commands if "s2amloadctl.c" in cmd)
+            self.assertIn('-DLOAD_EXPECTED_SHA256="'+expected+'"',ctl)
+            self.assertIn('-DLOAD_EXPECTED_SIZE=22',ctl)
+            self.assertEqual(result["payload_binding"]["sha256"],expected)

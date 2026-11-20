@@ -14,8 +14,9 @@ import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from s2am import container, native
 
-SOURCES=("s2amload.c","load_observer_protocol.h")
+SOURCES=("s2amload.c","load_observer_protocol.h","s2amloadctl.c","load_sha256.h")
 BINARY="S2AMLOAD.EXE"
+CONTROLLER="S2AMCTL.EXE"
 
 
 def checked_read(path):
@@ -81,27 +82,34 @@ def build(sources,out,*,github_actions=False):
             "--cap-drop=ALL","--security-opt=no-new-privileges","--pids-limit=64","--memory=512m",
             "-u",f"{os.getuid()}:{os.getgid()}","-e","HOME=/tmp","-v",f"{out}:/work",
             "-w","/work",native.IMAGE]
+        binaries,sizes={},{}
         with (out/"build.log").open("xb") as log:
-            for command in (["arm-mingw32ce-gcc",*native.CFLAGS,"-o",BINARY,"s2amload.c"],
-                            ["arm-mingw32ce-strip",BINARY]):
+            for name,source,disassembly in ((BINARY,"s2amload.c","disassembly.txt"),
+                    (CONTROLLER,"s2amloadctl.c","controller-disassembly.txt")):
+                defines=[]
+                if name==CONTROLLER:
+                    defines=[f'-DLOAD_EXPECTED_SHA256="{binaries[BINARY]}"',
+                             f'-DLOAD_EXPECTED_SIZE={sizes[BINARY]}']
+                for command in (["arm-mingw32ce-gcc",*native.CFLAGS,*defines,"-o",name,source],
+                                ["arm-mingw32ce-strip",name]):
+                    frozen()
+                    subprocess.run([*docker,*command],env=container.docker_env(),stdout=log,
+                                   stderr=subprocess.STDOUT,check=True,timeout=120)
                 frozen()
-                subprocess.run([*docker,*command],env=container.docker_env(),stdout=log,
-                               stderr=subprocess.STDOUT,check=True,timeout=120)
+                body=checked_read(out/name); native.check(body,name)
+                binaries[name]=hashlib.sha256(body).hexdigest();sizes[name]=len(body)
+                if sha(out/name)!=binaries[name]:
+                    raise ValueError("executable changed during validation")
+                with (out/disassembly).open("xb") as disasm:
+                    subprocess.run([*docker,"arm-mingw32ce-objdump","-d",name],
+                                   env=container.docker_env(),stdout=disasm,stderr=subprocess.PIPE,
+                                   check=True,timeout=120)
         frozen()
-        body=checked_read(out/BINARY); native.check(body,BINARY)
-        binaries={BINARY:sha(out/BINARY)}
-        if hashlib.sha256(body).hexdigest()!=binaries[BINARY]:
-            raise ValueError("executable changed during validation")
-        with (out/"disassembly.txt").open("xb") as disasm:
-            subprocess.run([*docker,"arm-mingw32ce-objdump","-d",BINARY],
-                           env=container.docker_env(),stdout=disasm,stderr=subprocess.PIPE,
-                           check=True,timeout=120)
-        frozen()
-        if sha(out/BINARY)!=binaries[BINARY]:
+        if any(sha(out/name)!=digest for name,digest in binaries.items()):
             raise ValueError("executable changed before publication")
-        result={"state":"complete",**identity,"binaries":binaries,
-                "sizes":{BINARY:len(body)}}
-        write_json(out/"manifest.json",{"format":"s2am-load-artifacts-v1",**result})
+        result={"state":"complete",**identity,"binaries":binaries,"sizes":sizes,
+                "payload_binding":{"sha256":binaries[BINARY],"bytes":sizes[BINARY]}}
+        write_json(out/"manifest.json",{"format":"s2am-load-artifacts-v2",**result})
     except Exception as error:
         result["error"]=type(error).__name__
         raise
