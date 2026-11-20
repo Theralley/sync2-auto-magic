@@ -702,8 +702,10 @@ def cmd_stick_import(args) -> int:
             print("  " + _keep_check(store, record, _verify_mic_gate(report, record.get("params", {}))))
         if record.get("kind") == "flash" and report:
             from . import flashtune
-            for text in flashtune.summary(report, record.get("params", {})):
+            lines = flashtune.summary(report, record.get("params", {}))
+            for text in lines:
                 print("  " + text)
+            _keep_check(store, record, next((x for x in lines if x.startswith("verified")), lines[-1]))
         if record.get("kind") == "mic" and record["status"] == "applied" and report:
             from . import micprobe
             for text in micprobe.summary(report):

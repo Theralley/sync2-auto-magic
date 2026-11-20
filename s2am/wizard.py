@@ -29,19 +29,28 @@ SERIAL_HELP = "8 characters, under Settings > General > About SYNC on the car"
 
 
 IMPROVE = "Make CarPlay better (after the install)"
-# (question, name of the trip, job arguments, what to say when it is done)
+FLASH_PRIORITY = 253  # below AutoKit's video thread (252); measured in the car on 2026-11-20
+# (question, name of the trip, job arguments, what to say when it is done, the answer Enter gives)
 IMPROVEMENTS = (
     ("Stop the screen from freezing when you leave CarPlay (the runner guard)?",
      "runner guard", ("runner-guard",),
-     "Done: leaving AutoKit with its Exit button now returns to SYNC in a few seconds."),
+     "Done: leaving AutoKit with its Exit button now returns to SYNC in a few seconds.", True),
     ("Make CarPlay faster with a smaller picture (it gets a black frame around it)?",
      "smaller picture", ("autokit-config", "--screen", "640,384,10"),
-     "Done: CarPlay now draws 640x384 in the middle of the screen."),
+     "Done: CarPlay now draws 640x384 in the middle of the screen.", True),
     ("Let Siri and phone calls use the car's microphone?",
      "microphone", ("autokit-mic-gate",),
-     "Done: try Siri inside CarPlay. In calls the other side may hear an echo; that is a known problem."),
+     "Done: try Siri inside CarPlay. In calls the other side may hear an echo; that is a known problem.", True),
+    # Tried in one car for one day (2026-11-20), and it also slows Ford's own screens under load, so
+    # Enter answers no: the owner has to choose it.
+    ("Make CarPlay much smoother by letting it go before Ford's own screens? Ford's screens, "
+     "including the parking-sensor and camera pictures, may then react more slowly while CarPlay "
+     "is busy. Tried in one car so far; it can be undone.",
+     "CarPlay first", ("flash-tune", "--prio", str(FLASH_PRIORITY), "--fast-prio", str(FLASH_PRIORITY)),
+     "Done, but not active yet: restart SYNC once more (the knob and Seek-Up for 10 seconds). After "
+     "that CarPlay goes before Ford's screens. To undo: python3 -m s2am job flash-tune --undo --serial {serial}", False),
 )
-CHECKED = ("guard", "akmic")  # jobs whose import checks the car's state itself: "applied" is not enough
+CHECKED = ("guard", "akmic", "flash")  # jobs whose import checks the car's state itself: "applied" is not enough
 # None of the three can run while an app from the Apps menu is open, and AutoKit's Exit only hides it.
 APPS_CLOSED = ("Restart SYNC: hold the power/volume knob and Seek-Up (next track) together for about "
                "10 seconds, and wait until it is back. Do not open AutoKit or any other app from the "
@@ -387,7 +396,7 @@ class Wizard:
         self.stick_back()
 
     def improve(self) -> None:
-        """The three changes that make CarPlay usable day to day, one car trip each, in the order
+        """The changes that make CarPlay usable day to day, one car trip each, in the order
         that matters most first. Each is the same job the command line builds; a step that does
         not come back as done stops the rest, so nothing is built on an unknown state."""
         if not any(name.lower() == "autokit" for name in self.latest_menu()):
@@ -397,9 +406,9 @@ class Wizard:
             if not any(name.lower() == "autokit" for name in self.latest_menu()):
                 self.say("AutoKit is not in the Apps menu yet. Run the install first (menu item 1).")
                 return
-        for question, title, args, done in IMPROVEMENTS:
+        for question, title, args, done, default in IMPROVEMENTS:
             self.say("")
-            if not self.yes(question):
+            if not self.yes(question, default):
                 continue
             record = self.job_trip(title, list(args), first=[APPS_CLOSED]) or {}
             checked = record.get("kind") not in CHECKED or (record.get("check") or {}).get("ok") is True
@@ -408,7 +417,7 @@ class Wizard:
                          "Nothing else was changed. Search docs/TROUBLESHOOTING.md for what you saw, "
                          f"or choose \"{IMPROVE}\" again to retry.")
                 return
-            self.say(done)
+            self.say(done.replace("{serial}", self.serial))
         self.say("\nThat was all of them. To put one back, see \"Undo\" in docs/INSTALL.md.")
 
     def remove(self) -> None:

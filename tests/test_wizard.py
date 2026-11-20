@@ -49,7 +49,7 @@ class FakeCli:
                 (report / "SyncApps.xml").write_bytes(apps.render_menu(
                     [(n, n.replace(" ", "") + "Plugin", "") for n in self.menu]))
                 store.save_report(SERIAL, job_id, report)
-            short = {"runner-guard": "guard", "autokit-mic-gate": "akmic"}.get(kind, kind)
+            short = {"runner-guard": "guard", "autokit-mic-gate": "akmic", "flash-tune": "flash"}.get(kind, kind)
             check = {"check": {"ok": kind != self.unverified, "text": "x"}} if short in wizard.CHECKED else {}
             store.save_job(SERIAL, job_id, {"id": job_id, "serial": SERIAL, "kind": short, **check,
                                             "status": status,
@@ -189,7 +189,7 @@ class Conversation(unittest.TestCase):
     def test_improve_runs_the_three_jobs_in_order(self):
         cli = FakeCli(self.tmp, menu=("AutoKit", "Total Commander", "Reboot"))
         # serial, improve; no report yet, so an inventory trip first; then yes + stick back, three times
-        code, text = self.talk([SERIAL, "5", "", "", "", "y", "", "", "", "6"], cli)
+        code, text = self.talk([SERIAL, "5", "", "", "", "y", "", "", "", "", "6"], cli)  # Enter skips the last
         self.assertEqual(code, 0)
         jobs = [c[1:] for c in cli.calls if c[0] == "job"]
         self.assertEqual([j[0] for j in jobs], ["inventory", "runner-guard", "autokit-config", "autokit-mic-gate"])
@@ -200,7 +200,7 @@ class Conversation(unittest.TestCase):
 
     def test_improve_can_skip_a_step(self):
         cli = FakeCli(self.tmp, menu=("AutoKit",))
-        self.talk([SERIAL, "5", "", "n", "n", "y", "", "6"], cli)
+        self.talk([SERIAL, "5", "", "n", "n", "y", "", "n", "6"], cli)
         self.assertEqual([c[1] for c in cli.calls if c[0] == "job"], ["inventory", "autokit-mic-gate"])
 
     def test_improve_stops_at_a_step_that_did_not_come_back(self):
@@ -220,7 +220,7 @@ class Conversation(unittest.TestCase):
                 shutil.rmtree(self.tmp / "home", ignore_errors=True)
                 cli = FakeCli(self.tmp, menu=("AutoKit",))
                 cli.unverified = kind
-                answers = [SERIAL, "5", ""] + ["y", ""] * (len(jobs) - 1) + ["6"]
+                answers = [SERIAL, "5", ""] + ["y", ""] * (len(jobs) - 1) + ["6"]  # it stops before the rest
                 code, text = self.talk(answers, cli)
                 self.assertEqual([c[1] for c in cli.calls if c[0] == "job"], jobs)
                 self.assertIn("did not come back as done", text)
@@ -228,10 +228,32 @@ class Conversation(unittest.TestCase):
                 self.assertNotIn("That was all of them", text)
 
     def test_improve_needs_a_check_for_the_checked_jobs(self):
-        self.assertEqual(wizard.CHECKED, ("guard", "akmic"))
         source = (ROOT / "s2am" / "cli.py").read_text()
+        self.assertEqual(wizard.CHECKED, ("guard", "akmic", "flash"))
+        self.assertEqual(source.count("_keep_check(store, record, next((x for x in lines"), 1)
         self.assertEqual(source.count("_keep_check(store, record, _verify_guard("), 1)
         self.assertEqual(source.count("_keep_check(store, record, _verify_mic_gate("), 1)
+
+    def test_carplay_first_is_only_done_when_chosen_and_checked(self):
+        cli = FakeCli(self.tmp, menu=("AutoKit",))
+        code, text = self.talk([SERIAL, "5", "", "n", "n", "n", "y", "", "6"], cli)
+        jobs = [c[1:] for c in cli.calls if c[0] == "job"]
+        self.assertEqual(jobs[1][:5], ["flash-tune", "--prio", "253", "--fast-prio", "253"])
+        self.assertIn("not active yet: restart SYNC once more", text)
+        self.assertIn(f"flash-tune --undo --serial {SERIAL}", text)  # a command that runs as shown
+        self.assertNotIn("{serial}", text)
+        self.assertIn("Tried in one car so far", text)
+        self.said.clear()
+        shutil.rmtree(self.tmp / "home", ignore_errors=True)
+        cli = FakeCli(self.tmp, menu=("AutoKit",))
+        cli.unverified = "flash-tune"
+        code, text = self.talk([SERIAL, "5", "", "n", "n", "n", "y", "", "6"], cli)
+        self.assertIn("did not come back as done", text)
+        self.assertNotIn("not active yet", text)
+
+    def test_carplay_first_stays_inside_the_tools_limits(self):
+        from s2am import flashtune
+        flashtune.check({"ThreadPrio256": wizard.FLASH_PRIORITY, "FastThreadPrio256": wizard.FLASH_PRIORITY})
 
     def test_improve_needs_autokit_on_the_car(self):
         cli = FakeCli(self.tmp, menu=("Video Player", "Reboot"))

@@ -47,10 +47,10 @@ Everything in this list has run in a real car, not just on a desk.
 
 This is an honest project, so here is the other half.
 
-- **It is slow.** SYNC 2's 600 MHz processor decodes CarPlay's video in software and sits near
-  100%. A smaller picture (640×384) helps a lot; a faster decoder, a lower priority for Ford's
-  own screen program (`flash-tune`) and processor-clock research are in progress:
-  [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+- **It is not fast.** SYNC 2's 600 MHz processor decodes CarPlay's video in software and sits
+  near 100%. A smaller picture (640×384) and letting CarPlay go before Ford's own screen program
+  (`flash-tune`) make it much smoother; a faster decoder and processor-clock research are in
+  progress: [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 - **Calls work, but the other side hears an echo** and choppy sound.
 - **Android Auto** uses the same adapter and is not tried yet.
 - **One car so far.** It is tested on one 2016 Mondeo. Reports from other SYNC 2 cars are very
@@ -72,10 +72,11 @@ put CarPlay in your Ford, or you just enjoy watching a 2013 head unit learn new 
 
 ## Latest news
 
-- **20 November 2026:** first tagged version,
-  [v0.1.0 (pre-release)](https://github.com/Theralley/sync2-auto-magic/releases/tag/v0.1.0).
-- **20 November 2026:** `flash-tune` lowers the priority of Ford's screen program so CarPlay
-  gets more of the processor. Written and verified on the car; its effect is being measured.
+- **20 November 2026, v0.1.1: much smoother CarPlay.** Ford's own screen program now waits
+  for CarPlay instead of the other way round (`flash-tune`, also in the guided installer as
+  "CarPlay first"). Same processor, very different feel:
+  [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+- **20 November 2026:** first tagged version, v0.1.0.
 - **19 November 2026:** the microphone works over CarPlay (`s2am job autokit-mic-gate`). Siri
   hears you and calls connect.
 - **16 November 2026:** decoder and clock research, with the measurements behind them:
@@ -166,7 +167,7 @@ run the same system, but nothing is guaranteed.
 | A smaller CarPlay picture to lower the load (`autokit-config --screen 640,384,10`) | **Works in the car** (2026-11-15): the processor is no longer full all the time and CarPlay feels much faster; the picture sits in the middle with a black frame. The car is left on this setting |
 | Faster video decoder files for AutoKit, our own FFmpeg build (`s2am job decoder`, with its undo stick) | About 20% fewer emulated instructions with matching test pictures; **no measured car speed gain yet**. Both inspections found stock DLLs; the corrected installation awaits its first car test. The binaries are not in this repository ([next tests](docs/PERFORMANCE.md#next-useful-tests-november-16)) |
 | The car's microphone for Siri and calls (`s2am job autokit-mic-gate`, undo with `autokit-patched`) | **Works in the car** (2026-11-19). Call quality for the other side is not good yet: echo, choppy, late ([TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)) |
-| Less processor time for Ford's own screen program (`s2am job flash-tune`, undo with `--undo`) | **Written and verified on the car** (2026-11-19, priority 253); the effect on CarPlay is not measured yet ([docs/PERFORMANCE.md](docs/PERFORMANCE.md)) |
+| CarPlay before Ford's own screen program (`s2am job flash-tune --prio 253 --fast-prio 253`, undo with `--undo`) | **Works in the car** (2026-11-20): CarPlay is much smoother after a SYNC restart. One car, one day; the parking pop-up and a camera at this setting are unchecked ([docs/PERFORMANCE.md](docs/PERFORMANCE.md)) |
 | More CPU time for foreground CarPlay (`runner-guard --boost 250 --measure`) | Guarded priority comparison prepared in source, **not yet tested in the car**. Priority restoration and actual sampling gaps must be checked ([plan](docs/PROGRESS-2026-11-16.md#goal-2-give-foreground-carplay-more-processor-time)) |
 | A higher processor clock (overclocking) | **Active research; no validated CPU transition yet.** The standalone clock reader failed with mapping error 87. A separate read-only driver prototype has passed host tests and a server build; independent review completed; USB integration and car activation remain pending ([clock goals](docs/PROGRESS-2026-11-16.md#goal-3-a-controlled-overclock-experiment)) |
 | Independently inspect a decoder attempt (`s2am job decoder-inspect --target JOB_ID`) | **File collection worked in the car on November 16.** Active/backup/staged DLLs were verified; the separate clock child failed explicitly. A second inspection confirmed the later attempt left stock files. It changes no decoder or clock setting |
@@ -226,7 +227,8 @@ The installer offers:
 - **Remove apps.**
 - **Help: SYNC is frozen.**
 - **Make CarPlay better (after the install).** The runner guard, a smaller and faster CarPlay
-  picture, and the car's microphone, one car visit each.
+  picture, the car's microphone, and "CarPlay first" for a much smoother picture, one car visit
+  each.
 
 If SyncExtPack (an upstream project) is missing, it offers to download it. Type `q` at any
 prompt to stop; nothing is lost.
@@ -329,7 +331,7 @@ python3 -m s2am job runner-guard --off --serial YOURSERIAL           # put SyncE
 python3 -m s2am job runner-guard --boost 250 --measure 600 --serial YOURSERIAL  # untried priority comparison
 python3 -m s2am job runner-guard --boost off --serial YOURSERIAL     # the guard stays, the boost goes
 python3 -m s2am job autokit-mic-gate --serial YOURSERIAL             # Siri and calls through the car's microphone
-python3 -m s2am job flash-tune --prio 252 --fast-prio 252 --serial YOURSERIAL  # Ford's screens take less processor
+python3 -m s2am job flash-tune --prio 253 --fast-prio 253 --serial YOURSERIAL  # CarPlay before Ford's screens
 python3 -m s2am job flash-tune --undo --serial YOURSERIAL            # Ford's values back
 python3 -m s2am job logger --native --serial YOURSERIAL              # also record AutoKit's window messages
 python3 -m s2am job logger --drive --serial YOURSERIAL               # while you drive, up to 4 h: load, files, Ford's screens

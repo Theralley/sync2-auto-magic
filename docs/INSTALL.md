@@ -13,7 +13,7 @@ which this project has not yet run in a car itself (the test car already had Syn
 change your car's software at your own risk. Nothing here touches the firmware, and reinstalling
 SYNC's own software removes everything (see the end of this page).
 
-Set aside an evening: about an hour at the Mac and four to six short visits to the car (one or
+Set aside an evening: about an hour at the Mac and five to six short visits to the car (one or
 two for the install, one for each improvement).
 
 ## Words used here
@@ -100,10 +100,10 @@ touch, and music plays through the car's speakers.
 Do not leave AutoKit with its Exit button yet: do step 6 first, or the screen can freeze (the
 fix for a frozen screen is at the end).
 
-## 6. Make CarPlay better: three improvements, strongly recommended
+## 6. Make CarPlay better: four improvements
 
 Run the installer again (double-click `Install-SYNC2.command`) and choose
-**Make CarPlay better (after the install)**. It offers three changes, asks before each one, and
+**Make CarPlay better (after the install)**. It offers four changes, asks before each one, and
 sends you to the car once per change:
 
 | Change | What you get |
@@ -111,8 +111,9 @@ sends you to the car once per change:
 | **The runner guard** | Leaving CarPlay returns to SYNC in a few seconds instead of freezing the screen |
 | **A smaller CarPlay picture** | Clearly faster. The picture sits in the middle of the screen with a black frame |
 | **The car's microphone** | Siri and phone calls hear you |
+| **CarPlay first** | Much smoother CarPlay: it goes before Ford's own screens when the processor is full. Ford's screens, including the parking-sensor and camera pictures, may react more slowly while CarPlay is busy. Tried in one car so far, so the installer only does it if you type `y`. Restart SYNC once more afterwards; it takes effect then |
 
-None of the three can run while an app from the Apps menu is open, and AutoKit's Exit button
+None of them can run while an app from the Apps menu is open, and AutoKit's Exit button
 only hides it. So before each stick goes in, restart SYNC (hold the power/volume knob and
 Seek-Up ⏭ together for about ten seconds, and wait until it is back) and do not open AutoKit. The
 installer reminds you each time.
@@ -122,7 +123,7 @@ Mac the installer reads the stick and says "Done: ..." for that change. If a cha
 come back as done it stops there and tells you; nothing else is changed.
 
 <details>
-<summary><b>Prefer the Terminal? The same three jobs as commands</b></summary>
+<summary><b>Prefer the Terminal? The same jobs as commands</b></summary>
 
 Go to the project folder (type `cd `, drag the folder into the Terminal window, press Return).
 Replace `YOURSERIAL` and the stick's name with yours.
@@ -131,6 +132,7 @@ Replace `YOURSERIAL` and the stick's name with yours.
 python3 -m s2am job runner-guard --serial YOURSERIAL
 python3 -m s2am job autokit-config --screen 640,384,10 --serial YOURSERIAL
 python3 -m s2am job autokit-mic-gate --serial YOURSERIAL
+python3 -m s2am job flash-tune --prio 253 --fast-prio 253 --serial YOURSERIAL
 ```
 
 One job per visit to the car, with SYNC restarted and no app opened before the stick goes in.
@@ -151,6 +153,7 @@ Each change can be put back with one more stick, from the Terminal in the projec
 python3 -m s2am job runner-guard --off --serial YOURSERIAL            # SyncExtPack's own launcher back
 python3 -m s2am job autokit-config --restore JOB_ID --serial YOURSERIAL  # the picture as it was
 python3 -m s2am job autokit-patched --serial YOURSERIAL               # AutoKit without the microphone change
+python3 -m s2am job flash-tune --undo --serial YOURSERIAL             # Ford's screens first again (restart SYNC after)
 ```
 
 `JOB_ID` is the id the tool printed when it built the picture job. It looks like
@@ -170,8 +173,9 @@ python3 -m s2am job autokit-patched --serial YOURSERIAL               # AutoKit 
 
 ## What to expect
 
-CarPlay runs, with Maps, music, Siri and calls. It is slow compared with a modern car, because
-SYNC 2's processor decodes the video in software. In calls the other side hears an echo. The
+CarPlay runs, with Maps, music, Siri and calls. It is slower than in a modern car, because
+SYNC 2's processor decodes the video in software. With "CarPlay first" the owner of the one car
+tested found it much smoother. In calls the other side hears an echo. The
 parking sensors' pop-up does not show while AutoKit is open, so leave AutoKit before you
 reverse. The current state of all of this is in the [README](../README.md).
 

@@ -91,10 +91,23 @@ A higher number means a lower priority. At 252 Ford's screens wait for every bus
 Desktop.exe also draws the rear camera and Ford's warnings, and whether SYNC's watchdog
 tolerates a long wait is not known. Ford's own screens may react more slowly while another program is busy.
 
-Car, 2026-11-19: 253 for both priorities was written and read back as saved. SYNC was not
-restarted afterwards, and a load recording the next morning still showed Desktop.exe's busy
-thread at 250 and 248 (processor 96% busy with CarPlay: AutoKit 53%, Desktop.exe 19%, the
-kernel 19%). So the effect is not measured yet: restart SYNC with the buttons after the job.
+**Car result, 2026-11-20: CarPlay is much smoother at 253.** The owner's words: far better.
+
+| | 250/248 (Ford), morning | 253/253, evening, after a SYNC restart |
+|---|---|---|
+| Desktop.exe's busy thread | 250 in 56 of 61 samples | 253 in 83 of 88 |
+| AutoKit, average | 53% | 53% |
+| Desktop.exe, average | 19% | 19% |
+| Processor at 100% | 42 of 58 samples | 36 of 94 |
+
+The averages are the same. What changed is the order: CarPlay now gets the processor when it
+asks, and Ford's screen program takes what is left. Two runs of 10 and 17 minutes with
+different use, so read the numbers as a direction, not a measurement of speed. The registry
+still held 253 after the restart. Not checked yet: the parking-sensor pop-up and a reverse
+camera at 253, and more than one day of use.
+
+The first try on 2026-11-19 showed nothing, because SYNC had not been restarted: Desktop.exe
+reads the values only when it starts. Restart SYNC with the buttons after the job.
 
 ### NEON and clock work
 

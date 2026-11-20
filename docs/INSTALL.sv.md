@@ -15,7 +15,7 @@ bakgrundsbilden är SyncExtPacks egen metod, som det här projektet ännu inte h
 fasta programvaran, och en ominstallation av SYNC:s egen programvara tar bort allt (se slutet av
 sidan).
 
-Räkna med en kväll: ungefär en timme vid datorn och fyra till sex korta besök i bilen (ett eller
+Räkna med en kväll: ungefär en timme vid datorn och fem till sex korta besök i bilen (ett eller
 två för installationen, ett för varje förbättring).
 
 ## Ord som används
@@ -107,10 +107,10 @@ tryck, och musik spelas i bilens högtalare.
 Lämna inte AutoKit med dess Exit-knapp ännu: gör steg 6 först, annars kan skärmen frysa (hur du
 löser en frusen skärm står i slutet).
 
-## 6. Gör CarPlay bättre: tre förbättringar som rekommenderas starkt
+## 6. Gör CarPlay bättre: fyra förbättringar
 
 Kör installationsprogrammet igen (dubbelklicka på `Install-SYNC2.command`) och välj
-**Make CarPlay better (after the install)**. Det erbjuder tre ändringar, frågar före var och en
+**Make CarPlay better (after the install)**. Det erbjuder fyra ändringar, frågar före var och en
 och skickar dig till bilen en gång per ändring:
 
 | Ändring | Vad du får |
@@ -118,8 +118,9 @@ och skickar dig till bilen en gång per ändring:
 | **Vakten** (runner guard) | När du lämnar CarPlay är SYNC tillbaka på några sekunder i stället för att skärmen fryser |
 | **Mindre CarPlay-bild** | Tydligt snabbare. Bilden ligger mitt på skärmen med en svart ram |
 | **Bilens mikrofon** | Siri och telefonsamtal hör dig |
+| **CarPlay först** (CarPlay first) | Mycket mjukare CarPlay: det går före Fords egna skärmar när processorn är full. Fords skärmar, också bilderna från parkeringssensorer och kamera, kan reagera långsammare medan CarPlay arbetar. Provat i en bil hittills, så programmet gör det bara om du skriver `y`. Starta om SYNC en gång till efteråt; först då gäller det |
 
-Ingen av de tre kan köras medan en app från Apps-menyn är öppen, och AutoKits Exit-knapp gömmer
+Ingen av dem kan köras medan en app från Apps-menyn är öppen, och AutoKits Exit-knapp gömmer
 bara appen. Starta därför om SYNC innan varje sticka sätts i (håll in ström-/volymratten och
 Seek-Up ⏭ samtidigt i ungefär tio sekunder och vänta tills SYNC är tillbaka) och öppna inte
 AutoKit. Installationsprogrammet påminner dig varje gång.
@@ -129,7 +130,7 @@ datorn läser programmet stickan och säger "Done: ..." för den ändringen. Om 
 kommer tillbaka som klar stannar programmet där och säger det; inget annat ändras.
 
 <details>
-<summary><b>Föredrar du Terminal? Samma tre jobb som kommandon</b></summary>
+<summary><b>Föredrar du Terminal? Samma jobb som kommandon</b></summary>
 
 Gå till projektmappen (skriv `cd `, dra mappen till Terminal-fönstret, tryck Retur). Byt
 `YOURSERIAL` och stickans namn mot dina.
@@ -138,6 +139,7 @@ Gå till projektmappen (skriv `cd `, dra mappen till Terminal-fönstret, tryck R
 python3 -m s2am job runner-guard --serial YOURSERIAL
 python3 -m s2am job autokit-config --screen 640,384,10 --serial YOURSERIAL
 python3 -m s2am job autokit-mic-gate --serial YOURSERIAL
+python3 -m s2am job flash-tune --prio 253 --fast-prio 253 --serial YOURSERIAL
 ```
 
 Ett jobb per besök i bilen, med SYNC omstartat och ingen app öppnad innan stickan sätts i.
@@ -158,6 +160,7 @@ Varje ändring kan tas tillbaka med en sticka till, från Terminal i projektmapp
 python3 -m s2am job runner-guard --off --serial YOURSERIAL            # SyncExtPacks egen startare tillbaka
 python3 -m s2am job autokit-config --restore JOB_ID --serial YOURSERIAL  # bilden som den var
 python3 -m s2am job autokit-patched --serial YOURSERIAL               # AutoKit utan mikrofonändringen
+python3 -m s2am job flash-tune --undo --serial YOURSERIAL             # Fords skärmar först igen (starta om SYNC efteråt)
 ```
 
 `JOB_ID` är det id som verktyget skrev ut när det byggde bildjobbet. Det ser ut som
@@ -177,8 +180,9 @@ python3 -m s2am job autokit-patched --serial YOURSERIAL               # AutoKit 
 
 ## Vad du kan vänta dig
 
-CarPlay fungerar, med kartor, musik, Siri och samtal. Det är långsamt jämfört med en modern bil,
-eftersom SYNC 2:s processor avkodar bilden i programvara. I samtal hör den du pratar med ett
+CarPlay fungerar, med kartor, musik, Siri och samtal. Det är långsammare än i en modern bil,
+eftersom SYNC 2:s processor avkodar bilden i programvara. Med "CarPlay först" tyckte ägaren till
+den enda provade bilen att det blev mycket mjukare. I samtal hör den du pratar med ett
 eko. Parkeringssensorernas ruta visas inte medan AutoKit är öppet, så lämna AutoKit innan du
 backar. Det aktuella läget för allt detta står i [README](../README.md).
 
