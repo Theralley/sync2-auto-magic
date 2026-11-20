@@ -1,32 +1,88 @@
-# sync2-auto-magic
+<h1 align="center">sync2-auto-magic</h1>
 
-**Apple CarPlay (and soon Android Auto) for Ford SYNC 2 / MyFord Touch, using one USB dongle
-and free software.** It also includes a Mac tool that shows what is installed on your SYNC 2.
+<p align="center">
+  <b>Apple CarPlay on the Ford that never got it.</b><br>
+  One USB adapter, one USB stick and free software, on the factory 8" SYNC 2 / MyFord Touch screen.
+</p>
 
-> **Status: experimental. CarPlay works in the car** (first run 4 November 2026, installed with
-> these tools), **but it is very slow, and so is SYNC 2 itself**:
-> [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Leaving AutoKit froze the screen; the runner guard
-> fixes that (verified in the car). Try it only if you are comfortable with the recovery steps.
->
-> **Development update — 16 November 2026:**
-> Our next goals are a **custom decoder verified in the car**, **more CPU time for foreground
-> CarPlay**, and a **controlled overclock experiment**. Read the
-> [current results and next steps](docs/PROGRESS-2026-11-16.md).
-> - **Measured:** 800×480 CarPlay saturated the processor. The current 640×384/10 setting
->   reduces load but leaves black borders; the latest Maps/Spotify test showed no obvious gain.
-> - **Decoder identity still matters:** the first native inspection found the original decoder.
->   A later installation returned no report; a second inspection confirmed that the original
->   DLLs were still active. The reporting defect is fixed and a corrected test is prepared.
-> - **Clock work is active:** a temporary read-only driver prototype has been built and host-tested.
->   Review and car validation come next. No overclock package or measured clock increase is ready.
-> - **The microphone works over CarPlay since 2026-11-19** (`s2am job autokit-mic-gate`): Siri hears
->   you and calls connect. Call quality is not good yet: the other side hears an echo of
->   themselves, and the sound is choppy and late.
+<p align="center">
+  <img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-orange?style=flat-square">
+  <img alt="Tested in a real car" src="https://img.shields.io/badge/tested%20in-2016%20Mondeo%20Mk5-2ea44f?style=flat-square">
+  <img alt="SYNC 2 software 3.08 and 3.10" src="https://img.shields.io/badge/SYNC%202-3.08%20%7C%203.10-1f6feb?style=flat-square">
+  <img alt="Runs on macOS" src="https://img.shields.io/badge/runs%20on-macOS-lightgrey?style=flat-square">
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
+</p>
+
+<p align="center">
+  <a href="https://www.buymeacoffee.com/theralley">
+    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" height="48">
+  </a>
+</p>
+
+Your 2013–2016 Ford has a good 8" touchscreen and no CarPlay. Ford's answer was SYNC 3 in the
+next car. This project's answer is a Carlinkit adapter for about 40 euros, a USB stick, and a
+toolkit that installs, patches and checks everything from your Mac. No soldering, no new head
+unit, and the firmware is never touched.
+
+## What it does today
+
+Everything in this list has run in a real car, not just on a desk.
+
+- **CarPlay on the factory screen:** Apple Maps with route guidance, Spotify, the home screen,
+  touch.
+- **Sound through the car's speakers.** AutoKit is silent on SYNC 2 out of the box; this project
+  patches it so SYNC's audio system lets it play.
+- **Siri and phone calls through the car's own microphone** (new, 19 November 2026).
+- **No frozen screen when you leave CarPlay.** The runner guard brings SYNC back in about three
+  seconds.
+- **Your Mac runs the show.** Every change travels on a USB stick as a small job. The car backs
+  up what it replaces, the Mac checks the report that comes back, and the changes have an
+  undo.
+- **See, install and remove SYNC apps** from the Mac, and **restyle Ford's own menus** with
+  [sync-redesign](https://github.com/Theralley/sync-redesign).
+- **AutoKit in English** instead of Chinese.
+
+## What it does not do yet
+
+This is an honest project, so here is the other half.
+
+- **It is slow.** SYNC 2's 600 MHz processor decodes CarPlay's video in software and sits near
+  100%. A smaller picture (640×384) helps a lot; a faster decoder, a lower priority for Ford's
+  own screen program (`flash-tune`) and processor-clock research are in progress:
+  [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+- **Calls work, but the other side hears an echo** and choppy sound.
+- **Android Auto** uses the same adapter and is not tried yet.
+- **One car so far.** It is tested on one 2016 Mondeo. Reports from other SYNC 2 cars are very
+  welcome.
+
+Try it only if you are comfortable with the recovery steps in
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+
+## Support the project
+
+This is one person, one Mondeo and a great many walks to the car park with a USB stick. If it
+put CarPlay in your Ford, or you just enjoy watching a 2013 head unit learn new tricks:
+
+- [**Buy me a coffee**](https://www.buymeacoffee.com/theralley). It goes to adapters, USB sticks
+  and test hardware.
+- **Star the repository**, so other SYNC 2 owners find it.
+- **Tell us about your car** in an [issue](https://github.com/Theralley/sync2-auto-magic/issues):
+  model, year, SYNC version, and what worked.
+
+## Latest news
+
+- **20 November 2026:** `flash-tune` lowers the priority of Ford's screen program so CarPlay
+  gets more of the processor. Written and verified on the car; its effect is being measured.
+- **19 November 2026:** the microphone works over CarPlay (`s2am job autokit-mic-gate`). Siri
+  hears you and calls connect.
+- **16 November 2026:** decoder and clock research, with the measurements behind them:
+  [docs/PROGRESS-2026-11-16.md](docs/PROGRESS-2026-11-16.md).
+- **4 November 2026:** first CarPlay session in the car, installed with these tools.
 
 ## Tested and working
 
 Tested in a real car: a **2016 Ford Mondeo Mk5, 8" SYNC 2, software 3.10 (EU)**, on
-**30 October to 16 November 2026**. Details in [docs/P1-TESTLOG.md](docs/P1-TESTLOG.md) and the
+**30 October to 20 November 2026**. Details in [docs/P1-TESTLOG.md](docs/P1-TESTLOG.md) and the
 [latest development update](docs/PROGRESS-2026-11-16.md).
 
 | What | Result in the car |
@@ -43,10 +99,10 @@ Tested in a real car: a **2016 Ford Mondeo Mk5, 8" SYNC 2, software 3.10 (EU)**,
 | Apple CarPlay over a cable (iPhone, CarlinKit wired adapter) | **Works, but very slow**: home screen, taps, Maps with route guidance, Spotify. [docs/PERFORMANCE.md](docs/PERFORMANCE.md) |
 | CarPlay sound through the car's speakers | **Works**: Spotify over CarPlay, with the iPhone's Bluetooth off, so the sound came through the cable and AutoKit (14 November) |
 | Leave AutoKit with its Exit button, with the runner guard (`runner-guard`) | **Works**: SYNC is back about 3 s after Exit (four tries) |
+| Siri and a phone call over CarPlay, through the car's microphone (`autokit-mic-gate`) | **Works** (19 November); the other side hears an echo and choppy sound |
 | Soft reset when the screen is stuck (power/volume knob + Seek-Up ⏭, 10 s) | **Worked once**; twice later it did not, and switching the car off did |
 
 **Not tested yet:**
-- Siri over CarPlay. A call over CarPlay was tried and failed (see *Known problems*).
 - The A/B test of the sound patch: whether CarPlay's sound also works without it.
 - Android Auto: the adapter is here, not tried yet.
 - The first install through the wallpaper picker (`Installer.jpg`): the test car already had
@@ -106,6 +162,8 @@ run the same system, but nothing is guaranteed.
 | Apple CarPlay over a cable | **Works in the car, very slow** (2026-11-04): [docs/PERFORMANCE.md](docs/PERFORMANCE.md) |
 | A smaller CarPlay picture to lower the load (`autokit-config --screen 640,384,10`) | **Works in the car** (2026-11-15): the processor is no longer full all the time and CarPlay feels much faster; the picture sits in the middle with a black frame. The car is left on this setting |
 | Faster video decoder files for AutoKit, our own FFmpeg build (`s2am job decoder`, with its undo stick) | About 20% fewer emulated instructions with matching test pictures; **no measured car speed gain yet**. Both inspections found stock DLLs; the corrected installation awaits its first car test. The binaries are not in this repository ([next tests](docs/PERFORMANCE.md#next-useful-tests-november-16)) |
+| The car's microphone for Siri and calls (`s2am job autokit-mic-gate`, undo with `autokit-patched`) | **Works in the car** (2026-11-19). Call quality for the other side is not good yet: echo, choppy, late ([TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)) |
+| Less processor time for Ford's own screen program (`s2am job flash-tune`, undo with `--undo`) | **Written and verified on the car** (2026-11-19, priority 253); the effect on CarPlay is not measured yet ([docs/PERFORMANCE.md](docs/PERFORMANCE.md)) |
 | More CPU time for foreground CarPlay (`runner-guard --boost 250 --measure`) | Guarded priority comparison prepared in source, **not yet tested in the car**. Priority restoration and actual sampling gaps must be checked ([plan](docs/PROGRESS-2026-11-16.md#goal-2-give-foreground-carplay-more-processor-time)) |
 | A higher processor clock (overclocking) | **Active research; no validated CPU transition yet.** The standalone clock reader failed with mapping error 87. A separate read-only driver prototype has passed host tests and a server build; independent review completed; USB integration and car activation remain pending ([clock goals](docs/PROGRESS-2026-11-16.md#goal-3-a-controlled-overclock-experiment)) |
 | Independently inspect a decoder attempt (`s2am job decoder-inspect --target JOB_ID`) | **File collection worked in the car on November 16.** Active/backup/staged DLLs were verified; the separate clock child failed explicitly. A second inspection confirmed the later attempt left stock files. It changes no decoder or clock setting |
@@ -261,6 +319,9 @@ python3 -m s2am job runner-guard --serial YOURSERIAL                 # fix: no f
 python3 -m s2am job runner-guard --off --serial YOURSERIAL           # put SyncExtPack's original launcher back
 python3 -m s2am job runner-guard --boost 250 --measure 600 --serial YOURSERIAL  # untried priority comparison
 python3 -m s2am job runner-guard --boost off --serial YOURSERIAL     # the guard stays, the boost goes
+python3 -m s2am job autokit-mic-gate --serial YOURSERIAL             # Siri and calls through the car's microphone
+python3 -m s2am job flash-tune --prio 252 --fast-prio 252 --serial YOURSERIAL  # Ford's screens take less processor
+python3 -m s2am job flash-tune --undo --serial YOURSERIAL            # Ford's values back
 python3 -m s2am job logger --native --serial YOURSERIAL              # also record AutoKit's window messages
 python3 -m s2am job logger --drive --serial YOURSERIAL               # while you drive, up to 4 h: load, files, Ford's screens
 python3 tools/make_test_videos.py OUTFOLDER                          # test videos for the Video Player (needs ffmpeg, Pillow)
@@ -364,7 +425,7 @@ third-party tools never run directly on your Mac. Read
 <summary><b>For developers</b></summary>
 
 ```sh
-python3 -m unittest discover -s tests       # 202 tests; uses ../syncextpack (tested at 1a1eda0)
+python3 -m unittest discover -s tests       # about 660 tests; uses ../syncextpack (tested at 1a1eda0)
 python3 tools/make_pack.py SERIAL --dry-run  # stage and patch only, no build
 python3 -m s2am window                       # is the current 30-day key window safe to build in?
 ```
@@ -380,6 +441,12 @@ python3 -m s2am window                       # is the current 30-day key window 
 The `../syncextpack` clone is never modified. State is kept in `~/.s2am/<serial>/`; set
 `S2AM_HOME` to change it.
 </details>
+
+## Like it?
+
+If this saved you the price of a new head unit, a
+[coffee](https://www.buymeacoffee.com/theralley) is a nice way to say so. A star and a report
+from your car help just as much.
 
 ## Disclaimer
 
