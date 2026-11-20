@@ -12,6 +12,13 @@ sources, exact evidence identities and the documentary acceptance gates.
 
 Older preparation and pending-return entries below are historical, not current launch instructions.
 
+## Logger design discussion, November 20
+
+The live Qwen peer and Codex selected a separate ordinary-API raw load observer as
+the next useful diagnostic design. It would improve CPU-time attribution, not measure
+physical MHz or prove the CarPlay bottleneck. No new logger is built or deployed;
+see [[load-observer-design-2026-11-20]] for the scope and implementation acceptance.
+
 ## Latest verified results and source publication, November 16
 
 The second native inspection, after the revised decoder attempt, verified stock active DLLs,
