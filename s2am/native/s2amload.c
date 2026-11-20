@@ -262,8 +262,8 @@ int WINAPI WinMain(HINSTANCE instance,HINSTANCE prior,LPWSTR command,int show) {
 done:
     if(output!=INVALID_HANDLE_VALUE) { CloseHandle(output); output=INVALID_HANDLE_VALUE; }
     if(toolhelp) FreeLibrary(toolhelp);
-    MessageBoxW(NULL,ok?L"Logging finished. LOAD.CSV is saved. Do not run again; return the USB.":
-                L"Logging did not complete. Do not run again; return the USB for analysis.",
+    MessageBoxW(NULL,ok?L"Logging finished in the car. Reconnect the USB and run S2AMCTL.EXE to collect LOAD.CSV. Do not start another recording.":
+                L"Logging did not complete. Do not start another recording or delete files. Reconnect the USB and return it for analysis if collection fails.",
                 L"SYNC 2 load logger",MB_OK|(ok?MB_ICONINFORMATION:MB_ICONEXCLAMATION));
     return ok?0:1;
 }
