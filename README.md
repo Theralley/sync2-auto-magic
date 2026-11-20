@@ -10,6 +10,7 @@
   <img alt="Tested in a real car" src="https://img.shields.io/badge/tested%20in-2016%20Mondeo%20Mk5-2ea44f?style=flat-square">
   <img alt="SYNC 2 software 3.08 and 3.10" src="https://img.shields.io/badge/SYNC%202-3.08%20%7C%203.10-1f6feb?style=flat-square">
   <img alt="Runs on macOS" src="https://img.shields.io/badge/runs%20on-macOS-lightgrey?style=flat-square">
+  <a href="https://github.com/Theralley/sync2-auto-magic/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/Theralley/sync2-auto-magic?include_prereleases&style=flat-square"></a>
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
 </p>
 
@@ -71,6 +72,8 @@ put CarPlay in your Ford, or you just enjoy watching a 2013 head unit learn new 
 
 ## Latest news
 
+- **20 November 2026:** first tagged version,
+  [v0.1.0 (pre-release)](https://github.com/Theralley/sync2-auto-magic/releases/tag/v0.1.0).
 - **20 November 2026:** `flash-tune` lowers the priority of Ford's screen program so CarPlay
   gets more of the processor. Written and verified on the car; its effect is being measured.
 - **19 November 2026:** the microphone works over CarPlay (`s2am job autokit-mic-gate`). Siri
