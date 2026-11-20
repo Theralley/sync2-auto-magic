@@ -79,7 +79,7 @@ JOB_KINDS = {"inventory": "inv", "autokit-stock": "akstock", "autokit-patched": 
              "snapshot": "snap", "logger": "log", "native-hello": "hello", "runner-guard": "guard",
              "theme": "theme", "apps-menu": "appmenu", "cleanup": "clean", "screen": "screen",
              "bundle": "bundle", "registry": "reg", "decoder": "dec", "pmic": "pmic", "clock": "clock",
-             "decoder-inspect": "decdiag", "neon-diagnose": "neondiag", "mic-probe": "mic"}
+             "decoder-inspect": "decdiag", "neon-diagnose": "neondiag", "mic-probe": "mic", "flash-tune": "flash"}
 MARK = {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
 
 
@@ -472,6 +472,25 @@ def cmd_job(args) -> int:
               "replaced. The car's AutoKit.exe.patched stays as it is, for the way back. AutoKit must not be "
               "running: restart SYNC first. Undo: s2am job autokit-patched. The microphone also needs runner-guard --mic on and "
               "autokit-config --mic car")
+    elif args.kind == "flash-tune":
+        from . import flashtune
+        values = {name: getattr(args, option) for name, (_, _, _, option) in flashtune.LIMITS.items()
+                  if getattr(args, option) is not None}
+        if args.undo and values:
+            raise ValueError("--undo takes no settings")
+        params = {"undo": True} if args.undo else {"values": flashtune.check(values or None)}
+        extra = {"s2amflash.exe": native.binary("s2amflash.exe")}
+        if args.undo:
+            print("flash-tune --undo: writes Ford's own values for Desktop.exe back from the backup on the "
+                  "car, then removes the backup. They apply after SYNC restarts")
+        else:
+            print("flash-tune: changes " + ", ".join(f"{name} to {value} (Ford: {flashtune.LIMITS[name][2]})"
+                                                    for name, value in params["values"].items())
+                  + " in HKLM\\Software\\Ford\\Flash. Ford's values are backed up on the car first; undo "
+                  "with s2am job flash-tune --undo. Desktop.exe reads them when it starts, so restart SYNC "
+                  "after 'Install successfully completed'. A priority number above 250 gives Ford's screens "
+                  "less of the processor while another program is busy: Ford's own screens may react more "
+                  "slowly then. Not tried on a car before 2026-11-19")
     elif args.kind == "mic-probe" and args.route:
         params = {"route": True}
         extra = {"s2ammic.exe": native.binary("s2ammic.exe")}
@@ -681,6 +700,10 @@ def cmd_stick_import(args) -> int:
                 print("  " + text)
         if record.get("kind") == "akmic" and report:
             print("  " + _verify_mic_gate(report, record.get("params", {})))
+        if record.get("kind") == "flash" and report:
+            from . import flashtune
+            for text in flashtune.summary(report, record.get("params", {})):
+                print("  " + text)
         if record.get("kind") == "mic" and record["status"] == "applied" and report:
             from . import micprobe
             for text in micprobe.summary(report):
@@ -1368,6 +1391,18 @@ def parser() -> argparse.ArgumentParser:
                      help="the route test instead (not read-only): borrow the microphone from SYNC for a "
                           "few seconds, record through the device AutoKit opens, give it back")
     mic.set_defaults(func=cmd_job)
+    flash = job_sub.add_parser("flash-tune", parents=[common],
+                               help="give Ford's screen program (Desktop.exe) less of the processor: its "
+                                    "thread priority and drawing rate, backed up on the car first; undo "
+                                    "with --undo")
+    flash.add_argument("--prio", type=int, metavar="N", help="ThreadPrio256, 250-253 (Ford: 250)")
+    flash.add_argument("--fast-prio", type=int, metavar="N", help="FastThreadPrio256, 248-253 (Ford: 248)")
+    flash.add_argument("--interval", type=int, metavar="MS",
+                       help="FlashNormalTimerInterval, 500-2000 ms (Ford: 500)")
+    flash.add_argument("--fast-interval", type=int, metavar="MS",
+                       help="FlashFastTimerInterval, 66-250 ms (Ford: 66)")
+    flash.add_argument("--undo", action="store_true", help="put Ford's values back from the backup on the car")
+    flash.set_defaults(func=cmd_job)
     pmic = job_sub.add_parser("pmic", parents=[common],
                               help="read-only MC13892 identification, SW1 presets and mode/SID through PMI1; "
                                    "no clock/voltage changes")

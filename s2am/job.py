@@ -1603,6 +1603,50 @@ def mic_probe_script(job: Job) -> str:
     ] + _inventory() + _footer(job))
 
 
+def flash_script(job: Job) -> str:
+    """Change (or, with ``undo``, put back) the four numbers Desktop.exe reads from
+    HKLM\\Software\\Ford\\Flash at start: its drawing thread's priority and how often it draws.
+    s2amflash.exe checks the names and limits again, backs Ford's values up on the car before the
+    first change, reads the result back and writes flash.txt. The script waits for flash-done.txt
+    for at most flashtune.WAIT_S seconds and then ends the tool, which the report shows as an
+    unknown state. A job replayed after a power cut keeps the result it already has instead of
+    running the tool again. Nothing takes effect before SYNC restarts."""
+    from . import flashtune
+    argument = flashtune.argument(job.params)
+    return _script(_header(job) + [
+        "n = 0",
+        "started = 0",
+        'If (FileExists(out & "\\flash-done.txt"))',  # a run cut short after the change: keep its result
+        f"  n = {flashtune.WAIT_S}",
+        "Else",
+        f'  Run({_quote(ce_path(job.job_dir))} & "\\s2amflash.exe", {_quote(argument + "|")} & out)',
+        "  started = 1",
+        "EndIf",
+        f"While (n < {flashtune.WAIT_S})",
+        '  If (FileExists(out & "\\flash-done.txt"))',
+        f"    n = {flashtune.WAIT_S}",
+        "  Else",
+        "    Sleep(1000)",
+        "    n = n + 1",
+        "  EndIf",
+        "EndWhile",
+        # Only the tool this run started, and only when it has not finished: one that gave up waiting
+        # for another job's tool has written flash-done.txt, so that other tool is left alone.
+        # Ending it undoes nothing: the report then says "not known".
+        "If (started = 1)",
+        '  If (NOT FileExists(out & "\\flash-done.txt"))',
+        '    If (ProcExists("s2amflash.exe"))',
+        '      Kill("s2amflash.exe")',
+        '      WriteFile(out & "\\flash-killed.txt", "the tool was still running and was ended")',
+        "    EndIf",
+        "  EndIf",
+        "EndIf",
+        f"If (FileExists({_quote(flashtune.BACKUP)}))",
+        f'  Copy({_quote(flashtune.BACKUP)}, out & "\\flash-backup.txt", TRUE)',
+        "EndIf",
+    ] + _inventory() + _footer(job))
+
+
 def decoder_inspect_script(job: Job) -> str:
     """A fresh harmless interpreter probe; the native POST_APP owns the real report."""
     from .decoder_inspect import target_id
@@ -1665,6 +1709,7 @@ SCRIPTS = {
     "decdiag": decoder_inspect_script,
     "neondiag": neon_diagnose_script,
     "mic": mic_probe_script,
+    "flash": flash_script,
 }
 MENU_CHANGING = ("rm", "undo", "inst")  # SYNC reads SyncApps.xml at start, so these restart it
 RESTARTING = MENU_CHANGING + SKIN_SWAPS + ("bundle",)  # and its theme, Apps menu and screens

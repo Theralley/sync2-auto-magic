@@ -60,6 +60,42 @@ The sampler runs below normal priority and may be delayed by boosted runnable wo
 actual timestamps and missing intervals before comparing CPU samples; the intended ten-second
 cadence is not guaranteed. More CPU share does not by itself prove better responsiveness.
 
+### Give Ford's screen program less of the processor (`flash-tune`)
+
+Desktop.exe draws Ford's screens and keeps running while CarPlay is shown. It must not be ended:
+SYNC watches it and restarts the unit without it. In the 20-minute run of 2026-11-18 it used 21%
+of the processor on average (10 to 45%) at priority 250, ahead of AutoKit, whose threads run at
+251 and 252. Lowering its threads from outside (`runner-guard --calm`) did not hold for the busy
+one: Desktop.exe sets that thread's priority itself.
+
+It takes that priority, and how often it draws, from `HKLM\Software\Ford\Flash` when it starts.
+Read from the car on 2026-11-19 (`s2am job registry --root 'HKLM\Software\Ford'`):
+
+| Value | On the car | `flash-tune` option | Allowed |
+|---|---|---|---|
+| `ThreadPrio256` | 250 | `--prio` | 250 to 253 |
+| `FastThreadPrio256` (while it animates) | 248 | `--fast-prio` | 248 to 253 |
+| `FlashNormalTimerInterval` | 500 ms | `--interval` | 500 to 2000 |
+| `FlashFastTimerInterval` | 66 ms | `--fast-interval` | 66 to 250 |
+
+`s2am job flash-tune --prio 252 --fast-prio 252` puts Desktop.exe level with AutoKit's busiest
+(video) thread, which runs at 252, so the two take turns instead of Desktop.exe always going
+first. 251 is the cautious step: level with ordinary programs, but still ahead of that video
+thread. The job changes only these four numbers, keeps Ford's values in a backup on the car
+before the first change, reads the result back, and `s2am job flash-tune --undo` restores them.
+Restart SYNC afterwards: Desktop.exe reads the values only when it starts. The same key holds
+Desktop.exe's watchdog settings; the job cannot touch those.
+
+A higher number means a lower priority. At 252 Ford's screens wait for every busy program at
+251 and share with the video thread; at 253 they get only what the video thread leaves.
+Desktop.exe also draws the rear camera and Ford's warnings, and whether SYNC's watchdog
+tolerates a long wait is not known. Ford's own screens may react more slowly while another program is busy.
+
+Car, 2026-11-19: 253 for both priorities was written and read back as saved. SYNC was not
+restarted afterwards, and a load recording the next morning still showed Desktop.exe's busy
+thread at 250 and 248 (processor 96% busy with CarPlay: AutoKit 53%, Desktop.exe 19%, the
+kernel 19%). So the effect is not measured yet: restart SYNC with the buttons after the job.
+
 ### NEON and clock work
 
 NEON needs a separate instruction/context-switch probe before a NEON decoder trial.

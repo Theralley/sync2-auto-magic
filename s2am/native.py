@@ -26,7 +26,7 @@ PROGRAMS = {"hello.exe": "hello.c", "notifylog.exe": "notifylog.c", "s2amrun.exe
             "s2ampmic.exe": "s2ampmic.c", "s2ammodules.exe": "s2ammodules.c",
             "s2amdiag.exe": "s2amdiag.c", "s2amclock.exe": "s2amclock.c",
             "s2amneon.exe": "s2amneon.c", "s2amnd.exe": "s2amnd.c",
-            "s2ammic.exe": "s2ammic.c"}
+            "s2ammic.exe": "s2ammic.c", "s2amflash.exe": "s2amflash.c"}
 CFLAGS = ("-O2", "-Wall", "-Wextra", "-Werror")
 SUBSYSTEM_WINDOWS_CE_GUI = 9
 
