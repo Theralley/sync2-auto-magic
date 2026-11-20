@@ -91,7 +91,7 @@ SHIM = r'''
 #include <sys/stat.h>
 #include <errno.h>
 #define RUN_DIR_NAME "20261120-load-44748284729"
-static const char *root,*mode; static DWORD tick,err,sleeps; static int process_created,opened,closed,wait_calls;
+static const char *root,*mode; static DWORD tick,err,sleeps,wrap_count; static int process_created,opened,closed,wait_calls;
 static int is(const char*s){return !strcmp(mode,s);}
 static void w2c(char*out,const WCHAR*in){while(*in){*out++=(*in==L'\\')?'/':(char)*in;in++;}*out=0;}
 static void hostpath(char*out,LPCWSTR p){
@@ -110,19 +110,19 @@ static int receipt(HANDLE h){return strstr(handles[idx(h)].path,"STARTED.TXT")!=
 static int car_scratch(HANDLE h){return strstr(handles[idx(h)].path,"/car/")&&strstr(handles[idx(h)].path,"LOAD.TMP");}
 DWORD GetTickCount(void){return tick;} DWORD GetLastError(void){return err;} void SetLastError(DWORD e){err=e;}
 DWORD GetCurrentProcessId(void){return 42;} DWORD GetCurrentThreadId(void){return 7;}
-void Sleep(DWORD n){assert(n==250);sleeps++;tick+=n;if(is("budget"))tick+=400000;}
+void Sleep(DWORD n){DWORD before=tick;assert(n==250);sleeps++;tick+=n;if(tick<before)wrap_count++;if(is("budget"))tick+=400000;}
 DWORD GetModuleFileNameW(HINSTANCE h,LPWSTR p,DWORD n){const WCHAR*s=L"\\USB Disk\\S2AM-LOAD\\S2AMCTL.EXE";assert(!h&&n==260);if(is("pathfail"))return 0;if(is("pathfull"))return 260;wcscpy(p,s);return (DWORD)wcslen(s);}
 DWORD GetFileAttributesW(LPCWSTR p){char f[2048];struct stat st;hostpath(f,p);if(!stat(f,&st))return S_ISDIR(st.st_mode)?16:128;err=2;return 0xffffffffu;}
 BOOL CreateDirectoryW(LPCWSTR p,void*s){char f[2048];assert(!s);hostpath(f,p);if(!mkdir(f,0755))return 1;err=(errno==EEXIST)?183:5;return 0;}
 static void child_scratch(void){char f[2048],buf[256];int n;FILE*g;
     snprintf(f,2048,"%s/car/_s2am/load/%s/LOAD.TMP",root,RUN_DIR_NAME);
-    n=snprintf(buf,256,"S2AM-LOAD,1\r\nmeta,60,5000,512,256,%d,7777\r\nfrequency,start,8000000\r\n",is("wrongpid")?9999:4242);
+    n=snprintf(buf,256,"S2AM-LOAD,1\r\nmeta,60,5000,512,256,%d,%d\r\nfrequency,start,8000000\r\n",is("wrongpid")?9999:4242,is("wrongtid")?8888:7777);
     g=fopen(f,"wb");assert(g);fwrite(buf,1,n,g);fclose(g);}
 BOOL CreateProcessW(LPCWSTR app,LPWSTR cmd,void*pa,void*ta,BOOL inh,DWORD flags,void*env,LPCWSTR dir,STARTUPINFOW*si,PROCESS_INFORMATION*pi){
     assert(wcsstr(app,L"\\SyncExtendedPack\\")&&wcsstr(app,L"S2AMLOAD.EXE"));
     assert(!cmd&&!pa&&!ta&&!inh&&!flags&&!env&&!dir&&!si);
     pi->dwProcessId=4242;pi->dwThreadId=7777;pi->hProcess=alloc(NULL,2,"");pi->hThread=alloc(NULL,3,"");process_created++;
-    if(!is("neverready")&&!is("delayed")&&!is("budget")&&!is("childexit")&&!is("waiterror"))child_scratch();
+    if(!is("neverready")&&!is("delayed")&&!is("budget")&&!is("childexit")&&!is("waiterror")&&!is("tickwrap"))child_scratch();
     return 1;
 }
 DWORD WaitForSingleObject(HANDLE h,DWORD ms){assert(handles[idx(h)].kind==2&&ms==0);wait_calls++;
@@ -131,13 +131,16 @@ HANDLE CreateFileW(LPCWSTR p,DWORD a,DWORD sh,void*s,DWORD d,DWORD attr,HANDLE t
     char f[2048];FILE*g;assert(!s&&!t&&attr==128);hostpath(f,p);
     if(a==0x40000000u){assert(sh==1&&d==1);g=fopen(f,"wx");if(!g){err=80;return INVALID_HANDLE_VALUE;}return alloc(g,1,f);}
     assert(a==0x80000000u&&d==3&&(sh==1||sh==3));
-    if(wcsstr(p,L"LOAD.TMP")&&wcsstr(p,L"\\SyncExtendedPack\\")&&(is("delayed")||is("budget"))&&sleeps>=3){struct stat st;if(stat(f,&st))child_scratch();}
+    if(wcsstr(p,L"LOAD.TMP")&&wcsstr(p,L"\\SyncExtendedPack\\")&&(is("delayed")||is("budget")||is("tickwrap"))&&sleeps>=3){struct stat st;if(stat(f,&st))child_scratch();}
     g=fopen(f,"rb");if(!g){err=2;return INVALID_HANDLE_VALUE;}return alloc(g,1,f);
 }
-BOOL ReadFile(HANDLE h,void*b,DWORD n,DWORD*got,void*o){FILE*f=handles[idx(h)].f;DWORD r=n;assert(f&&!o);
+BOOL ReadFile(HANDLE h,void*b,DWORD n,DWORD*got,void*o){FILE*f=handles[idx(h)].f;DWORD r=n;long offset=ftell(f);assert(f&&!o);
     if(is("readfail")||(is("readbackfail")&&car_exe(h))||(is("usbreadbackfail")&&usb_scratch(h))){err=5;return 0;}
     if(is("shortread")&&n>3&&!car_scratch(h))r=3;
-    *got=(DWORD)fread(b,1,r,f);return 1;}
+    *got=(DWORD)fread(b,1,r,f);
+    if(*got&&is("readbackcorrupt")&&car_exe(h)&&offset==0)((BYTE*)b)[0]^=1;
+    if(*got&&is("usbreadbackcorrupt")&&usb_scratch(h)&&offset<=13&&offset+(long)*got>13)((BYTE*)b)[13-offset]^=1;
+    return 1;}
 BOOL WriteFile(HANDLE h,const void*b,DWORD n,DWORD*got,void*o){FILE*f=handles[idx(h)].f;assert(f&&!o);
     if(is("writefail")||(is("copyfail")&&car_exe(h))||(is("receiptfail")&&receipt(h))){*got=0;err=112;return 0;}
     if(is("zerowrite")){*got=0;return 1;}
@@ -158,10 +161,11 @@ BOOL MoveFileW(LPCWSTR from,LPCWSTR to){char a[2048],b[2048];struct stat st;host
     if(is("movefail")||!stat(b,&st)){err=80;return 0;}return rename(a,b)==0;}
 int MessageBoxW(HANDLE h,LPCWSTR text,LPCWSTR title,UINT flags){(void)h;(void)text;(void)title;(void)flags;return 1;}
 int WinMain(HINSTANCE,HINSTANCE,LPWSTR,int);
-int main(int argc,char**argv){int result,i;char pc[2048];FILE*m;assert(argc==3);root=argv[1];mode=argv[2];if(is("tickwrap"))tick=0xfffff000u;
+int main(int argc,char**argv){int result,i;char pc[2048];FILE*m;assert(argc==3);root=argv[1];mode=argv[2];if(is("tickwrap"))tick=0xffffff00u;
     result=WinMain(NULL,NULL,is("args")?L"unexpected":L"",0);
     for(i=0;i<MAXH;i++)assert(!handles[i].kind);assert(opened==closed);
     snprintf(pc,2048,"%s/proc_count",root);m=fopen(pc,"w");assert(m);fprintf(m,"%d",process_created);fclose(m);
+    snprintf(pc,2048,"%s/wrap_count",root);m=fopen(pc,"w");assert(m);fprintf(m,"%u",wrap_count);fclose(m);
     return result;}
 '''
 
@@ -393,12 +397,46 @@ class Lifecycle(unittest.TestCase):
         p, root = self.run_case("tickwrap", "start")
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertTrue((root / "usb" / "STARTED.TXT").exists())
+        self.assertGreater(int((root/"wrap_count").read_text()),0)
 
     def test_arguments_and_bad_module_path_refuse(self):
         for mode in ("args", "pathfail", "pathfull"):
             with self.subTest(mode=mode):
                 p, root = self.run_case(mode, "start")
                 self.assertEqual(p.returncode, 1, p.stderr)
+
+    def test_same_length_payload_corruption_reaches_hash_guard(self):
+        corrupted=bytes([PAYLOAD[0]^1])+PAYLOAD[1:]
+        self.assertEqual(len(corrupted),len(PAYLOAD))
+        p,root=self.run_case("ok","start",payload=corrupted)
+        self.assertEqual(p.returncode,1,p.stderr)
+        self.assertEqual(self.proc_count(root),0)
+        self.assertFalse((root/"usb"/"STARTED.TXT").exists())
+
+    def test_same_length_claim_corruption_reaches_content_guard(self):
+        wrong_hash=(("0" if PAYLOAD_SHA[0]!="0" else "1")+PAYLOAD_SHA[1:]).encode()
+        corrupted=CLAIM.replace(PAYLOAD_SHA.encode(),wrong_hash)
+        self.assertEqual(len(corrupted),len(CLAIM))
+        p,root=self.run_case("ok","collect",claim=corrupted)
+        self.assertEqual(p.returncode,1,p.stderr)
+        self.assertEqual(self.proc_count(root),0)
+        self.assertFalse((root/"usb"/"LOAD.CSV").exists())
+        self.assertEqual((self.run_dir(root)/"START.CLAIM").read_bytes(),corrupted)
+
+    def test_same_size_successful_readback_corruption_is_rejected(self):
+        for mode,preset in (("readbackcorrupt","start"),("usbreadbackcorrupt","collect")):
+            with self.subTest(mode=mode):
+                p,root=self.run_case(mode,preset)
+                self.assertEqual(p.returncode,1,p.stderr)
+                self.assertEqual(self.proc_count(root),0)
+                self.assertFalse((root/"usb"/"STARTED.TXT").exists())
+                self.assertFalse((root/"usb"/"LOAD.CSV").exists())
+
+    def test_correct_pid_but_wrong_tid_is_not_ready(self):
+        p,root=self.run_case("wrongtid","start")
+        self.assertEqual(p.returncode,1,p.stderr)
+        self.assertEqual(self.proc_count(root),1)
+        self.assertFalse((root/"usb"/"STARTED.TXT").exists())
 
 
 if __name__ == "__main__":
