@@ -25,7 +25,7 @@ class PackError(Exception):
 
 def _tree(root: Path) -> dict[str, str]:
     """Relative path -> sha256 for every file under ``root``."""
-    return {str(p.relative_to(root)): sha256(p) for p in sorted(root.rglob("*")) if p.is_file()}
+    return {p.relative_to(root).as_posix(): sha256(p) for p in sorted(root.rglob("*")) if p.is_file()}
 
 
 def build(job: Job, workdir: Path, upstream: Path, now: datetime | None = None,

@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   unit:
-    runs-on: macos-latest  # the toolkit supports macOS only; the tests build small C helpers with clang
+    runs-on: macos-latest  # macOS is the system tried in a car; the tests build small C helpers with clang
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -38,10 +38,10 @@ jobs:
         working-directory: sync2-auto-magic
         run: python3 -m unittest discover -s tests
 
-  # Linux (#5) and Windows (#6) are not supported yet. These runs show what breaks there; they
-  # may fail without failing the workflow.
+  # Linux (#5) and Windows (#6) are new and not yet tried with a real stick. These runs show what
+  # breaks there; they may fail without failing the workflow until they are made required.
   other-systems:
-    name: unit (${{ matrix.os }}, not supported yet)
+    name: unit (${{ matrix.os }}, new)
     runs-on: ${{ matrix.os }}
     continue-on-error: true
     timeout-minutes: 20

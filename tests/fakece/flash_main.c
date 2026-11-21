@@ -4,6 +4,10 @@
  *   backup:   the backup file's text, or "-" for none
  * Prints the registry, the backup and staging file, the report and the return value. */
 #include "s2amflash.c"
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 static void show_file(const char *label, const wchar_t *path)
 {
@@ -20,6 +24,9 @@ int main(int argc, char **argv)
     char *item, *spec;
     int i, result;
     if (argc != 4) return 9;
+#ifdef _WIN32
+    _setmode(_fileno(stdout), _O_BINARY);  /* the report's own \r\n must come out unchanged */
+#endif
     spec = strdup(argv[1]);
     if (!strcmp(spec, "nokey")) fake_key = 0;
     else

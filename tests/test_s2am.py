@@ -180,10 +180,39 @@ class Stick(Temp):
         stick.prepare(root, bin_, second, require_volume=False)
         self.assertEqual([p.stem for p in (root / "s2am" / "pending").iterdir()], [second.id])
 
+    def test_a_volume_on_an_internal_disk_is_refused_before_anything_is_written(self):
+        # C:\\ or an internal D:\\ on Windows are drives' top folders like any stick
+        root = self.stick()
+        internal = {"Internal": True, "Ejectable": False, "BusProtocol": "SATA", "SystemMounts": []}
+        system = {"Internal": False, "Ejectable": True, "BusProtocol": "USB", "SystemMounts": ["Windows itself"]}
+        ntfs = {"Internal": False, "Ejectable": True, "BusProtocol": "USB", "SystemMounts": [],
+                "FilesystemName": "NTFS"}  # could hold junctions; SYNC reads only FAT32
+
+        def unreadable(target):
+            raise OSError("no answer")
+        before = sorted(root.rglob("*"))
+        with mock.patch.object(stick.hostos, "is_volume", return_value=True):
+            for name, info in (("internal", lambda t: internal), ("system", lambda t: system),
+                               ("ntfs", lambda t: ntfs), ("unreadable", unreadable)):
+                with self.subTest(name=name):
+                    with self.assertRaises(stick.StickError):
+                        stick.prepare(root, self.tmp / "x", Job(SERIAL, "inv"), info=info)
+                    with self.assertRaises(stick.StickError):
+                        stick.import_reports(root, Store(), info=info)
+                    self.assertEqual(sorted(root.rglob("*")), before)
+
+    def test_a_windows_junction_counts_as_a_link(self):
+        folder = self.tmp / "SyncExtPack"
+        folder.mkdir()
+        self.assertFalse(stick._linked(folder))
+        junction = mock.Mock(st_mode=0o040755, st_file_attributes=stick.REPARSE_POINT)  # a directory
+        with mock.patch.object(Path, "lstat", return_value=junction):
+            self.assertTrue(stick._linked(folder))
+
     def test_requires_a_volume_by_default(self):
-        # /Volumes on a Mac, /media/<you> on Linux
-        with self.assertRaisesRegex(stick.StickError, "not a removable volume under " +
-                                    re.escape(str(hostos.volume_roots()[0]))):
+        # a folder under /Volumes on a Mac, /media/<you> on Linux, a drive's top folder on Windows
+        with self.assertRaisesRegex(stick.StickError, "not a removable volume: a stick is " +
+                                    re.escape(hostos.places())):
             stick.prepare(self.stick(), self.tmp / "x", Job(SERIAL, "inv"))
 
 
@@ -397,7 +426,9 @@ class ContainerPaths(unittest.TestCase):
             run.return_value.returncode = 0
             container.run(Path("relative-job"), "true")
         mount = run.call_args[0][0][run.call_args[0][0].index("-v") + 1]
-        self.assertTrue(mount.startswith("/"), mount)
+        source, target = mount.rsplit(":", 1)  # C:\\folder:/work on Windows
+        self.assertEqual(target, "/work")
+        self.assertTrue(Path(source).is_absolute(), mount)
 
 
 class Diff(unittest.TestCase):

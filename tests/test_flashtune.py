@@ -65,7 +65,7 @@ class Summary(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.report)
 
     def write(self, *lines):
-        (self.report / "flash.txt").write_text("".join(line + "\r\n" for line in lines))
+        (self.report / "flash.txt").write_bytes("".join(line + "\r\n" for line in lines).encode())
 
     def text(self, params=None):
         return "\n".join(flashtune.summary(self.report, self.PARAMS if params is None else params))
@@ -211,7 +211,7 @@ class Native(unittest.TestCase):
         self.assertEqual(staging, "-")  # no staging file is ever left behind
         folder_path = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, folder_path)
-        (folder_path / "flash.txt").write_text(report) if report != "-" else None
+        (folder_path / "flash.txt").write_bytes(report.encode()) if report != "-" else None
         try:
             params = {"undo": True} if mode == "undo" else {
                 "values": {k: int(v) for k, v in (item.split("=") for item in mode[4:].split(","))}}

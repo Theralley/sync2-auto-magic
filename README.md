@@ -202,8 +202,10 @@ run the same system, but nothing is guaranteed.
 - [ ] **A Mac** with [Docker Desktop](https://www.docker.com/products/docker-desktop/) and Python 3.
       **Linux** is implemented and unit-tested, but not yet tried with a real stick on a Linux
       desktop or in a car ([#5](https://github.com/Theralley/sync2-auto-magic/issues/5)); what
-      it needs is in the [install guide](docs/INSTALL.md#on-linux). **Windows** is not supported
-      yet ([#6](https://github.com/Theralley/sync2-auto-magic/issues/6))
+      it needs is in the [install guide](docs/INSTALL.md#on-linux). **Windows** is newer still:
+      implemented and unit-tested, not yet tried with a real stick or in a car
+      ([#6](https://github.com/Theralley/sync2-auto-magic/issues/6), the
+      [install guide](docs/INSTALL.md#on-windows) says what it needs)
 - [ ] **Your APIM serial**: 8 characters, under *Settings → General → About SYNC*
 
 ## Easiest: the guided installer

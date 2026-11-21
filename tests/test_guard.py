@@ -709,6 +709,7 @@ class ThreadList(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("cc"), "needs a C compiler")
+@unittest.skipIf(os.name == "nt", "its stand-ins use Unix C calls: needs a Unix host (#6)")
 class ProcessList(unittest.TestCase):
     """find_process() from s2amrun.c over a scripted toolhelp list: no list is not "not running"."""
 
@@ -1684,6 +1685,7 @@ class Loop(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("cc"), "needs a C compiler")
+@unittest.skipIf(os.name == "nt", "its stand-ins use Unix C calls: needs a Unix host (#6)")
 class StartCalm(unittest.TestCase):
     """The calm from s2amrun.c over a fake kernel that counts every handle by itself: Desktop.exe
     (pid 9) has threads 20 and 22 at 250 and 21 at 251; another process has thread 30 at 250."""

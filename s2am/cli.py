@@ -103,7 +103,8 @@ def _read_back(stick_path: Path, install: Path, job: Job, args) -> bool:
         print(f"FAIL: {', '.join(wrong)} did not read back as written. Do not use this stick: prepare it again, "
               "or use another")
         return False
-    print("read back: identical" + (" after a remount" if remounted else ""))
+    note = "" if remounted or args.no_eject or args.any_path else hostos.REMOUNT_NOTE.get(hostos.SYSTEM, "")
+    print("read back: identical" + (" after a remount" if remounted else f" ({note})" if note else ""))
     return True
 
 
@@ -1143,7 +1144,8 @@ def cmd_report(args) -> int:
             total = next((line for line in lines if line.startswith("T|")), "T|not finished")
             print(f"[skins.txt] {files} screen files copied to {report / 'skins'}, {errors} failed; {total[2:]}")
         if (report / "files.txt").is_file():
-            count = sum(1 for _ in (report / "files.txt").open(errors="replace"))
+            with (report / "files.txt").open(errors="replace") as listing:
+                count = sum(1 for _ in listing)
             print(f"[files.txt] {count} folders and files listed")
     for name, title in (("guard.log", "runner guard log when the stick ran"),
                         ("guard-live.log", "runner guard log, last copy the watcher made"),
@@ -1226,7 +1228,7 @@ def parser() -> argparse.ArgumentParser:
     boot_finish.add_argument("stick")
     for command, func in ((boot_prepare, cmd_bootstrap_prepare), (boot_finish, cmd_bootstrap_finish)):
         command.add_argument("--any-path", action="store_true",
-                             help="allow a folder outside /Volumes; skips disk checks and eject")
+                             help="allow any folder, not only a stick's top folder; skips disk checks and eject")
         command.add_argument("--no-eject", action="store_true")
         command.set_defaults(func=func, force=False)
     boot_prepare.add_argument("--force", action="store_true",
@@ -1451,12 +1453,12 @@ def parser() -> argparse.ArgumentParser:
     prepare = stick_sub.add_parser("prepare")
     prepare.add_argument("stick")
     prepare.add_argument("--job", required=True, help="the job's staging folder")
-    prepare.add_argument("--any-path", action="store_true", help="allow a folder outside /Volumes")
+    prepare.add_argument("--any-path", action="store_true", help="allow any folder, not only a stick's top folder")
     prepare.add_argument("--no-eject", action="store_true")
     prepare.set_defaults(func=cmd_stick_prepare)
     imp = stick_sub.add_parser("import")
     imp.add_argument("stick")
-    imp.add_argument("--any-path", action="store_true", help="allow a folder outside /Volumes")
+    imp.add_argument("--any-path", action="store_true", help="allow any folder, not only a stick's top folder")
     imp.set_defaults(func=cmd_stick_import)
 
     status = sub.add_parser("status", help="state from the last report")

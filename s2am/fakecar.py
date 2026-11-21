@@ -92,7 +92,7 @@ class FakeCar:
         if not install.exists():
             return
         if job.serial != self.serial:
-            (updater / "install_log.txt").write_text("Error: wrong APIM serial\n")
+            (updater / "install_log.txt").write_bytes("Error: wrong APIM serial\n".encode())
             return
         self.runs += 1
         payload = staged / "payload"
@@ -110,7 +110,7 @@ class FakeCar:
                 raise PowerCut
         except PowerCut:
             return  # no log, no rename: the stick still carries install.bin
-        (updater / "install_log.txt").write_text("Install successfully completed!\n")
+        (updater / "install_log.txt").write_bytes("Install successfully completed!\n".encode())
         if not (updater / "installed.bin").exists():  # otherwise the rename fails silently
             install.rename(updater / "installed.bin")
 
@@ -120,19 +120,19 @@ class FakeCar:
         out.mkdir(parents=True, exist_ok=True)
         self.stick = stick
         if self.exists(job.done_marker):
-            (out / "replayed.txt").write_text(job.id)
+            (out / "replayed.txt").write_bytes(job.id.encode())
             if job.kind in ("akcfg", "guard") and job.params.get("measure"):
                 self._collect(out, job.id)
             for part in bundle_parts(job) if job.kind == "bundle" else []:
                 (out.parent / part.id).mkdir(exist_ok=True)
-                (out.parent / part.id / "replayed.txt").write_text(part.id)
+                (out.parent / part.id / "replayed.txt").write_bytes(part.id.encode())
             return
         if job.kind == "akmic" and not self._mic_gate(out, job):
             return
         variant = {"akstock": "orig", "akpatch": "patched"}.get(job.kind)
         if variant:
             if self.autokit_running or "autokit.exe" in self.running:
-                (out / "busy.txt").write_text("AutoKit is running")
+                (out / "busy.txt").write_bytes("AutoKit is running".encode())
                 return
             for module in AUTOKIT_MODULES:
                 source = self._resolve(f"{AUTOKIT_CE}\\{module}.{variant}")
@@ -155,31 +155,31 @@ class FakeCar:
         if job.kind == "log" and job.params.get("collect"):
             self._collect(out, job.params["collect"])
         elif (job.kind == "log" and job.params.get("load")) or (job.kind in ("akcfg", "guard") and job.params.get("measure")):
-            (out / "logger-started.txt").write_text("started")
+            (out / "logger-started.txt").write_bytes("started".encode())
             folder = load_folder(job.id)
             self.put(f"{folder}\\watch.log", "".join(f"{line}\r\n" for line in self.watch_lines).encode())
             self.put(f"{folder}\\drive.log", "".join(f"{line}\r\n" for line in self.drive_lines).encode())
             for name, data in self.watch_copies.items():
                 self.put(f"{folder}\\{name}", data)
         elif job.kind == "log":
-            (out / "logger-started.txt").write_text("started")
-            (out / "watch.log").write_text("".join(f"{line}\r\n" for line in self.watch_lines))
+            (out / "logger-started.txt").write_bytes("started".encode())
+            (out / "watch.log").write_bytes(("".join(f"{line}\r\n" for line in self.watch_lines)).encode())
             for name, data in self.watch_copies.items():
                 (out / name).write_bytes(data)
             if job.params.get("native"):
-                (out / "notify.txt").write_text("".join(f"{line}\r\n" for line in self.notify_lines))
+                (out / "notify.txt").write_bytes(("".join(f"{line}\r\n" for line in self.notify_lines)).encode())
             if job.params.get("drive"):
-                (out / "drive.log").write_text("".join(f"{line}\r\n" for line in self.drive_lines))
-                (out / "files.txt").write_text("D|\\8inchSkins\r\nF|\\8inchSkins\\a.swf|3\r\n")
-                (out / "skins.txt").write_text("F|\\8inchSkins\\a.swf|3|" + "0" * 64 + "\r\n"
-                                               "T|complete|1 files|3 bytes|0 errors\r\n")
+                (out / "drive.log").write_bytes(("".join(f"{line}\r\n" for line in self.drive_lines)).encode())
+                (out / "files.txt").write_bytes("D|\\8inchSkins\r\nF|\\8inchSkins\\a.swf|3\r\n".encode())
+                (out / "skins.txt").write_bytes(("F|\\8inchSkins\\a.swf|3|" + "0" * 64 + "\r\n"
+                                               "T|complete|1 files|3 bytes|0 errors\r\n").encode())
                 (out / "skins" / "8inchSkins").mkdir(parents=True)
                 (out / "skins" / "8inchSkins" / "a.swf").write_bytes(b"FWS")
                 (out / "screens").mkdir()
                 (out / "screens" / "0001-120000.bmp").write_bytes(b"BM")
         if job.kind == "reg":  # what s2amreg.exe writes; a paired phone's key is never copied
-            (out / "registry.txt").write_text("".join(f"{line}\r\n" for line in self.registry_lines))
-            (out / "registry-done.txt").write_text("T|complete|2 keys|3 values|1 not copied")
+            (out / "registry.txt").write_bytes(("".join(f"{line}\r\n" for line in self.registry_lines)).encode())
+            (out / "registry-done.txt").write_bytes("T|complete|2 keys|3 values|1 not copied".encode())
             for path in job.params.get("fetch") or []:
                 if self.exists(path):
                     (out / "fetched").mkdir(exist_ok=True)
@@ -187,7 +187,7 @@ class FakeCar:
         if job.kind == "neondiag" and self.native_runs:  # what s2amnd.exe writes
             (out / "nd.txt").write_bytes("".join(f"{line}\r\n" for line in self.nd_lines).encode("ascii"))
         if job.kind == "hello":
-            (out / "native-hello.txt").write_text("s2am native hello ok|wince 7.0 build 3500|uptime_ms 1\r\n")
+            (out / "native-hello.txt").write_bytes("s2am native hello ok|wince 7.0 build 3500|uptime_ms 1\r\n".encode())
         lines = []
         apps = self._resolve(INVENTORY_ROOT)
 
@@ -211,7 +211,7 @@ class FakeCar:
             for dll in sorted(plugins.iterdir()):
                 if dll.name.lower().endswith("plugin.dll"):
                     lines.append(f"F|{self._ce(dll)}|{dll.stat().st_size}")
-        (out / "inventory.txt").write_text("".join(line + "\r\n" for line in lines))
+        (out / "inventory.txt").write_bytes(("".join(line + "\r\n" for line in lines)).encode())
         menu = self._resolve(MENU_XML)
         if menu.exists():
             shutil.copyfile(menu, out / "SyncApps.xml")
@@ -234,9 +234,9 @@ class FakeCar:
             if self._resolve(f"{AUTOKIT_CE}\\{name}").exists():
                 shutil.copyfile(self._resolve(f"{AUTOKIT_CE}\\{name}"), out / f"autokit-{name}")
         self.put(job.done_marker, job.id.encode())
-        (out / "done.txt").write_text(f"{job.id} applied")
-        (out / "info.txt").write_text(f"job={job.id}\r\ntime=2026-10-30 12:00:00\r\n"
-                                      f"mortscript=4.2\r\nfree=123456\r\n")
+        (out / "done.txt").write_bytes(f"{job.id} applied".encode())
+        (out / "info.txt").write_bytes((f"job={job.id}\r\ntime=2026-10-30 12:00:00\r\n"
+                                      f"mortscript=4.2\r\nfree=123456\r\n").encode())
 
     def _copy(self, source: Path, target: Path) -> None:
         """MortScript Copy: a broken target silently ends up truncated, a garbled one damaged at
@@ -261,7 +261,7 @@ class FakeCar:
         files, added = p["files"], p.get("added") or {}
 
         def stop(marker: str) -> bool:
-            (out / marker).write_text(marker)
+            (out / marker).write_bytes(marker.encode())
             return False
         def size(path: Path) -> int:  # MortScript's FileSize: no file, no size that could match
             return path.stat().st_size if path.is_file() else -1
@@ -323,11 +323,11 @@ class FakeCar:
                     if (jd / f"{NEON_REPORT}.pass").exists():
                         return stop("neon-failed.txt")
                     if self.native_runs:
-                        (jd / NEON_REPORT).write_text("S|s2am-neon-v1\r\nB|child\r\nB|instr\r\n" + (
+                        (jd / NEON_REPORT).write_bytes(("S|s2am-neon-v1\r\nB|child\r\nB|instr\r\n" + (
                             "W|0|rounds|8|bad|0|first_bad|0|longest_ms|520\r\nK|pass\r\nC|exit|00000000\r\nT|pass\r\n"
-                            if self.neon_works else "C|exit|c000001d\r\n"))
+                            if self.neon_works else "C|exit|c000001d\r\n")).encode())
                         if self.neon_works:
-                            (jd / f"{NEON_REPORT}.pass").write_text("pass")
+                            (jd / f"{NEON_REPORT}.pass").write_bytes("pass".encode())
                     if not (jd / f"{NEON_REPORT}.pass").is_file():
                         if (jd / NEON_REPORT).is_file():
                             shutil.copyfile(jd / NEON_REPORT, out / NEON_REPORT)
@@ -336,7 +336,7 @@ class FakeCar:
                     self._copy(th / name, backup / name)
                 if any(size(backup / n) != f["old"] for n, f in files.items()):
                     return stop("backup-failed.txt")
-                (out / CHANGING).write_text(job.id)
+                (out / CHANGING).write_bytes(job.id.encode())
                 for name in files:
                     self._copy(jd / f"new-{name}", th / name)
                 if any(size(th / n) != f["new"] for n, f in files.items()):
@@ -356,7 +356,7 @@ class FakeCar:
             (out / "applied").mkdir(exist_ok=True)
             for name in files:
                 self._copy(th / name, out / "applied" / name)
-            (out / "dec-applied.txt").write_text(job.id)
+            (out / "dec-applied.txt").write_bytes(job.id.encode())
             return True
         if not p.get("restore") and backup.is_dir():
             return stop("started-before.txt")  # first: a run cut short fails the checks below
@@ -370,7 +370,7 @@ class FakeCar:
         if p.get("restore"):
             if any((jd / f"orig-{n}").stat().st_size != size for n, size in files.items()):
                 return stop("payload-bad.txt")
-            (out / CHANGING).write_text(job.id)
+            (out / CHANGING).write_bytes(job.id.encode())
             for name in files:
                 self._copy(jd / f"orig-{name}", th / name)
             if any((th / n).stat().st_size != size for n, size in files.items()):
@@ -390,7 +390,7 @@ class FakeCar:
             # as the script does: both copies whole, the car's and the stick's, before any change
             if any(size(copy / n) != f["old"] for n, f in files.items() for copy in (backup, out / "backup")):
                 return stop("backup-failed.txt")
-            (out / CHANGING).write_text(job.id)
+            (out / CHANGING).write_bytes(job.id.encode())
             for name in added:
                 self._copy(jd / ("add-" + name.replace("\\", "_")), th / name.replace("\\", "/"))
             for name in files:
@@ -410,7 +410,7 @@ class FakeCar:
             self._copy(th / name, out / "applied" / name)
         for name in added if not p.get("restore") else []:
             self._copy(th / name.replace("\\", "/"), out / "applied" / name.replace("\\", "_"))
-        (out / done).write_text(job.id)
+        (out / done).write_bytes(job.id.encode())
         for path in p.get("fetch") or []:
             if self.exists(path):
                 (out / "fetched").mkdir(exist_ok=True)
@@ -421,7 +421,7 @@ class FakeCar:
         """The cleanup's effect: every job folder goes except the one marked to stay (``home``)."""
         keep = self._resolve(ce_path(home))
         keep.mkdir(parents=True, exist_ok=True)
-        (keep / f"keep-{job.id}").write_text(job.id)
+        (keep / f"keep-{job.id}").write_bytes(job.id.encode())
         lines = []
         for folder in sorted(p for p in keep.parent.iterdir() if p.is_dir()):
             if (folder / f"keep-{job.id}").exists():
@@ -429,7 +429,7 @@ class FakeCar:
             else:
                 shutil.rmtree(folder)
                 lines.append(f"D|{self._ce(folder)}")
-        (out / "cleanup.txt").write_text("".join(f"{line}\r\n" for line in lines))
+        (out / "cleanup.txt").write_bytes(("".join(f"{line}\r\n" for line in lines)).encode())
 
     def _bundle(self, out: Path, job: Job) -> bool:
         """A bundle's effect: its parts in order, each reporting on its own; the first that
@@ -437,20 +437,20 @@ class FakeCar:
         parts = bundle_parts(job)
         for part in parts:
             (out.parent / part.id).mkdir(exist_ok=True)
-            (out.parent / part.id / "queued.txt").write_text(job.id)
+            (out.parent / part.id / "queued.txt").write_bytes(job.id.encode())
         for part in parts:
-            (out / "part.txt").write_text(part.id)
+            (out / "part.txt").write_bytes(part.id.encode())
             part_out = out.parent / part.id
             if self.exists(part.done_marker):
-                (part_out / "replayed.txt").write_text(part.id)
+                (part_out / "replayed.txt").write_bytes(part.id.encode())
                 continue
-            (part_out / "started.txt").write_text(job.id)
+            (part_out / "started.txt").write_bytes(job.id.encode())
             if part.kind == "clean":
                 self._clean(part_out, part, job.job_dir)
             elif not self._swap(part_out, part):
                 return False
             self.put(part.done_marker, part.id.encode())
-            (part_out / "done.txt").write_text(f"{part.id} applied")
+            (part_out / "done.txt").write_bytes(f"{part.id} applied".encode())
         return True
 
     def _change_menu(self, out: Path, job: Job) -> bool:
@@ -462,7 +462,7 @@ class FakeCar:
         read = lambda path: path.read_bytes() if path.exists() else b""  # noqa: E731
 
         def stop(marker: str) -> bool:
-            (out / marker).write_text(marker)
+            (out / marker).write_bytes(marker.encode())
             return False
 
         if len(read(expected)) != p["expected_len"]:
@@ -499,7 +499,7 @@ class FakeCar:
                 self._copy(expected, menu)
                 return stop("copy-failed.txt")
             phase.parent.mkdir(parents=True, exist_ok=True)
-            phase.write_text(job.id)
+            phase.write_bytes(job.id.encode())
             if self.power_cut_after_phase:
                 self.power_cut_after_phase = False
                 raise PowerCut
@@ -523,21 +523,21 @@ class FakeCar:
         new = self._resolve(ce_path(job.job_dir)) / MIC_GATE_FILE
         live, patched, kept = ak / "AutoKit.exe", ak / "AutoKit.exe.patched", ak / MIC_GATE_FILE
         if self.autokit_running or "autokit.exe" in self.running:
-            (out / "busy.txt").write_text("AutoKit is running")
+            (out / "busy.txt").write_bytes("AutoKit is running".encode())
             return False
         if not new.is_file() or new.stat().st_size != size:
-            (out / "payload-bad.txt").write_text("incomplete")
+            (out / "payload-bad.txt").write_bytes("incomplete".encode())
             return False
         if not patched.is_file():
-            (out / "missing.txt").write_text("no patched copy")
+            (out / "missing.txt").write_bytes("no patched copy".encode())
             return False
         if patched.stat().st_size != size or not live.is_file() or live.stat().st_size != size:
-            (out / "unknown.txt").write_text("not the one planned against")
+            (out / "unknown.txt").write_bytes("not the one planned against".encode())
             return False
         self._copy(new, kept)
         if not kept.is_file() or kept.stat().st_size != size:
             kept.unlink(missing_ok=True)
-            (out / "copy-failed.txt").write_text("did not copy; nothing changed")
+            (out / "copy-failed.txt").write_bytes("did not copy; nothing changed".encode())
             return False
         self._copy(kept, live)
         if live.stat().st_size != size:
@@ -547,9 +547,9 @@ class FakeCar:
                 self._copy(patched, live)
             shutil.copyfile(live, out / MIC_GATE_APPLIED)
             if live.stat().st_size != size:
-                (out / "rollback-failed.txt").write_text("damaged, and the patched one could not be put back")
+                (out / "rollback-failed.txt").write_bytes("damaged, and the patched one could not be put back".encode())
                 return False
-            (out / "copy-failed.txt").write_text("did not copy whole; the patched one was put back")
+            (out / "copy-failed.txt").write_bytes("did not copy whole; the patched one was put back".encode())
             return False
         if self.mic_gate_readback:
             shutil.copyfile(live, out / MIC_GATE_APPLIED)
@@ -558,16 +558,16 @@ class FakeCar:
     def _autokit_config(self, out: Path, job: Job) -> bool:
         ak = self._resolve(AUTOKIT_CE)
         if not ak.is_dir():
-            (out / "missing.txt").write_text("no AutoKit")
+            (out / "missing.txt").write_bytes("no AutoKit".encode())
             return False
         if self.autokit_running or "autokit.exe" in self.running:
-            (out / "busy.txt").write_text("running")
+            (out / "busy.txt").write_bytes("running".encode())
             return False
         screen, hwdec = ak / "screenconfig", ak / "usehwdec"
         if job.params.get("restore"):
             src = self._resolve(f"{BACKUP_DIR}\\{job.params['restore']}")
             if not src.is_dir():
-                (out / "backup-missing.txt").write_text("none")
+                (out / "backup-missing.txt").write_bytes("none".encode())
                 return False
             if (src / "screenconfig").exists():
                 shutil.copyfile(src / "screenconfig", screen)
@@ -594,7 +594,7 @@ class FakeCar:
                 else:
                     (backup / "screenconfig.absent").write_bytes(b"")
                 (backup / ("usehwdec.present" if hwdec.exists() else "usehwdec.absent")).write_bytes(b"")
-                screen.write_text(job.params["screen"])
+                screen.write_bytes((job.params["screen"]).encode())
                 if job.params["decoder"] == "software":
                     hwdec.unlink(missing_ok=True)
                 else:
@@ -615,35 +615,35 @@ class FakeCar:
         image = ak / "Auto_Box_Update.img"
         if image.exists():
             image.unlink()
-            (out / "firmware-image-removed.txt").write_text("removed")
+            (out / "firmware-image-removed.txt").write_bytes("removed".encode())
         return True
 
     def _runner_guard(self, out: Path, job: Job) -> bool:
         tools = self._resolve(TOOLS_CE)
         runner, original = tools / "SyncAppsRunner.exe", tools / "SyncAppsRunner.orig.exe"
         if {"syncappsrunner.exe", "syncappsrunner.orig.exe"} & self.running:
-            (out / "busy.txt").write_text("an app is open")
+            (out / "busy.txt").write_bytes("an app is open".encode())
             return False
         if not runner.exists():
-            (out / "missing.txt").write_text("no runner")
+            (out / "missing.txt").write_bytes("no runner".encode())
             return False
         stock = job.params["stock_size"]
         size = lambda path: path.stat().st_size  # noqa: E731
         if job.params["action"] == "enable":
             if not self.native_runs:
-                (out / "selftest-failed.txt").write_text("did not run")
+                (out / "selftest-failed.txt").write_bytes("did not run".encode())
                 return False
-            (out / "guard-selftest.txt").write_text("s2amrun ok|s2am runner guard|toolhelp 1|"
+            (out / "guard-selftest.txt").write_bytes(("s2amrun ok|s2am runner guard|toolhelp 1|"
                                                     "processes 40|desktop 1|desktop_visible 1|background 1|"
-                                                    f"priority {int(self.thread_priority)}\r\n")
+                                                    f"priority {int(self.thread_priority)}\r\n").encode())
             if original.exists() and size(original) != stock:
                 if size(runner) != stock:
-                    (out / "backup-bad.txt").write_text("neither is the stock runner")
+                    (out / "backup-bad.txt").write_bytes("neither is the stock runner".encode())
                     return False
                 original.unlink()
             if not original.exists():
                 if size(runner) != stock:
-                    (out / "unknown-runner.txt").write_text("not the stock runner")
+                    (out / "unknown-runner.txt").write_bytes("not the stock runner".encode())
                     return False
                 shutil.copyfile(runner, original)
             shutil.copyfile(self._resolve(ce_path(job.job_dir)) / "s2amrun.exe", runner)
@@ -657,12 +657,12 @@ class FakeCar:
             return True
         elif original.exists():
             if size(original) != stock:
-                (out / "backup-bad.txt").write_text("damaged keep")
+                (out / "backup-bad.txt").write_bytes("damaged keep".encode())
                 return False
             shutil.copyfile(original, runner)
             original.unlink()
         else:
-            (out / "guard-was-off.txt").write_text("off")
+            (out / "guard-was-off.txt").write_bytes("off".encode())
         boost = self._resolve(GUARD_BOOST)  # off: after the runner, as the script does
         if job.params["action"] == "disable" and boost.exists():
             shutil.copyfile(boost, out / "guard-boost-before.txt")
@@ -685,11 +685,11 @@ class FakeCar:
                 shutil.copyfile(path, out / Path(where.replace(chr(92), "/")).name)
             else:
                 path.unlink()
-            (out / "copy-failed.txt").write_text(f"the {what} did not write")
+            (out / "copy-failed.txt").write_bytes(f"the {what} did not write".encode())
             return False
         if path.exists():
             if self._ce(path).lower() in self.stuck_files:
-                (out / "copy-failed.txt").write_text(stuck)
+                (out / "copy-failed.txt").write_bytes(stuck.encode())
                 return False
             path.unlink()
         return True
@@ -707,11 +707,11 @@ class FakeCar:
                 shutil.copyfile(path, out / "guard-calm.txt")
             else:
                 path.unlink()
-            (out / "copy-failed.txt").write_text("the calm did not write")
+            (out / "copy-failed.txt").write_bytes("the calm did not write".encode())
             return False
         if path.exists():
             if self._ce(path).lower() in self.stuck_files:
-                (out / "copy-failed.txt").write_text(stuck)
+                (out / "copy-failed.txt").write_bytes(stuck.encode())
                 return False
             path.unlink()
         return True
@@ -726,8 +726,8 @@ class FakeCar:
             self._copy_text(str(level).encode(), boost)
             if boost.read_bytes() != str(level).encode():
                 if self._remove_boost(out, BOOST_STUCK_WRITE, keep=True):
-                    (out / "copy-failed.txt").write_text("the boost did not write; the guard is on, "
-                                                         "without the boost")
+                    (out / "copy-failed.txt").write_bytes(("the boost did not write; the guard is on, "
+                                                         "without the boost").encode())
                 return False
         elif boost.exists():
             return self._remove_boost(out, BOOST_STUCK_ON)
@@ -741,7 +741,7 @@ class FakeCar:
             return True
         if keep:
             shutil.copyfile(boost, out / "guard-boost.txt")
-        (out / "copy-failed.txt").write_text(stuck)
+        (out / "copy-failed.txt").write_bytes(stuck.encode())
         return False
 
     def _copy_text(self, data: bytes, target: Path) -> None:
@@ -759,4 +759,4 @@ class FakeCar:
         lines.append("K|HKLM\\Init")
         lines += [f"V|HKLM\\Init|{n}|{v}" for n, v in self.registry.get("HKLM\\Init", {}).items()]
         lines.append("S|system|7.0")
-        (out / "registry.txt").write_text("".join(line + "\r\n" for line in lines))
+        (out / "registry.txt").write_bytes(("".join(line + "\r\n" for line in lines)).encode())

@@ -1,4 +1,5 @@
 """Run the real native diagnostic through a bounded, hardware-free Windows API shim."""
+import os
 import shutil
 import subprocess
 import tempfile
@@ -222,6 +223,7 @@ int main(int argc,char **argv) {
 
 
 @unittest.skipUnless(shutil.which("cc"), "needs a host C compiler")
+@unittest.skipIf(os.name == "nt", "its stand-ins use Unix C calls: needs a Unix host (#6)")
 class Diagnostic(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

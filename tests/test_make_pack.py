@@ -1,6 +1,7 @@
 """Tests for tools/make_pack.py staging; the container build is exercised by hand."""
 import contextlib
 import io
+import os
 import shutil
 import sys
 import tempfile
@@ -36,7 +37,10 @@ class Stage(unittest.TestCase):
         (self.upstream / mp.HOOK_SOURCE).parent.mkdir(parents=True)
         shutil.copy2(UPSTREAM / mp.HOOK_SOURCE, self.upstream / mp.HOOK_SOURCE)
         (self.upstream / "FlashTools").mkdir()
-        (self.upstream / "FlashTools" / "swfmill").symlink_to("/opt/homebrew/bin/swfmill")
+        try:  # upstream has a symlink here; a Windows clone without symlink rights has a text file
+            (self.upstream / "FlashTools" / "swfmill").symlink_to("/opt/homebrew/bin/swfmill")
+        except OSError:
+            (self.upstream / "FlashTools" / "swfmill").write_text("/opt/homebrew/bin/swfmill")
         (self.upstream / "crypto_pack").write_bytes(b"\x7fELF")
         (self.upstream / "crypto_pack_docker.sh").write_text("#!/bin/sh\n")
         (self.upstream / ".git").mkdir()
@@ -68,8 +72,11 @@ class Stage(unittest.TestCase):
     def test_stage_prepares_container_tools(self):
         mp.stage(self.upstream, self.staging)
         self.assertFalse((self.staging / "crypto_pack_docker.sh").exists())
-        self.assertEqual(str((self.staging / "FlashTools" / "swfmill").readlink()),
-                         "/usr/bin/swfmill")
+        swfmill = self.staging / "FlashTools" / "swfmill"
+        if os.name == "nt":  # a symlink needs extra rights there: a script runs the same program
+            self.assertEqual(swfmill.read_bytes(), b'#!/bin/sh\nexec /usr/bin/swfmill "$@"\n')
+        else:
+            self.assertEqual(str(swfmill.readlink()), "/usr/bin/swfmill")
         self.assertFalse((self.staging / ".git").exists())
         self.assertFalse((self.staging / "Apps" / "AutoKit-WINCE.rar").exists())
 
@@ -130,6 +137,9 @@ class VerifyPacks(unittest.TestCase):
 
     def fake_unpack(self, good):
         def run(staging, *command, quiet=False):
+            # crypto_pack runs on Linux in the container: the pack's path must use / on every computer
+            self.assertIn(command[2], ("SyncExtPack/XV31M13H/SyncExtPack/pack_install.bin",
+                                       "SyncExtPack/XV31M13H/SyncExtPack/update.bin"))
             target = staging / command[3]
             if command[2].endswith("update.bin"):
                 (target / "windows").mkdir(parents=True)

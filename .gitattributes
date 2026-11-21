@@ -1,0 +1,5 @@
+# Every file reaches the computer byte for byte as committed, on Windows too: files that go to
+# the car or into a pack must not get Windows line ends from git. The .bat file is committed
+# with Windows line ends already.
+* -text
+*.bat whitespace=cr-at-eol

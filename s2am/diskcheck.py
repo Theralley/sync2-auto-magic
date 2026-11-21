@@ -1,7 +1,7 @@
 """Is this USB stick fit for SYNC 2? FAT32, MBR, 32 GB or less, external, nothing left to run.
 
 The volume facts come from hostos.disk_info (`diskutil info -plist` on macOS, `lsblk` on Linux,
-in diskutil's shape); tests inject their own.
+PowerShell on Windows, in diskutil's shape); tests inject their own.
 """
 from __future__ import annotations
 
@@ -27,6 +27,13 @@ def diskutil_info(target: str) -> dict:
     return hostos.disk_info(target)
 
 
+def external(volume: dict) -> bool:
+    """Is this volume on an external removable disk that holds nothing of the computer's own?"""
+    return bool(not volume.get("Internal", True)
+                and volume.get("Ejectable", volume.get("RemovableMediaOrExternalDevice", False))
+                and not volume.get("SystemMounts"))
+
+
 @dataclass
 class Finding:
     level: str  # "ok", "warn" or "fail"
@@ -47,17 +54,20 @@ def check(stick: Path, info: DiskInfo | None = diskutil_info) -> list[Finding]:
         size = int(volume.get("TotalSize", 0))
         findings.append(Finding("ok" if 0 < size <= MAX_BYTES else "fail",
                                 f"size: {size / 1e9:.1f} GB (needs 32 GB or less)"))
-        external = not volume.get("Internal", True) and volume.get("Ejectable", volume.get(
+        outside = not volume.get("Internal", True) and volume.get("Ejectable", volume.get(
             "RemovableMediaOrExternalDevice", False))
-        findings.append(Finding("ok" if external else "fail",
-                                f"external removable disk: {'yes' if external else 'no'} "
+        findings.append(Finding("ok" if outside else "fail",
+                                f"external removable disk: {'yes' if outside else 'no'} "
                                 f"({volume.get('BusProtocol', '?')})"))
         system = volume.get("SystemMounts")  # Linux: the same disk carries swap, / or the like
         if system:
             findings.append(Finding("fail", f"in use by this computer: the same disk holds {', '.join(system)}"))
         whole = volume.get("ParentWholeDisk")
-        scheme = info(whole).get("Content", "?") if whole and whole != volume.get(
-            "DeviceIdentifier") else "none (no partition table)"
+        if "WholeDiskContent" in volume:  # Windows: read together with the volume
+            scheme = volume["WholeDiskContent"]
+        else:
+            scheme = info(whole).get("Content", "?") if whole and whole != volume.get(
+                "DeviceIdentifier") else "none (no partition table)"
         findings.append(Finding("ok" if scheme == MBR else "fail",
                                 f"partition scheme: {scheme} (needs MBR / {MBR})"))
         writable = volume.get("WritableVolume", volume.get("Writable", True))

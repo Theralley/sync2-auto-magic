@@ -41,7 +41,7 @@ class Stage(unittest.TestCase):
         work = stage(Job(SERIAL, "inv"), tmp / "up", tmp / "work",  # any kind stages a payload alike
                      payload=[(app, "/SyncExtendedPack/Apps/Media/App")])
         landed = work / "payload" / "SyncExtendedPack" / "Apps" / "Media" / "App"
-        copied = sorted(str(p.relative_to(landed)) for p in landed.rglob("*") if p.is_file())
+        copied = sorted(p.relative_to(landed).as_posix() for p in landed.rglob("*") if p.is_file())
         self.assertEqual(copied, ["Player.exe", "Userdata/.tmp"])
 
 

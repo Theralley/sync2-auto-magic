@@ -43,7 +43,7 @@ In the car, open *Settings → General → About SYNC*.
 |---|---|
 | A **Carlinkit wired adapter** of the "AutoKit" type, made for Android head units | For example [this one](https://www.amazon.se/dp/B0919JS1K3). Not a "wired-to-wireless" adapter (2Air, U2W, Mini Ultra, 3.0/4.0/5.0): those only work in cars that already have CarPlay |
 | A **USB stick**, 32 GB or smaller | It will be erased if it needs formatting. FAT32, which the installer checks |
-| A **Mac** | Linux is implemented and unit-tested, but not yet tried with a real stick on a Linux desktop or in a car: see [On Linux](#on-linux) ([#5](https://github.com/Theralley/sync2-auto-magic/issues/5)). Windows is not supported yet ([#6](https://github.com/Theralley/sync2-auto-magic/issues/6)) |
+| A **Mac** | Linux is implemented and unit-tested, but not yet tried with a real stick on a Linux desktop or in a car: see [On Linux](#on-linux) ([#5](https://github.com/Theralley/sync2-auto-magic/issues/5)). Windows likewise, newer still: see [On Windows](#on-windows) ([#6](https://github.com/Theralley/sync2-auto-magic/issues/6)) |
 
 ### Formatting the stick (only if the installer asks)
 
@@ -78,6 +78,35 @@ the stick in the list on the left, choose *Format Disk* in the menu with partiti
 all of it: name `SYNC`, type **For use with all systems and devices (FAT)**. Open the stick
 once in your file manager so it is mounted. Start the installer with `./install-sync2.sh` in a
 terminal in the project folder; everything after that is the same as on a Mac.
+
+### On Windows
+
+Newer than Linux, and not yet tried with a real stick or in a car
+([#6](https://github.com/Theralley/sync2-auto-magic/issues/6)). Reports are welcome. You need:
+
+- Windows 10 or 11.
+- [Python](https://www.python.org/downloads/) 3.9 or newer. In its installer, tick **Add
+  python.exe to PATH**.
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/), started and running. It
+  sets up WSL 2 itself if it asks to.
+- [Git for Windows](https://git-scm.com/download/win), only if the installer is to download
+  SyncExtPack for you.
+
+The installer only takes a drive on the USB bus, and never the disk Windows starts from. Windows
+lets only an administrator remount a stick, so the check after writing reads the stick through
+Windows' file cache; the installer says so when that happens.
+
+To format a stick: in **This PC**, right-click the stick and choose **Format**: file system
+**FAT32**, volume label `SYNC`, **Quick Format**, then **Start**. Format keeps the stick's
+partition table. If the check then says the partition scheme is not MBR, open **Command Prompt**
+as administrator and run `diskpart`. Then, **after checking the disk number against the stick's
+size**: `list disk`, `select disk N`, `clean`, `convert mbr`, `create partition primary`,
+`format fs=fat32 quick label=SYNC`, `assign`. Selecting the wrong disk erases it.
+
+Start the installer by double-clicking **`Install-SYNC2.bat`** in the project folder. If Windows
+says it protected your PC, choose *More info*, then *Run anyway*. Everything after that is the
+same as on a Mac. In the Terminal commands below, `python3` is `py -3` on Windows, and the
+stick is its drive letter, such as `E:\`, where they say `/Volumes/SYNC`.
 
 ## 3. Prepare the Mac
 

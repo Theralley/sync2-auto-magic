@@ -45,7 +45,7 @@ def catalog(upstream: Path) -> dict[str, CatalogApp]:
     """Menu name (lower case) -> the app's plugin, icon and installed files."""
     classes: dict[str, dict] = {}
     for relative in UNIT_FILES:
-        tree = ast.parse((upstream / relative).read_text())
+        tree = ast.parse((upstream / relative).read_text(encoding="utf-8"))
         for node in tree.body:
             if not isinstance(node, ast.ClassDef):
                 continue

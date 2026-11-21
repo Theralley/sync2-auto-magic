@@ -47,7 +47,7 @@ def build(serial: str, output: Path, apps: tuple[str, ...] = DEFAULT_APPS) -> Pa
 
 def _load(manifest: Path, serial: str, now: datetime,
           apps: tuple[str, ...] = DEFAULT_APPS) -> tuple[dict, Path]:
-    data = json.loads(manifest.read_text())
+    data = json.loads(manifest.read_text(encoding="utf-8"))
     archive = manifest.with_name(manifest.name.replace(".manifest.json", ".zip"))
     if data.get("serial") != serial:
         raise BootstrapError(f"pack was built for {data.get('serial')}, not {serial}")
@@ -105,7 +105,7 @@ def prepare(stick: Path, serial: str, manifest: Path, now: datetime | None = Non
               "pack_install_sha256": data["usb_files"]["pack_install.bin"],
               "archive": archive.name}
     (stick / RECORD).parent.mkdir(parents=True, exist_ok=True)
-    (stick / RECORD).write_text(json.dumps(record, indent=2) + "\n")
+    (stick / RECORD).write_bytes((json.dumps(record, indent=2) + "\n").encode())
     return record
 
 
@@ -151,7 +151,7 @@ def prepare_apps_only(stick: Path, serial: str, manifest: Path, now: datetime | 
               "pack_install_sha256": data["usb_files"]["pack_install.bin"],
               "archive": archive.name}
     (stick / RECORD).parent.mkdir(parents=True, exist_ok=True)
-    (stick / RECORD).write_text(json.dumps(record, indent=2) + "\n")
+    (stick / RECORD).write_bytes((json.dumps(record, indent=2) + "\n").encode())
     return record
 
 
@@ -182,5 +182,5 @@ def finish(stick: Path, now: datetime | None = None) -> dict:
     if _sha256(install) != record["pack_install_sha256"]:
         raise BootstrapError("install.bin does not match after the rename; re-run prepare")
     record["finished_utc"] = now.isoformat(timespec="seconds")
-    (stick / RECORD).write_text(json.dumps(record, indent=2) + "\n")
+    (stick / RECORD).write_bytes((json.dumps(record, indent=2) + "\n").encode())
     return record

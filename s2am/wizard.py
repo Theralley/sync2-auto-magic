@@ -1,7 +1,8 @@
 """A guided installer: plain questions, one car trip at a time.
 
-`python3 -m s2am wizard` (or double-click Install-SYNC2.command) walks a non-technical user
-through checking the Mac, choosing the USB stick, and every trip to the car. It uses the same
+`python3 -m s2am wizard` (or double-click Install-SYNC2.command on a Mac, Install-SYNC2.bat on
+Windows, or run install-sync2.sh on Linux) walks a non-technical user through checking the
+computer, choosing the USB stick, and every trip to the car. It uses the same
 commands as the rest of s2am, so it never does anything the CLI cannot. It never formats a
 disk: it explains how to do that in the system's own disk tool instead.
 """
@@ -48,7 +49,8 @@ IMPROVEMENTS = (
      "is busy. Tried in one car so far; it can be undone.",
      "CarPlay first", ("flash-tune", "--prio", str(FLASH_PRIORITY), "--fast-prio", str(FLASH_PRIORITY)),
      "Done, but not active yet: restart SYNC once more (the knob and Seek-Up for 10 seconds). After "
-     "that CarPlay goes before Ford's screens. To undo: python3 -m s2am job flash-tune --undo --serial {serial}", False),
+     "that CarPlay goes before Ford's screens. To undo: {python} -m s2am job flash-tune --undo "
+     "--serial {serial}", False),
 )
 CHECKED = ("guard", "akmic", "flash")  # jobs whose import checks the car's state itself: "applied" is not enough
 # None of the three can run while an app from the Apps menu is open, and AutoKit's Exit only hides it.
@@ -81,11 +83,12 @@ class Wizard:
                  info: diskcheck.DiskInfo | None = diskcheck.diskutil_info,
                  upstream: Path = cli.UPSTREAM, any_path: bool = False):
         self.ask, self.say, self.run = ask, say, run
-        # where sticks show up: one folder on macOS, two possible ones on Linux
-        self.volumes = [volumes] if volumes is not None else hostos.volume_roots()
+        # where sticks show up: a folder of them (tests), or else what this computer has mounted
+        self.volumes = volumes
         self.info, self.upstream, self.any_path = info, upstream, any_path
         self.serial = ""
         self.stick: Path | None = None
+        self.stick_id: str | None = None  # Windows: the volume serial of the chosen stick
 
     # ---- small helpers -------------------------------------------------------------------
 
@@ -139,9 +142,14 @@ class Wizard:
         if (self.upstream / "FullPack").is_dir():
             return
         self.say(f"SyncExtPack is not next to this folder (expected {self.upstream}).")
+        if not shutil.which("git"):
+            self.say("Downloading it needs git, which this computer does not have. Install it (on "
+                     "Windows: Git for Windows, https://git-scm.com/download/win) and start again.")
+            raise Quit()
         if not self.yes("Download it now with git (about 300 MB)?"):
             raise Quit()
-        subprocess.run(["git", "clone", UPSTREAM_URL, str(self.upstream)], check=True)
+        # The files must arrive byte for byte as published, also where git changes line ends.
+        subprocess.run(["git", "clone", "-c", "core.autocrlf=false", UPSTREAM_URL, str(self.upstream)], check=True)
         subprocess.run(["git", "-C", str(self.upstream), "checkout", "-q", UPSTREAM_TESTED],
                        check=True)
 
@@ -154,9 +162,9 @@ class Wizard:
                 ok = False
             if ok:
                 break
-            self.say("Docker is not running. Start it (on a Mac: Docker Desktop, the whale icon in "
-                     "Applications) and wait until it says it is running. On Linux your user must be "
-                     "allowed to use it (the docker group).")
+            self.say("Docker is not running. Start it (on a Mac or Windows: Docker Desktop, the whale "
+                     "icon) and wait until it says it is running. On Linux your user must be allowed to "
+                     "use it (the docker group).")
             self.prompt("Press Enter to check again, or type q to quit: ")
         problem = container.emulation_problem()
         if problem:
@@ -200,9 +208,18 @@ class Wizard:
         self.settings_file().parent.mkdir(parents=True, exist_ok=True)
         self.settings_file().write_text(json.dumps({"serial": self.serial}) + "\n")
 
+    def listed_volumes(self) -> list[Path]:
+        if self.volumes is not None:
+            return sorted(self.volumes.iterdir()) if self.volumes.is_dir() else []
+        try:
+            return hostos.volumes()
+        except hostos.HostError as error:
+            self.say(f"This computer is not ready: {error}.")
+            raise Quit() from error
+
     def candidate_sticks(self) -> list[tuple[Path, list[diskcheck.Finding]]]:
         found = []
-        for volume in sorted(v for root in self.volumes if root.is_dir() for v in root.iterdir()):
+        for volume in self.listed_volumes():
             if (hostos.SYSTEM == "Darwin" and volume.name in SKIP_VOLUMES) or volume.is_symlink() \
                     or not volume.is_dir():
                 continue
@@ -210,6 +227,9 @@ class Wizard:
             if self.info is not None and any("external" in f.message and f.level == "fail"
                                              for f in findings):
                 continue  # an internal disk, not a stick
+            if self.info is not None and hostos.SYSTEM == "Windows" and hostos.volume_id(volume) is None:
+                # its serial is how the stick is told apart when it comes back from the car
+                findings.append(diskcheck.Finding("fail", "Windows could not read its volume serial"))
             found.append((volume, findings))
         return found
 
@@ -220,30 +240,59 @@ class Wizard:
             for volume, findings in sticks:
                 if diskcheck.failed(findings):
                     problems = "; ".join(f.message for f in findings if f.level == "fail")
-                    self.say(f"{volume.name}: cannot be used ({problems})")
+                    self.say(f"{hostos.display(volume)}: cannot be used ({problems})")
             if len(good) == 1:
-                self.stick = good[0]
-                self.say(f"Using the USB stick {self.stick.name}.")
-                return
-            if good:
-                index = self.choose("Which USB stick should be used?", [v.name for v in good])
-                self.stick = good[index]
-                return
+                if self.use_stick(good[0]):
+                    self.say(f"Using the USB stick {hostos.display(self.stick)}.")
+                    return
+            elif good:
+                index = self.choose("Which USB stick should be used?", [hostos.display(v) for v in good])
+                if self.use_stick(good[index]):
+                    return
+            if good:  # its serial could not be read after all: look again
+                self.prompt("Press Enter to look again (q to quit): ")
+                continue
             self.steps("Prepare a USB stick", [
                 "Use a USB stick of 32 GB or less. Everything on it will be erased.",
                 *hostos.format_steps(),
                 "Leave the stick plugged in."])
             self.prompt("Press Enter when the stick is ready (q to quit): ")
 
+    def use_stick(self, volume: Path) -> bool:
+        """Choose ``volume``. On Windows only with its volume serial, which tells it apart when it
+        comes back from the car; without one it is not chosen (False)."""
+        stick_id = hostos.volume_id(volume)
+        if stick_id is None and hostos.SYSTEM == "Windows" and self.info is not None:
+            self.say(f"{hostos.display(volume)}: cannot be used (Windows could not read its volume serial)")
+            return False
+        self.stick, self.stick_id = volume, stick_id
+        return True
+
     def stick_back(self, message: str = "Put the stick back in this computer") -> None:
         while True:
             self.prompt(f"{message}, then press Enter: ")
-            if self.stick is not None and self.stick.is_dir():
+            if self.stick is not None and self.stick.is_dir() and hostos.volume_id(self.stick) == self.stick_id:
                 return
+            if self.stick_id is not None:  # Windows: the stick may be back under another letter
+                for volume in self.listed_volumes():
+                    if hostos.volume_id(volume) == self.stick_id:
+                        self.stick = volume
+                        self.say(f"The stick is back as {hostos.display(volume)}.")
+                        return
+                # Never another drive in its place, even a good stick that took its letter.
+                self.say(f"I cannot see the stick yet (volume serial {self.stick_id}). Put back the same "
+                         "stick, or type q to quit.")
+                continue
             self.say("I cannot see the stick yet.")
             if self.candidate_sticks():
                 self.pick_stick()
                 return
+
+    def eject(self) -> None:
+        if self.any_path:
+            return
+        worked, advice = hostos.eject(self.stick)
+        self.say("stick ejected" if worked else f"eject failed, {advice}")
 
     def clear_updater(self) -> None:
         """Move our own earlier leftovers aside (only known names), so the stick starts clean.
@@ -381,11 +430,12 @@ class Wizard:
             raise Quit()
         self.clear_updater()  # only after a good build, so a failure leaves the stick as it was
         code, _ = self.cli("bootstrap", "prepare", "--serial", self.serial, "--stick",
-                           str(self.stick), "--manifest", str(manifest), *self.stick_args())
+                           str(self.stick), "--manifest", str(manifest), "--no-eject", *self.stick_args())
         if code:
             self.say("Putting the install pack on the stick failed; see the message above.")
             raise Quit()
-        prepared = json.loads((self.stick / bootstrap.RECORD).read_text())
+        prepared = json.loads((self.stick / bootstrap.RECORD).read_text())  # read before the stick goes
+        self.eject()
         self.steps("In the car: first trip", [
             "Start the engine (turn Start-Stop off) and wait until SYNC has fully started.",
             "Insert the USB stick.",
@@ -435,7 +485,7 @@ class Wizard:
                          "Nothing else was changed. Search docs/TROUBLESHOOTING.md for what you saw, "
                          f"or choose \"{IMPROVE}\" again to retry.")
                 return
-            self.say(done.replace("{serial}", self.serial))
+            self.say(done.replace("{serial}", self.serial).replace("{python}", hostos.python_command()))
         self.say("\nThat was all of them. To put one back, see \"Undo\" in docs/INSTALL.md.")
 
     def remove(self) -> None:

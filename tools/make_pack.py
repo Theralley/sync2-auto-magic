@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -38,6 +39,7 @@ STAGE_IGNORE = shutil.ignore_patterns(".git", "*.rar", "SyncExtPack_*.zip", "bui
 # a shell command inside crypto_pack_docker.sh upstream, so keep it strict.
 SERIAL = re.compile(r"[0-9A-NP-Z]{8}")
 APP_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+SWFMILL_SCRIPT = b'#!/bin/sh\nexec /usr/bin/swfmill "$@"\n'
 
 
 class BuildError(Exception):
@@ -64,7 +66,10 @@ def stage(upstream: Path, staging: Path) -> list[dict]:
     swfmill = staging / "FlashTools" / "swfmill"
     if swfmill.is_symlink() or swfmill.exists():
         swfmill.unlink()
-    swfmill.symlink_to("/usr/bin/swfmill")
+    if os.name == "nt":  # a symlink needs extra rights on Windows; this script runs the same program
+        swfmill.write_bytes(SWFMILL_SCRIPT)
+    else:
+        swfmill.symlink_to("/usr/bin/swfmill")
     (staging / "crypto_pack").chmod(0o755)
     return changes
 
@@ -109,7 +114,7 @@ def verify_packs(staging: Path, result: Path, serial: str, apps: tuple[str, ...]
         target = staging / folder
         if target.exists():
             shutil.rmtree(target)
-        container.run(staging, "./crypto_pack", "-u", str((result / pack_name).relative_to(staging)),
+        container.run(staging, "./crypto_pack", "-u", (result / pack_name).relative_to(staging).as_posix(),
                       folder, serial, "0", quiet=True)
     unpacked, update = staging / "verify_apps", staging / "verify_update"
     problems = []

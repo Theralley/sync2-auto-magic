@@ -12,6 +12,12 @@ from typing import Callable
 REPO = Path(__file__).resolve().parents[1]
 IMAGE = "sync2-auto-magic-builder"
 DOCKER_DESKTOP_BIN = Path("/Applications/Docker.app/Contents/Resources/bin")
+DOCKER_WINDOWS_BIN = Path(os.environ.get("ProgramFiles", r"C:\Program Files"), "Docker", "Docker", "resources", "bin")
+
+
+def _desktop_bin() -> Path:
+    """Where Docker Desktop keeps its programs, for when they are not on PATH."""
+    return DOCKER_WINDOWS_BIN if os.name == "nt" else DOCKER_DESKTOP_BIN
 
 
 class ContainerError(Exception):
@@ -19,17 +25,18 @@ class ContainerError(Exception):
 
 
 def docker() -> list[str]:
-    binary = shutil.which("docker") or str(DOCKER_DESKTOP_BIN / "docker")
+    binary = shutil.which("docker") or str(_desktop_bin() / ("docker.exe" if os.name == "nt" else "docker"))
     if not Path(binary).exists():
-        raise ContainerError("Docker was not found; install it (Docker Desktop on macOS) and start it")
+        raise ContainerError("Docker was not found; install it (Docker Desktop on macOS and Windows, Docker "
+                             "Engine on Linux) and start it")
     return [binary]
 
 
 def docker_env() -> dict[str, str]:
     env = dict(os.environ)
     # The CLI's credential helper (docker-credential-desktop) lives here.
-    if DOCKER_DESKTOP_BIN.is_dir():
-        env["PATH"] = f"{DOCKER_DESKTOP_BIN}{os.pathsep}{env.get('PATH', '')}"
+    if _desktop_bin().is_dir():
+        env["PATH"] = f"{_desktop_bin()}{os.pathsep}{env.get('PATH', '')}"
     socket = Path.home() / ".docker" / "run" / "docker.sock"
     if "DOCKER_HOST" not in env and socket.exists():
         env["DOCKER_HOST"] = f"unix://{socket}"

@@ -45,7 +45,7 @@ två för installationen, ett för varje förbättring).
 |---|---|
 | En **Carlinkit-adapter med sladd** av typen "AutoKit", gjord för Android-bilstereor | Till exempel [den här](https://www.amazon.se/dp/B0919JS1K3). Inte en adapter som gör sladdbunden CarPlay trådlös (2Air, U2W, Mini Ultra, 3.0/4.0/5.0): de fungerar bara i bilar som redan har CarPlay |
 | Ett **USB-minne** på högst 32 GB | Det raderas om det behöver formateras. Det ska vara FAT32, vilket installationsprogrammet kontrollerar |
-| En **Mac** | Linux är byggt och enhetstestat, men ännu inte provat med en riktig sticka på en Linuxdator eller i en bil: se [På Linux](#på-linux) ([#5](https://github.com/Theralley/sync2-auto-magic/issues/5)). Windows stöds inte än ([#6](https://github.com/Theralley/sync2-auto-magic/issues/6)) |
+| En **Mac** | Linux är byggt och enhetstestat, men ännu inte provat med en riktig sticka på en Linuxdator eller i en bil: se [På Linux](#på-linux) ([#5](https://github.com/Theralley/sync2-auto-magic/issues/5)). Windows likaså, ännu nyare: se [På Windows](#på-windows) ([#6](https://github.com/Theralley/sync2-auto-magic/issues/6)) |
 
 ### Formatera stickan (bara om installationsprogrammet ber om det)
 
@@ -85,6 +85,36 @@ enheter (FAT)**. Namnen i menyerna kan skilja lite mellan versioner (på engelsk
 (FAT)*). Öppna stickan en gång i filhanteraren så att den monteras. Starta
 installationsprogrammet med `./install-sync2.sh` i en terminal i projektmappen; allt efter det
 är som på en Mac.
+
+### På Windows
+
+Nyare än Linux, och ännu inte provat med en riktig sticka eller i en bil
+([#6](https://github.com/Theralley/sync2-auto-magic/issues/6)). Rapporter är välkomna. Du behöver:
+
+- Windows 10 eller 11.
+- [Python](https://www.python.org/downloads/) 3.9 eller nyare. Kryssa i **Add python.exe to
+  PATH** i installationsprogrammet.
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/), startat och igång. Det
+  installerar WSL 2 självt om det frågar om det.
+- [Git for Windows](https://git-scm.com/download/win), bara om installationsprogrammet ska ladda
+  ner SyncExtPack åt dig.
+
+Installationsprogrammet tar bara en enhet på USB-bussen, och aldrig den skiva som Windows startar
+från. Windows låter bara en administratör montera om en sticka, så kontrollen efter skrivningen
+läser stickan genom Windows filcache. Installationsprogrammet säger till när det händer.
+
+Formatera en sticka så här: högerklicka på stickan i **Den här datorn** och välj **Formatera**:
+filsystem **FAT32**, volymetikett `SYNC`, **Snabbformatering**, och sedan **Starta**. Formateringen
+behåller stickans partitionstabell. Om kontrollen sedan säger att partitionsschemat inte är MBR:
+öppna **Kommandotolken** som administratör och kör `diskpart`. Sedan, **efter att du har jämfört
+diskens nummer med stickans storlek**: `list disk`, `select disk N`, `clean`, `convert mbr`,
+`create partition primary`, `format fs=fat32 quick label=SYNC`, `assign`. Väljer du fel disk
+raderas den.
+
+Starta installationsprogrammet genom att dubbelklicka på **`Install-SYNC2.bat`** i projektmappen.
+Om Windows säger att det har skyddat datorn: välj *Mer information* och sedan *Kör ändå*. Allt
+efter det är som på en Mac. I terminalkommandona längre ner är `python3` `py -3` på Windows, och
+stickan är dess enhetsbokstav, till exempel `E:\`, där det står `/Volumes/SYNC`.
 
 ## 3. Förbered datorn
 

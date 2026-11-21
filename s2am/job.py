@@ -1746,7 +1746,7 @@ def stage(job: Job, upstream: Path, workdir: Path, extra: dict[str, bytes] | Non
     shutil.copy2(upstream / MORTRUNNER_SOURCE, target / f"{RUNNER_NAME}.exe")
     (target / f"{RUNNER_NAME}.mscr").write_bytes(script)
     if job.kind == "decdiag":
-        (target / "target.txt").write_text(job.params["target"] + "\n", encoding="ascii")
+        (target / "target.txt").write_bytes((job.params["target"] + "\n").encode("ascii"))
         (target / "probe.mscr").write_bytes(script)
     for name, data in (extra or {}).items():
         if "/" in name or "\\" in name or name.startswith("."):
@@ -1764,10 +1764,10 @@ def stage(job: Job, upstream: Path, workdir: Path, extra: dict[str, bytes] | Non
             shutil.copy2(source, destination)
 
     job.files = {
-        "/" + str(path.relative_to(workdir / "payload")): hashlib.sha256(path.read_bytes()).hexdigest()
+        "/" + path.relative_to(workdir / "payload").as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in sorted(target.iterdir()) if path.is_file()
     }
-    (target / "job.json").write_text(job.to_json())
+    (target / "job.json").write_bytes(job.to_json().encode())  # the same bytes from every computer
     (workdir / "meta.txt").write_bytes(meta(job))
-    (workdir / "job.json").write_text(job.to_json())
+    (workdir / "job.json").write_bytes(job.to_json().encode())
     return workdir

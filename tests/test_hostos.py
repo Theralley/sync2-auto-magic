@@ -1,8 +1,10 @@
 """The differences between operating systems (hostos.py), with recorded tool output.
 
-Linux answers come from lsblk, findmnt and udisksctl; here a stand-in plays them, so the tests
-run on any system. The disk facts must come out in the shape diskcheck.check reads."""
+Linux answers come from lsblk, findmnt and udisksctl, Windows answers from PowerShell; here
+stand-ins play them, so the tests run on any system. The disk facts must come out in the shape
+diskcheck.check reads."""
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -220,6 +222,7 @@ class LinuxDisk(unittest.TestCase):
             hostos._linux_info("/media/anna/SYNC", broken, free=lambda path: 0, access=lambda path: True)
 
 
+@unittest.skipIf(os.name == "nt", "Linux paths cannot be played on Windows")
 class LinuxEject(unittest.TestCase):
     def setUp(self):  # sticks show up under /media/anna
         patcher = mock.patch.object(hostos.getpass, "getuser", return_value="anna")
@@ -240,6 +243,14 @@ class LinuxEject(unittest.TestCase):
         self.assertEqual(hostos.eject(Path("/media/anna/SYNC"), "Linux", tools), (True, ""))
         done = [c[:2] + c[-1:] for c in tools.calls if c[0] == "udisksctl"]
         self.assertEqual(done, [["udisksctl", "unmount", "/dev/sdb1"], ["udisksctl", "power-off", "/dev/sdb"]])
+
+    def test_a_disk_that_is_not_on_the_usb_bus_is_never_unmounted_or_powered_off(self):
+        tools = Tools(disk={**STICK_DISK, "tran": "sata"})
+        worked, advice = hostos.eject(Path("/media/anna/SYNC"), "Linux", tools)
+        self.assertFalse(worked)
+        self.assertIn("not a USB disk", advice)
+        self.assertFalse(hostos.remount(Path("/media/anna/SYNC"), "Linux", tools, wait=lambda s: None))
+        self.assertFalse(any(c[0] == "udisksctl" for c in tools.calls))
 
     def test_a_failed_unmount_says_so_and_does_not_power_off(self):
         tools = Tools(fail={"udisksctl unmount"})
@@ -268,6 +279,7 @@ class LinuxEject(unittest.TestCase):
         self.assertFalse(hostos.eject(Path("/media/anna/GONE"), "Linux", Tools())[0])
 
 
+@unittest.skipIf(os.name == "nt", "Linux paths cannot be played on Windows")
 class LinuxRemount(unittest.TestCase):
     def setUp(self):
         self.folder = Path(tempfile.mkdtemp())
@@ -376,6 +388,7 @@ class Places(unittest.TestCase):
         self.assertEqual(hostos.volume_roots("Darwin"), [Path("/Volumes")])
         self.assertEqual(hostos.volume_roots("Linux", "anna"), [Path("/media/anna"), Path("/run/media/anna")])
 
+    @unittest.skipIf(os.name == "nt", "macOS and Linux paths cannot be played on Windows")
     def test_a_volume_is_the_top_folder_only(self):
         for path, system, good in (("/Volumes/SYNC", "Darwin", True), ("/Volumes/SYNC/s2am", "Darwin", False),
                                    ("/media/anna/SYNC", "Linux", True), ("/run/media/anna/SYNC", "Linux", True),
@@ -384,12 +397,30 @@ class Places(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(hostos.is_volume(Path(path), system, "anna"), good)
 
-    def test_windows_is_refused_with_the_issue(self):
-        for call in (lambda: hostos.volume_roots("Windows"), lambda: hostos.eject(Path("E:/"), "Windows"),
-                     lambda: hostos.remount(Path("E:/"), "Windows")):
-            with self.assertRaises(hostos.HostError) as caught:
+    def test_a_drive_is_the_top_folder_only_on_windows(self):
+        # a bare E: is E's current folder, which need not be its top folder
+        for path, good in (("E:\\", True), ("e:/", True), ("E:", False), ("E:\\SYNC", False),
+                           ("\\\\server\\share", False)):
+            with self.subTest(path=path):
+                self.assertEqual(hostos.is_volume(path, "Windows"), good)
+        with self.assertRaises(hostos.HostError):
+            hostos._windows_info("E:", PowerShell())
+        self.assertEqual(hostos.volume_roots("Windows"), [])
+
+    def test_names_and_hints_for_each_system(self):
+        self.assertEqual(hostos.display(Path("E:\\"), "Windows"), "E:")
+        self.assertEqual(hostos.display(Path("/Volumes/SYNC"), "Darwin"), "SYNC")
+        self.assertEqual(hostos.stick_hint("Windows"), "E:\\")
+        self.assertIn("E:\\", hostos.places("Windows"))
+        self.assertIn("/Volumes", hostos.places("Darwin"))
+        self.assertEqual(hostos.python_command("Windows"), "py -3")
+        self.assertEqual(hostos.python_command("Darwin"), "python3")
+
+    def test_an_unknown_system_is_refused(self):
+        for call in (lambda: hostos.volume_roots("FreeBSD"), lambda: hostos.eject(Path("/mnt/x"), "FreeBSD"),
+                     lambda: hostos.remount(Path("/mnt/x"), "FreeBSD")):
+            with self.assertRaises(hostos.HostError):
                 call()
-            self.assertIn("issues/6", str(caught.exception))
 
     def test_formatting_advice_names_the_systems_own_tool(self):
         self.assertIn("Disk Utility", " ".join(hostos.format_steps("Darwin")))
@@ -397,6 +428,187 @@ class Places(unittest.TestCase):
         self.assertIn("Disks", linux)
         self.assertIn("MBR", linux)
         self.assertIn("FAT", linux)
+        windows = " ".join(hostos.format_steps("Windows"))
+        self.assertIn("Format", windows)
+        self.assertIn("FAT32", windows)
+        self.assertIn("diskpart", windows)
+
+
+# Get-Volume, Get-Partition and Get-Disk for a 32 GB USB stick at E:, as WINDOWS_FACTS prints them
+STICK_FACTS = {"FileSystem": "FAT32", "FileSystemType": "FAT32", "Size": 31440961536,
+               "SizeRemaining": 30000000000, "DiskNumber": 2, "BusType": "USB", "PartitionStyle": "MBR",
+               "IsBoot": False, "IsSystem": False, "IsReadOnly": False}
+
+
+class PowerShell:
+    """Plays powershell.exe: one drive's facts, the list of drives, and Explorer's eject."""
+
+    def __init__(self, facts=None, letters="C,D,E", fail=(), stays=False, raw=None):
+        self.facts = {**STICK_FACTS, **(facts or {})}
+        self.letters, self.fail, self.stays, self.raw = letters, fail, stays, raw
+        self.calls = []
+
+    def __call__(self, command):
+        if command[:4] != ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command"]:
+            raise AssertionError(f"not a PowerShell call: {command}")
+        script = command[4]
+        self.calls.append(script)
+        if "InvokeVerb('Eject')" in script:
+            kind = "eject"
+        elif "ConvertTo-Json" in script:
+            kind = "facts"
+        elif "-join" in script:
+            kind = "list"
+        else:
+            raise AssertionError(f"unexpected script: {script}")
+        if kind in self.fail:
+            return subprocess.CompletedProcess(command, 1, "", "Get-Partition : No MSFT_Partition objects found\r\n")
+        if kind == "facts":
+            return subprocess.CompletedProcess(command, 0, json.dumps(self.facts) if self.raw is None else self.raw, "")
+        if kind == "list":
+            return subprocess.CompletedProcess(command, 0, self.letters + "\r\n", "")
+        if self.stays:
+            return subprocess.CompletedProcess(command, 1, "", "E: is still there after 15 seconds\r\n")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    def kinds(self):
+        return ["eject" if "InvokeVerb" in c else "facts" if "ConvertTo-Json" in c else "list" for c in self.calls]
+
+
+class WindowsDisk(unittest.TestCase):
+    def info(self, **change):
+        tools = PowerShell(**change)
+        return lambda target: hostos._windows_info(target, tools, access=lambda path: True)
+
+    def findings(self, **change):
+        return {f.message.split(":")[0]: f.level for f in diskcheck.check(Path("E:\\"), self.info(**change))}
+
+    def test_a_good_stick_passes_every_disk_check(self):
+        findings = diskcheck.check(Path("E:\\"), self.info())
+        self.assertFalse(diskcheck.failed(findings), [f.message for f in findings])
+
+    def test_facts_have_diskutils_shape(self):
+        tools = PowerShell()
+        info = hostos._windows_info("E:\\", tools, access=lambda path: True)
+        self.assertEqual((info["FilesystemName"], info["WholeDiskContent"], info["BusProtocol"]),
+                         ("MS-DOS FAT32", hostos.MBR, "USB"))
+        self.assertEqual((info["Internal"], info["Ejectable"], info["SystemMounts"]), (False, True, []))
+        self.assertEqual((info["TotalSize"], info["FreeSpace"], info["WritableVolume"]),
+                         (31440961536, 30000000000, True))
+        self.assertIn("Get-Volume -DriveLetter E", tools.calls[0])
+        self.assertIn("Get-Partition -DriveLetter E", tools.calls[0])
+
+    def test_each_wrong_thing_fails_its_own_check(self):
+        for change, check in (({"FileSystem": "exFAT", "FileSystemType": "exFAT"}, "file system"),
+                              ({"FileSystem": "NTFS"}, "file system"),
+                              ({"PartitionStyle": "GPT"}, "partition scheme"),
+                              ({"PartitionStyle": "RAW"}, "partition scheme"),
+                              ({"BusType": "SATA"}, "external removable disk"),
+                              ({"BusType": "NVMe"}, "external removable disk"),
+                              ({"IsReadOnly": True}, "writable"),
+                              ({"Size": 64 * 1024 ** 3}, "size")):
+            with self.subTest(change=change):
+                findings = self.findings(facts=change)
+                self.assertEqual(findings[check], "fail", findings)
+
+    def test_the_disk_windows_runs_from_is_never_a_stick(self):
+        for flag in ("IsBoot", "IsSystem"):
+            with self.subTest(flag=flag):
+                findings = self.findings(facts={flag: True})
+                self.assertEqual(findings["in use by this computer"], "fail")
+                self.assertEqual(findings["external removable disk"], "fail")
+
+    def test_numbers_from_an_older_powershell_are_understood(self):
+        info = self.info(facts={"BusType": 7, "PartitionStyle": 1})("E:\\")
+        self.assertEqual((info["BusProtocol"], info["WholeDiskContent"]), ("USB", hostos.MBR))
+
+    def test_a_drive_windows_cannot_read_is_a_failed_check_not_a_crash(self):
+        for change in ({"fail": ("facts",)}, {"raw": "not json"}, {"raw": "[]"}, {"raw": ""}):
+            with self.subTest(change=change):
+                findings = diskcheck.check(Path("E:\\"), self.info(**change))
+                self.assertEqual([f.level for f in findings][:1], ["fail"])
+                self.assertIn("could not be read", findings[0].message)
+
+    def test_only_a_drives_top_folder_is_asked_about(self):
+        for target in ("E:\\s2am", "/Volumes/SYNC", "E:\\'; Remove-Item C:\\ #", "EE:\\"):
+            with self.subTest(target=target), self.assertRaises(hostos.HostError):
+                hostos._windows_info(target, PowerShell())
+        self.assertEqual(hostos._windows_info("e:/", PowerShell(), access=lambda path: True)["DeviceIdentifier"], "E:")
+
+    def test_the_drives_are_listed_by_letter(self):
+        self.assertEqual([str(p) for p in hostos.volumes("Windows", PowerShell(letters="\ufeffC,D, E"))],
+                         [str(Path("C:\\")), str(Path("D:\\")), str(Path("E:\\"))])
+        self.assertEqual(hostos.volumes("Windows", PowerShell(letters="")), [])
+        with self.assertRaises(hostos.HostError):
+            hostos.volumes("Windows", PowerShell(fail=("list",)))
+
+
+class WindowsEject(unittest.TestCase):
+    def test_eject_asks_explorer_and_waits_until_the_drive_is_gone(self):
+        tools = PowerShell()
+        self.assertEqual(hostos.eject(Path("E:\\"), "Windows", tools), (True, ""))
+        self.assertEqual(tools.kinds(), ["facts", "eject"])
+        self.assertIn("ParseName('E:')", tools.calls[1])
+        self.assertIn("Test-Path -LiteralPath 'E:\\'", tools.calls[1])
+
+    def test_a_drive_that_stays_is_not_called_ejected(self):
+        worked, advice = hostos.eject(Path("E:\\"), "Windows", PowerShell(stays=True))
+        self.assertFalse(worked)
+        self.assertIn("Safely Remove Hardware", advice)
+        self.assertIn("still there", advice)
+
+    def test_the_disk_windows_runs_from_is_never_ejected(self):
+        tools = PowerShell(facts={"IsBoot": True})
+        worked, advice = hostos.eject(Path("C:\\"), "Windows", tools)
+        self.assertFalse(worked)
+        self.assertIn("Windows itself", advice)
+        self.assertEqual(tools.kinds(), ["facts"])
+
+    def test_a_drive_that_is_not_on_the_usb_bus_is_never_ejected(self):
+        tools = PowerShell(facts={"BusType": "SATA"})
+        worked, advice = hostos.eject(Path("D:\\"), "Windows", tools)
+        self.assertFalse(worked)
+        self.assertIn("not a USB disk", advice)
+        self.assertEqual(tools.kinds(), ["facts"])
+
+    def test_a_drive_that_cannot_be_read_is_not_ejected(self):
+        tools = PowerShell(fail=("facts",))
+        self.assertFalse(hostos.eject(Path("E:\\"), "Windows", tools)[0])
+        self.assertEqual(tools.kinds(), ["facts"])
+
+    def test_remount_needs_administrator_rights_so_it_is_not_tried(self):
+        tools = PowerShell()
+        self.assertFalse(hostos.remount(Path("E:\\"), "Windows", tools))
+        self.assertEqual(tools.calls, [])
+        self.assertIn("administrator", hostos.REMOUNT_NOTE["Windows"])
+
+
+@unittest.skipUnless(sys.platform == "win32", "needs a real Windows system")
+class RealWindows(unittest.TestCase):
+    """The PowerShell scripts against a real Windows: its own drive is found, read, and never
+    taken for a stick or ejected."""
+
+    def setUp(self):
+        self.drive = Path(os.environ.get("SystemDrive", "C:") + "\\")
+
+    def test_the_windows_drive_is_listed_and_described(self):
+        self.assertIn(self.drive, hostos.volumes())
+        info = hostos.disk_info(str(self.drive))
+        self.assertTrue(info["SystemMounts"], info)
+        self.assertTrue(info["Internal"], info)
+        self.assertGreater(info["TotalSize"], 0, info)
+        findings = {f.message.split(":")[0]: f.level for f in diskcheck.check(self.drive)}
+        self.assertEqual(findings["in use by this computer"], "fail", findings)
+
+    def test_a_drive_has_a_volume_serial(self):
+        self.assertRegex(hostos.volume_id(self.drive) or "", r"\A[0-9A-F]{8}\Z")
+        self.assertIsNone(hostos.volume_id(Path("/Volumes/SYNC"), "Darwin"))
+
+    def test_the_windows_drive_is_never_ejected(self):
+        worked, advice = hostos.eject(self.drive)
+        self.assertFalse(worked)
+        self.assertIn("Windows", advice)
+        self.assertTrue(self.drive.is_dir())
 
 
 if __name__ == "__main__":

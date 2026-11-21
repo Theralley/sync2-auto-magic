@@ -17,7 +17,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import hostos
+from . import diskcheck, hostos
 from .job import Job, bundle_parts
 from .state import VERDICTS, Store, outcome
 
@@ -56,33 +56,55 @@ class StickError(Exception):
     pass
 
 
-def _check_volume(stick: Path, require_volume: bool) -> None:
-    if not stick.is_dir() or stick.is_symlink():
+REPARSE_POINT = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT: a Windows junction or symlink
+
+
+def _linked(path: Path) -> bool:
+    """A symlink, or on Windows any reparse point: a junction is no symlink to Python 3.9."""
+    try:
+        return path.is_symlink() or bool(getattr(path.lstat(), "st_file_attributes", 0) & REPARSE_POINT)
+    except OSError:
+        return False
+
+
+def _check_volume(stick: Path, require_volume: bool, info: diskcheck.DiskInfo = diskcheck.diskutil_info) -> None:
+    if not stick.is_dir() or _linked(stick):
         raise StickError(f"{stick} is not a mounted folder")
     if require_volume and not hostos.is_volume(stick):
-        places = " or ".join(str(root) for root in hostos.volume_roots())
-        raise StickError(f"{stick} is not a removable volume under {places}")
+        raise StickError(f"{stick} is not a removable volume: a stick is {hostos.places()}")
+    if require_volume:  # the top folder of any drive, C:\ on Windows too, looks like a volume: ask the disk
+        try:
+            volume = info(str(stick))
+        except Exception as error:  # diskutil, lsblk or PowerShell: whatever failed, nothing is written
+            raise StickError(f"the disk behind {stick} could not be read: {error}") from error
+        if not diskcheck.external(volume):
+            held = f", it holds {', '.join(volume['SystemMounts'])}" if volume.get("SystemMounts") else ""
+            raise StickError(f"{stick} is not on an external USB stick ({volume.get('BusProtocol', '?')}{held}); "
+                             "refusing to use it")
+        if volume.get("FilesystemName") != "MS-DOS FAT32":  # all SYNC reads; it has no links of any kind
+            raise StickError(f"{stick} is not FAT32 ({volume.get('FilesystemName', '?')}); refusing to use it")
     for folder in (stick / UPDATER_DIR, stick / "s2am"):
-        if folder.is_symlink():
+        if _linked(folder):
             raise StickError(f"{folder} is a symlink; refusing to use this stick")
 
 
 def _has_symlink(path: Path) -> bool:
-    if path.is_symlink():
+    if _linked(path):
         return True
-    return path.is_dir() and any(p.is_symlink() for p in path.rglob("*"))
+    return path.is_dir() and any(_linked(p) for p in path.rglob("*"))
 
 
-def prepare(stick: Path, install_bin: Path, job: Job, require_volume: bool = True) -> Path:
+def prepare(stick: Path, install_bin: Path, job: Job, require_volume: bool = True,
+            info: diskcheck.DiskInfo = diskcheck.diskutil_info) -> Path:
     """Put one job on the stick; returns the archive folder that holds earlier files."""
-    _check_volume(stick, require_volume)
+    _check_volume(stick, require_volume, info)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     archive = stick / "s2am" / "history" / stamp
     updater = stick / UPDATER_DIR
     updater.mkdir(exist_ok=True)
     for name in UPDATER_FILES:
         old = updater / name
-        if old.exists() or old.is_symlink():
+        if old.exists() or _linked(old):
             archive.mkdir(parents=True, exist_ok=True)
             shutil.move(str(old), str(archive / name))
     shutil.copy2(install_bin, updater / "install.bin")
@@ -94,10 +116,10 @@ def prepare(stick: Path, install_bin: Path, job: Job, require_volume: bool = Tru
     for old in pending.glob("*.json"):
         (archive / "superseded").mkdir(parents=True, exist_ok=True)
         shutil.move(str(old), str(archive / "superseded" / old.name))
-    (pending / f"{job.id}.json").write_text(job.to_json())
+    (pending / f"{job.id}.json").write_bytes(job.to_json().encode())  # \n line ends from every computer
     if job.kind == "bundle":  # each part reports on its own, so the Mac verifies each one
         for part in bundle_parts(job):
-            (pending / f"{part.id}.json").write_text(part.to_json())
+            (pending / f"{part.id}.json").write_bytes(part.to_json().encode())
     return archive
 
 
@@ -124,7 +146,7 @@ def differences(stick: Path, install_bin: Path, job: Job) -> list[str]:
     jobs = [job, *(bundle_parts(job) if job.kind == "bundle" else [])]
     for one in jobs:
         record = stick / "s2am" / "pending" / f"{one.id}.json"
-        if not record.is_file() or record.read_text() != one.to_json():
+        if not record.is_file() or record.read_bytes() != one.to_json().encode():
             wrong.append(f"s2am/pending/{one.id}.json")
     return wrong
 
@@ -149,9 +171,10 @@ def _status(report: Path, updater: Path) -> tuple[str, bool]:
     return "unknown", False
 
 
-def import_reports(stick: Path, store: Store, require_volume: bool = True) -> list[dict]:
+def import_reports(stick: Path, store: Store, require_volume: bool = True,
+                   info: diskcheck.DiskInfo = diskcheck.diskutil_info) -> list[dict]:
     """Move every pending job's outcome from the stick into the store."""
-    _check_volume(stick, require_volume)
+    _check_volume(stick, require_volume, info)
     pending = stick / "s2am" / "pending"
     imported = stick / "s2am" / "imported"
     rejected = stick / "s2am" / "rejected"
@@ -160,7 +183,7 @@ def import_reports(stick: Path, store: Store, require_volume: bool = True) -> li
     results = []
     for path in sorted(pending.glob("*.json")) if pending.is_dir() else []:
         try:
-            if path.is_symlink():
+            if _linked(path):
                 raise ValueError("job file is a symlink")
             job = Job.from_json(path.read_text(errors="replace"))
             if path.stem != job.id:
@@ -210,7 +233,7 @@ def import_reports(stick: Path, store: Store, require_volume: bool = True) -> li
             record["reason"] = "report contains a symlink"
         elif report.is_dir():
             store.save_report(job.serial, job.id, report)
-        if status != "pending" and log.is_file() and not log.is_symlink():
+        if status != "pending" and log.is_file() and not _linked(log):
             store.save_log(job.serial, job.id, log)
         if status != "pending":
             record["outcome"] = record["status"]
