@@ -140,10 +140,13 @@ class Drive(unittest.TestCase):
             "#define TRUE 1", "#define FALSE 0", re.search(r"#define SHOT_EVERY_MS .*", source).group(), pure,
             "static int hex(int c) { return c <= '9' ? c - '0' : c - 'a' + 10; }",
             "int main(int argc, char **argv) {",
-            "    if (argc > 1 && strcmp(argv[1], \"sha\") == 0) {",  # sha <hex data> <chunk size>
-            "        size_t n = strlen(argv[2]) / 2, i, step = (size_t)atoi(argv[3]);",
-            "        BYTE *data = malloc(n + 1), digest[32]; Sha256 sha;",
-            "        for (i = 0; i < n; i++) data[i] = (BYTE)(hex(argv[2][2 * i]) * 16 + hex(argv[2][2 * i + 1]));",
+            "    if (argc > 1 && strcmp(argv[1], \"sha\") == 0) {",  # sha <file of hex data> <chunk size>
+            "        FILE *in = fopen(argv[2], \"rb\"); char *text = malloc(400000); size_t n, i, step;",
+            "        BYTE *data, digest[32]; Sha256 sha;",
+            "        if (!in || !text) return 2;",
+            "        n = fread(text, 1, 400000, in) / 2; fclose(in); step = (size_t)atoi(argv[3]);",
+            "        data = malloc(n + 1);",
+            "        for (i = 0; i < n; i++) data[i] = (BYTE)(hex(text[2 * i]) * 16 + hex(text[2 * i + 1]));",
             "        sha256_init(&sha);",
             "        for (i = 0; i < n; i += step) sha256_update(&sha, data + i, (DWORD)(n - i < step ? n - i : step));",
             "        sha256_final(&sha, digest);",
@@ -228,7 +231,8 @@ class Drive(unittest.TestCase):
             data = bytes((7 * i + length) % 256 for i in range(length))
             for step in (1, 7, 64, 32768):
                 with self.subTest(length=length, step=step):
-                    out = self.run_helper("sha", data.hex(), str(step)).strip()
+                    (self.work / "data.hex").write_text(data.hex())  # a file: Linux limits one argument to 128 KB
+                    out = self.run_helper("sha", str(self.work / "data.hex"), str(step)).strip()
                     self.assertEqual(out, hashlib.sha256(data).hexdigest())
 
     def test_screenshot_header_gives_a_bmp_the_mac_opens_upright(self):
