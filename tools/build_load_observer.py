@@ -46,7 +46,7 @@ def write_json(path,data):
         json.dump(data,f,indent=2); f.write("\n"); f.flush(); os.fsync(f.fileno())
 
 
-def build(sources,out,*,github_actions=False):
+def build(sources,out,*,github_actions=False,deskcheck=False):
     if github_actions:
         env=os.environ
         if (sys.platform!="linux" or env.get("GITHUB_ACTIONS")!="true" or
@@ -67,9 +67,10 @@ def build(sources,out,*,github_actions=False):
         location={"build_host":"ant-srv-001"}
     sources,out=Path(sources).resolve(),Path(out).resolve()
     out.mkdir(mode=0o700,exist_ok=False)
-    for name in SOURCES:
+    selected=("deskcheck.c","load_observer_protocol.h") if deskcheck else SOURCES
+    for name in selected:
         sha(sources/name); shutil.copyfile(sources/name,out/name)
-    hashes={name:sha(out/name) for name in SOURCES}
+    hashes={name:sha(out/name) for name in selected}
     identity={**location,"sources":hashes,"image":native.IMAGE,
               "flags":list(native.CFLAGS)}
     write_json(out/"dispatch.json",{"state":"dispatched",**identity})
@@ -84,8 +85,9 @@ def build(sources,out,*,github_actions=False):
             "-w","/work",native.IMAGE]
         binaries,sizes={},{}
         with (out/"build.log").open("xb") as log:
-            for name,source,disassembly in ((BINARY,"s2amload.c","disassembly.txt"),
-                    (CONTROLLER,"s2amloadctl.c","controller-disassembly.txt")):
+            programs=(("DESKTEST.EXE","deskcheck.c","disassembly.txt"),) if deskcheck else (
+                (BINARY,"s2amload.c","disassembly.txt"),(CONTROLLER,"s2amloadctl.c","controller-disassembly.txt"))
+            for name,source,disassembly in programs:
                 defines=[]
                 if name==CONTROLLER:
                     defines=[f'-DLOAD_EXPECTED_SHA256="{binaries[BINARY]}"',
@@ -107,9 +109,10 @@ def build(sources,out,*,github_actions=False):
         frozen()
         if any(sha(out/name)!=digest for name,digest in binaries.items()):
             raise ValueError("executable changed before publication")
-        result={"state":"complete",**identity,"binaries":binaries,"sizes":sizes,
-                "payload_binding":{"sha256":binaries[BINARY],"bytes":sizes[BINARY]}}
-        write_json(out/"manifest.json",{"format":"s2am-load-artifacts-v2",**result})
+        result={"state":"complete",**identity,"binaries":binaries,"sizes":sizes}
+        if not deskcheck:
+            result["payload_binding"]={"sha256":binaries[BINARY],"bytes":sizes[BINARY]}
+        write_json(out/"manifest.json",{"format":("s2am-desk-artifact-v1" if deskcheck else "s2am-load-artifacts-v2"),**result})
     except Exception as error:
         result["error"]=type(error).__name__
         raise
@@ -123,5 +126,6 @@ if __name__=="__main__":
     p.add_argument("--sources",required=True,type=Path)
     p.add_argument("--out",required=True,type=Path)
     p.add_argument("--github-actions",action="store_true",help="require exact owned Actions build-branch context")
+    p.add_argument("--deskcheck", action="store_true", help="build only the standalone parked Desktop test")
     a=p.parse_args()
-    print(json.dumps(build(a.sources,a.out,github_actions=a.github_actions)))
+    print(json.dumps(build(a.sources,a.out,github_actions=a.github_actions,deskcheck=a.deskcheck)))
