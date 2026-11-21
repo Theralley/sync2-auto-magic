@@ -269,7 +269,9 @@ class Conversation(unittest.TestCase):
     def test_no_usable_stick_explains_formatting(self):
         shutil.rmtree(self.volumes / "SYNC")
         code, text = self.talk([SERIAL, "q"], FakeCli(self.tmp))
-        self.assertIn("Format MS-DOS (FAT), Scheme Master Boot Record", text)
+        for step in wizard.hostos.format_steps():  # Disk Utility on a Mac, GNOME Disks on Linux
+            self.assertIn(step, text)
+        self.assertIn("Master Boot Record" if wizard.hostos.SYSTEM == "Darwin" else "MBR / DOS", text)
 
 
 

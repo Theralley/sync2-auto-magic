@@ -14,7 +14,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from s2am import cli, pack, stick, window  # noqa: E402
+from s2am import cli, hostos, pack, stick, window  # noqa: E402
 from s2am.fakecar import FakeCar  # noqa: E402
 from s2am.job import Job, inventory_script, meta, stage  # noqa: E402
 from s2am.state import Store, diff, parse_inventory  # noqa: E402
@@ -181,7 +181,9 @@ class Stick(Temp):
         self.assertEqual([p.stem for p in (root / "s2am" / "pending").iterdir()], [second.id])
 
     def test_requires_a_volume_by_default(self):
-        with self.assertRaisesRegex(stick.StickError, "/Volumes"):
+        # /Volumes on a Mac, /media/<you> on Linux
+        with self.assertRaisesRegex(stick.StickError, "not a removable volume under " +
+                                    re.escape(str(hostos.volume_roots()[0]))):
             stick.prepare(self.stick(), self.tmp / "x", Job(SERIAL, "inv"))
 
 
