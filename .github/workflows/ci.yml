@@ -37,3 +37,36 @@ jobs:
       - name: Unit tests
         working-directory: sync2-auto-magic
         run: python3 -m unittest discover -s tests
+
+  # Linux (#5) and Windows (#6) are not supported yet. These runs show what breaks there; they
+  # may fail without failing the workflow.
+  other-systems:
+    name: unit (${{ matrix.os }}, not supported yet)
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: sync2-auto-magic
+      - name: Fetch SyncExtPack at the tested commit
+        run: |
+          git init -q syncextpack
+          git -C syncextpack remote add origin https://github.com/chr0m1ng/syncextpack
+          git -C syncextpack fetch -q --depth 1 origin 1a1eda00aea2d319dc850b6e7a118c67ebd3e0de
+          git -C syncextpack checkout -q FETCH_HEAD
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test dependencies
+        run: python -m pip install --quiet Pillow
+      - name: Unit tests
+        working-directory: sync2-auto-magic
+        run: python -m unittest discover -s tests
