@@ -37,7 +37,7 @@ import xml.etree.ElementTree as ElementTree
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import apps, autokit, bootstrap, decoder, diskcheck, native, pack, stick, theme, window
+from . import apps, autokit, bootstrap, decoder, diskcheck, hostos, native, pack, stick, theme, window
 from .container import REPO, ContainerError
 from .job import (AUTOKIT_CE, AUTOKIT_LANGS, AUTOKIT_MODULES, BOOST_LEVELS, CALM_LEVEL, DRIVE_SECONDS, LOAD_SECONDS,
                   MIC_GATE_APPLIED, MIC_GATE_FILE,
@@ -86,25 +86,13 @@ MARK = {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
 def _eject(stick_path: Path, args) -> None:
     if args.no_eject or args.any_path:
         return
-    result = subprocess.run(["diskutil", "eject", str(stick_path)], capture_output=True, text=True)
-    print("stick ejected" if result.returncode == 0 else
-          f"eject failed, eject it in Finder before pulling it: {result.stderr.strip()}")
+    worked, advice = hostos.eject(stick_path)
+    print("stick ejected" if worked else f"eject failed, {advice}")
 
 
 def _remount(stick_path: Path) -> bool:
-    """Unmount and mount the stick again, so it is read from the stick, not from the Mac's cache."""
-    info = subprocess.run(["diskutil", "info", str(stick_path)], capture_output=True, text=True).stdout
-    device = next((line.split(":", 1)[1].strip() for line in info.splitlines()
-                   if line.strip().startswith("Device Identifier:")), None)
-    if not device:
-        return False
-    for _ in range(5):  # Spotlight may hold it for a moment
-        if subprocess.run(["diskutil", "unmount", str(stick_path)], capture_output=True).returncode == 0:
-            break
-        subprocess.run(["sleep", "2"])
-    else:
-        return False
-    return subprocess.run(["diskutil", "mount", device], capture_output=True).returncode == 0 and stick_path.is_dir()
+    """Unmount and mount the stick again, so it is read from the stick, not from the computer's cache."""
+    return hostos.remount(stick_path)
 
 
 def _read_back(stick_path: Path, install: Path, job: Job, args) -> bool:
@@ -603,7 +591,7 @@ def cmd_job(args) -> int:
     Store().save_job(job.serial, job.id,
                      _record(job, "built", install_sha256=pack.sha256(install)))
     print(f"job {job.id}: {install}")
-    print(f"next: s2am stick prepare /Volumes/<STICK> --job {workdir}")
+    print(f"next: s2am stick prepare {hostos.stick_hint()} --job {workdir}")
     return 0
 
 

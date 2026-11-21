@@ -3,7 +3,7 @@
 `python3 -m s2am wizard` (or double-click Install-SYNC2.command) walks a non-technical user
 through checking the Mac, choosing the USB stick, and every trip to the car. It uses the same
 commands as the rest of s2am, so it never does anything the CLI cannot. It never formats a
-disk: it explains how to do that in Disk Utility instead.
+disk: it explains how to do that in the system's own disk tool instead.
 """
 from __future__ import annotations
 
@@ -18,13 +18,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from . import apps, bootstrap, cli, container, diskcheck, stick
+from . import apps, bootstrap, cli, container, diskcheck, hostos, stick
 from .state import Store, home
 
 UPSTREAM_URL = "https://github.com/chr0m1ng/syncextpack"
 UPSTREAM_TESTED = "1a1eda0"  # the SyncExtPack commit this project is tested against
 PACK_APPS = {"autokit", "total commander", "reboot"}  # what the app pack puts in the menu
-SKIP_VOLUMES = {"Macintosh HD", "Recovery", "Preboot", "VM", "Update", "Data"}
+SKIP_VOLUMES = {"Macintosh HD", "Recovery", "Preboot", "VM", "Update", "Data"}  # macOS's own
 SERIAL_HELP = "8 characters, under Settings > General > About SYNC on the car"
 
 
@@ -77,11 +77,13 @@ class _Tee(io.TextIOBase):
 
 class Wizard:
     def __init__(self, ask: Callable[[str], str] = input, say: Callable[[str], None] = print,
-                 run: Callable[[list[str]], int] = cli.main, volumes: Path = Path("/Volumes"),
+                 run: Callable[[list[str]], int] = cli.main, volumes: Path | None = None,
                  info: diskcheck.DiskInfo | None = diskcheck.diskutil_info,
                  upstream: Path = cli.UPSTREAM, any_path: bool = False):
         self.ask, self.say, self.run = ask, say, run
-        self.volumes, self.info, self.upstream, self.any_path = volumes, info, upstream, any_path
+        # where sticks show up: one folder on macOS, two possible ones on Linux
+        self.volumes = [volumes] if volumes is not None else hostos.volume_roots()
+        self.info, self.upstream, self.any_path = info, upstream, any_path
         self.serial = ""
         self.stick: Path | None = None
 
@@ -151,10 +153,27 @@ class Wizard:
             except container.ContainerError:
                 ok = False
             if ok:
-                return
-            self.say("Docker Desktop is not running. Start it (the whale icon in Applications) "
-                     "and wait until it says it is running.")
+                break
+            self.say("Docker is not running. Start it (on a Mac: Docker Desktop, the whale icon in "
+                     "Applications) and wait until it says it is running. On Linux your user must be "
+                     "allowed to use it (the docker group).")
             self.prompt("Press Enter to check again, or type q to quit: ")
+        problem = container.emulation_problem()
+        if problem:
+            self.say(f"Note: {problem}")
+            if not self.yes("Try anyway?", default=False):
+                raise Quit()
+
+    def check_linux(self) -> None:
+        """On Linux, s2am reads sticks with lsblk, findmnt and udisksctl; stop early if they are
+        missing or too old, before an unreadable stick is mistaken for one that needs formatting."""
+        if hostos.SYSTEM != "Linux" or self.info is None:
+            return
+        problems = hostos.linux_problems()
+        if problems:
+            for problem in problems:
+                self.say(f"This computer is not ready: {problem}.")
+            raise Quit()
 
     def settings_file(self) -> Path:
         return home() / "wizard.json"
@@ -183,8 +202,9 @@ class Wizard:
 
     def candidate_sticks(self) -> list[tuple[Path, list[diskcheck.Finding]]]:
         found = []
-        for volume in sorted(self.volumes.iterdir()) if self.volumes.is_dir() else []:
-            if volume.name in SKIP_VOLUMES or volume.is_symlink() or not volume.is_dir():
+        for volume in sorted(v for root in self.volumes if root.is_dir() for v in root.iterdir()):
+            if (hostos.SYSTEM == "Darwin" and volume.name in SKIP_VOLUMES) or volume.is_symlink() \
+                    or not volume.is_dir():
                 continue
             findings = diskcheck.check(volume, self.info)
             if self.info is not None and any("external" in f.message and f.level == "fail"
@@ -211,13 +231,11 @@ class Wizard:
                 return
             self.steps("Prepare a USB stick", [
                 "Use a USB stick of 32 GB or less. Everything on it will be erased.",
-                "Open Disk Utility, choose View > Show All Devices, select the stick itself "
-                "(the top line, not the volume).",
-                "Click Erase: Name SYNC, Format MS-DOS (FAT), Scheme Master Boot Record.",
+                *hostos.format_steps(),
                 "Leave the stick plugged in."])
             self.prompt("Press Enter when the stick is ready (q to quit): ")
 
-    def stick_back(self, message: str = "Put the stick back in this Mac") -> None:
+    def stick_back(self, message: str = "Put the stick back in this computer") -> None:
         while True:
             self.prompt(f"{message}, then press Enter: ")
             if self.stick is not None and self.stick.is_dir():
@@ -462,6 +480,7 @@ class Wizard:
         try:
             self.check_upstream()
             self.check_docker()
+            self.check_linux()
             self.ask_serial()
             self.pick_stick()
             tasks = [("Install CarPlay / Android Auto (AutoKit)", self.install),

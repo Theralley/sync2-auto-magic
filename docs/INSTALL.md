@@ -43,7 +43,7 @@ In the car, open *Settings → General → About SYNC*.
 |---|---|
 | A **Carlinkit wired adapter** of the "AutoKit" type, made for Android head units | For example [this one](https://www.amazon.se/dp/B0919JS1K3). Not a "wired-to-wireless" adapter (2Air, U2W, Mini Ultra, 3.0/4.0/5.0): those only work in cars that already have CarPlay |
 | A **USB stick**, 32 GB or smaller | It will be erased if it needs formatting. FAT32, which the installer checks |
-| A **Mac** | Windows and Linux are untested |
+| A **Mac** | Linux is implemented and unit-tested, but not yet tried with a real stick on a Linux desktop or in a car: see [On Linux](#on-linux) ([#5](https://github.com/Theralley/sync2-auto-magic/issues/5)). Windows is not supported yet ([#6](https://github.com/Theralley/sync2-auto-magic/issues/6)) |
 
 ### Formatting the stick (only if the installer asks)
 
@@ -56,6 +56,28 @@ erases anything itself. If it says the stick is not usable:
 4. Click **Erase**: name `SYNC`, format **MS-DOS (FAT)**, scheme **Master Boot Record**.
 
 Everything on the stick is deleted. Check twice that you picked the stick and not another disk.
+
+### On Linux
+
+New and not yet tried with a real stick or in a car
+([#5](https://github.com/Theralley/sync2-auto-magic/issues/5)). Reports are welcome. You need:
+
+- A desktop that mounts USB sticks by itself under `/media/<you>/` or `/run/media/<you>/`
+  (GNOME, KDE, Xfce and most others do).
+- Python 3, util-linux 2.35 or newer (`lsblk`, `findmnt`; Ubuntu 22.04, Debian 11, Fedora 32 or
+  later) and udisks2 (`udisksctl`).
+- [Docker Engine](https://docs.docker.com/engine/install/) with your user in the `docker`
+  group, or rootless Docker. Podman has not been tried.
+- An x86-64 computer, or an ARM one with x86-64 emulation (Debian and Ubuntu:
+  `sudo apt install qemu-user-static binfmt-support`).
+
+The installer only takes a stick on the USB bus, and never a disk that also holds the running
+system (swap, `/`, `/boot`, `/home`). To format a stick: open **Disks** (GNOME Disks), select
+the stick in the list on the left, choose *Format Disk* in the menu with partitioning
+**Compatible with all systems and devices (MBR / DOS)**, then **+** to add one partition over
+all of it: name `SYNC`, type **For use with all systems and devices (FAT)**. Open the stick
+once in your file manager so it is mounted. Start the installer with `./install-sync2.sh` in a
+terminal in the project folder; everything after that is the same as on a Mac.
 
 ## 3. Prepare the Mac
 

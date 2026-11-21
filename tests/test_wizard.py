@@ -154,7 +154,7 @@ class Conversation(unittest.TestCase):
         cli = FakeCli(self.tmp)
 
         def swap_stick(question):
-            if "back in this Mac" in question:  # someone brings another car's stick
+            if "back in this computer" in question:  # someone brings another car's stick
                 (self.volumes / "SYNC" / "s2am" / "bootstrap.json").write_text(
                     json.dumps({"serial": "ABCDEFGH", "pack_install_sha256": "b" * 64}))
             return ""
@@ -270,6 +270,55 @@ class Conversation(unittest.TestCase):
         shutil.rmtree(self.volumes / "SYNC")
         code, text = self.talk([SERIAL, "q"], FakeCli(self.tmp))
         self.assertIn("Format MS-DOS (FAT), Scheme Master Boot Record", text)
+
+
+
+class OtherComputers(unittest.TestCase):
+    """What changes when the installer runs on Linux (issue #5)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        for name in ("SYNC", "Data", "Recovery"):
+            (self.tmp / name).mkdir()
+        self.said = []
+
+    def wizard(self, answers=(), info=None):
+        answers = list(answers)
+        return wizard.Wizard(ask=lambda question: answers.pop(0), say=self.said.append,
+                             run=lambda argv: 0, volumes=self.tmp, info=info, upstream=UPSTREAM)
+
+    def test_macos_own_volume_names_are_skipped_only_on_macos(self):
+        with mock.patch.object(wizard.hostos, "SYSTEM", "Darwin"):
+            self.assertEqual([v.name for v, _ in self.wizard().candidate_sticks()], ["SYNC"])
+        with mock.patch.object(wizard.hostos, "SYSTEM", "Linux"):  # a stick may well be called Data
+            self.assertEqual([v.name for v, _ in self.wizard().candidate_sticks()], ["Data", "Recovery", "SYNC"])
+
+    def test_a_linux_computer_without_its_tools_stops_before_any_stick_is_judged(self):
+        with mock.patch.object(wizard.hostos, "SYSTEM", "Linux"), \
+                mock.patch.object(wizard.hostos, "linux_problems", return_value=[wizard.hostos.TOO_OLD]):
+            with self.assertRaises(wizard.Quit):
+                self.wizard(info=lambda target: {}).check_linux()
+        self.assertIn("util-linux 2.35", self.said[0])
+
+    def test_a_ready_linux_computer_and_a_mac_go_on(self):
+        with mock.patch.object(wizard.hostos, "SYSTEM", "Linux"), \
+                mock.patch.object(wizard.hostos, "linux_problems", return_value=[]):
+            self.wizard(info=lambda target: {}).check_linux()
+        with mock.patch.object(wizard.hostos, "SYSTEM", "Darwin"), \
+                mock.patch.object(wizard.hostos, "linux_problems", side_effect=AssertionError("not on a Mac")):
+            self.wizard(info=lambda target: {}).check_linux()
+        self.assertEqual(self.said, [])
+
+    def test_missing_x86_emulation_is_said_and_stops_unless_the_user_goes_on(self):
+        docker_up = mock.patch.object(wizard.subprocess, "run",
+                                      return_value=mock.Mock(returncode=0))
+        problem = mock.patch.object(wizard.container, "emulation_problem", return_value="needs emulation")
+        with docker_up, problem, mock.patch.object(wizard.container, "docker", return_value=["docker"]):
+            with self.assertRaises(wizard.Quit):
+                self.wizard(["n"]).check_docker()
+            self.wizard(["y"]).check_docker()
+        self.assertIn("Note: needs emulation", self.said)
 
 
 if __name__ == "__main__":

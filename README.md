@@ -199,8 +199,11 @@ run the same system, but nothing is guaranteed.
       Do **not** buy "wired-to-wireless" adapters (2Air, U2W, Mini Ultra, 3.0/4.0/5.0). They
       only work in cars that already have CarPlay.
 - [ ] **A USB stick**, 32 GB or smaller, formatted **FAT32**
-- [ ] **A Mac** with [Docker Desktop](https://www.docker.com/products/docker-desktop/) and Python 3
-      (Windows and Linux are untested)
+- [ ] **A Mac** with [Docker Desktop](https://www.docker.com/products/docker-desktop/) and Python 3.
+      **Linux** is implemented and unit-tested, but not yet tried with a real stick on a Linux
+      desktop or in a car ([#5](https://github.com/Theralley/sync2-auto-magic/issues/5)); what
+      it needs is in the [install guide](docs/INSTALL.md#on-linux). **Windows** is not supported
+      yet ([#6](https://github.com/Theralley/sync2-auto-magic/issues/6))
 - [ ] **Your APIM serial**: 8 characters, under *Settings → General → About SYNC*
 
 ## Easiest: the guided installer

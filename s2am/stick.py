@@ -17,6 +17,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import hostos
 from .job import Job, bundle_parts
 from .state import VERDICTS, Store, outcome
 
@@ -58,8 +59,9 @@ class StickError(Exception):
 def _check_volume(stick: Path, require_volume: bool) -> None:
     if not stick.is_dir() or stick.is_symlink():
         raise StickError(f"{stick} is not a mounted folder")
-    if require_volume and stick.resolve().parent != Path("/Volumes"):
-        raise StickError(f"{stick} is not a removable volume under /Volumes")
+    if require_volume and not hostos.is_volume(stick):
+        places = " or ".join(str(root) for root in hostos.volume_roots())
+        raise StickError(f"{stick} is not a removable volume under {places}")
     for folder in (stick / UPDATER_DIR, stick / "s2am"):
         if folder.is_symlink():
             raise StickError(f"{folder} is a symlink; refusing to use this stick")

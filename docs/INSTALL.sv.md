@@ -45,7 +45,7 @@ två för installationen, ett för varje förbättring).
 |---|---|
 | En **Carlinkit-adapter med sladd** av typen "AutoKit", gjord för Android-bilstereor | Till exempel [den här](https://www.amazon.se/dp/B0919JS1K3). Inte en adapter som gör sladdbunden CarPlay trådlös (2Air, U2W, Mini Ultra, 3.0/4.0/5.0): de fungerar bara i bilar som redan har CarPlay |
 | Ett **USB-minne** på högst 32 GB | Det raderas om det behöver formateras. Det ska vara FAT32, vilket installationsprogrammet kontrollerar |
-| En **Mac** | Windows och Linux är oprovade |
+| En **Mac** | Linux är byggt och enhetstestat, men ännu inte provat med en riktig sticka på en Linuxdator eller i en bil: se [På Linux](#på-linux) ([#5](https://github.com/Theralley/sync2-auto-magic/issues/5)). Windows stöds inte än ([#6](https://github.com/Theralley/sync2-auto-magic/issues/6)) |
 
 ### Formatera stickan (bara om installationsprogrammet ber om det)
 
@@ -60,6 +60,31 @@ raderar aldrig något själv. Om det säger att stickan inte går att använda:
 
 Allt på stickan försvinner. Kontrollera två gånger att du har valt stickan och inte en annan
 skiva.
+
+### På Linux
+
+Nytt och ännu inte provat med en riktig sticka eller i en bil
+([#5](https://github.com/Theralley/sync2-auto-magic/issues/5)). Rapporter är välkomna. Du behöver:
+
+- Ett skrivbord som monterar USB-minnen av sig självt under `/media/<du>/` eller
+  `/run/media/<du>/` (GNOME, KDE, Xfce och de flesta andra gör det).
+- Python 3, util-linux 2.35 eller nyare (`lsblk`, `findmnt`; Ubuntu 22.04, Debian 11, Fedora 32
+  eller senare) och udisks2 (`udisksctl`).
+- [Docker Engine](https://docs.docker.com/engine/install/) med din användare i gruppen `docker`,
+  eller rootless Docker. Podman är inte provat.
+- En x86-64-dator, eller en ARM-dator med x86-64-emulering (Debian och Ubuntu:
+  `sudo apt install qemu-user-static binfmt-support`).
+
+Installationsprogrammet tar bara en sticka på USB-bussen, och aldrig en skiva som också bär det
+system som körs (swap, `/`, `/boot`, `/home`). Formatera en sticka så här: öppna **Diskar**
+(GNOME Disks), markera stickan i listan till vänster, välj *Formatera disk* i menyn med
+partitionering **Kompatibel med alla system och enheter (MBR/DOS)**, och sedan **+** för att
+lägga till en partition över hela stickan: namn `SYNC`, typ **För användning med alla system och
+enheter (FAT)**. Namnen i menyerna kan skilja lite mellan versioner (på engelska: *Format Disk*,
+*Compatible with all systems and devices (MBR / DOS)*, *For use with all systems and devices
+(FAT)*). Öppna stickan en gång i filhanteraren så att den monteras. Starta
+installationsprogrammet med `./install-sync2.sh` i en terminal i projektmappen; allt efter det
+är som på en Mac.
 
 ## 3. Förbered datorn
 

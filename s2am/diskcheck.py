@@ -1,6 +1,7 @@
 """Is this USB stick fit for SYNC 2? FAT32, MBR, 32 GB or less, external, nothing left to run.
 
-On macOS the volume facts come from `diskutil info -plist`; tests inject their own.
+The volume facts come from hostos.disk_info (`diskutil info -plist` on macOS, `lsblk` on Linux,
+in diskutil's shape); tests inject their own.
 """
 from __future__ import annotations
 
@@ -10,9 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from . import hostos
+
 MAX_BYTES = 32 * 1024 ** 3  # SyncExtPack: "maximum 32GB"
 MIN_FREE = 200 * 10 ** 6    # the bootstrap pack is about 25 MB; leave room for reports
-MBR = "FDisk_partition_scheme"
+MBR = hostos.MBR
 UPDATER_BAIT = ("install.bin", "Installer.jpg", "update.bin", "pack_install.bin")
 FIRMWARE_AUTORUN = ("autoinstall.lst", "SyncMyRide")  # FIRMWARE_INSTALLATION.md layout
 
@@ -20,8 +23,8 @@ DiskInfo = Callable[[str], dict]
 
 
 def diskutil_info(target: str) -> dict:
-    return plistlib.loads(subprocess.run(["diskutil", "info", "-plist", target],
-                                         check=True, capture_output=True).stdout)
+    """This computer's facts about a mounted stick (the name is from the macOS-only days)."""
+    return hostos.disk_info(target)
 
 
 @dataclass
@@ -36,8 +39,8 @@ def check(stick: Path, info: DiskInfo | None = diskutil_info) -> list[Finding]:
     if info is not None:
         try:
             volume = info(str(stick))
-        except (subprocess.CalledProcessError, OSError, plistlib.InvalidFileException) as error:
-            return [Finding("fail", f"diskutil could not read {stick}: {error}")]
+        except (subprocess.CalledProcessError, OSError, plistlib.InvalidFileException, hostos.HostError) as error:
+            return [Finding("fail", f"the disk behind {stick} could not be read: {error}")]
         name = volume.get("FilesystemName", volume.get("FilesystemType", "?"))
         findings.append(Finding("ok" if name == "MS-DOS FAT32" else "fail",
                                 f"file system: {name} (needs MS-DOS FAT32)"))
@@ -49,6 +52,9 @@ def check(stick: Path, info: DiskInfo | None = diskutil_info) -> list[Finding]:
         findings.append(Finding("ok" if external else "fail",
                                 f"external removable disk: {'yes' if external else 'no'} "
                                 f"({volume.get('BusProtocol', '?')})"))
+        system = volume.get("SystemMounts")  # Linux: the same disk carries swap, / or the like
+        if system:
+            findings.append(Finding("fail", f"in use by this computer: the same disk holds {', '.join(system)}"))
         whole = volume.get("ParentWholeDisk")
         scheme = info(whole).get("Content", "?") if whole and whole != volume.get(
             "DeviceIdentifier") else "none (no partition table)"
