@@ -390,7 +390,8 @@ class OtherComputers(unittest.TestCase):
     def test_a_stick_back_under_another_letter_is_found_by_its_volume_serial(self):
         serials = {self.tmp / "SYNC": "1234ABCD", self.tmp / "Data": "99990000"}
         w = self.wizard([""])
-        with mock.patch.object(wizard.hostos, "volume_id", side_effect=lambda path: serials.get(path)):
+        with mock.patch.object(wizard.hostos, "volume_id", side_effect=lambda path: serials.get(path)), \
+                mock.patch.object(wizard.hostos, "display", side_effect=lambda path: path.name):
             w.use_stick(self.tmp / "SYNC")
             serials = {self.tmp / "SYNC": "99990000", self.tmp / "Recovery": "1234ABCD"}  # letters moved
             w.stick_back()

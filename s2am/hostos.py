@@ -101,7 +101,7 @@ def places(system: str = SYSTEM) -> str:
     """Where sticks are, in words, for messages."""
     if system == "Windows":
         return "a drive's top folder such as E:\\"
-    return "a folder under " + " or ".join(str(root) for root in volume_roots(system))
+    return "a folder under " + " or ".join(root.as_posix() for root in volume_roots(system))
 
 
 def is_volume(stick: Path, system: str = SYSTEM, user: str | None = None) -> bool:
